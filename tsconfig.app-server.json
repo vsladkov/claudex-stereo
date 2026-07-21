@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "useUnknownInCatchVariables": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "plugins/stereo/scripts/lib/app-server.mjs",
+    "plugins/stereo/scripts/lib/codex.mjs",
+    "plugins/stereo/scripts/lib/fs.mjs",
+    "plugins/stereo/scripts/lib/process.mjs",
+    "plugins/stereo/scripts/lib/app-server-protocol.d.ts",
+    "plugins/stereo/.generated/app-server-types/**/*.ts"
+  ]
+}
