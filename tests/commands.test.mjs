@@ -23,7 +23,7 @@ test("review command uses AskUserQuestion and background Bash while staying revi
   assert.match(source, /review "\$ARGUMENTS"/);
   assert.match(source, /\[--scope auto\|working-tree\|branch\]/);
   assert.match(source, /run_in_background:\s*true/);
-  assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.mjs" review "\$ARGUMENTS"`/);
+  assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.ts" review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex review"/);
   assert.match(source, /Do not call `BashOutput`/);
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
@@ -51,7 +51,7 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /adversarial-review "\$ARGUMENTS"/);
   assert.match(source, /\[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]/);
   assert.match(source, /run_in_background:\s*true/);
-  assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.mjs" adversarial-review "\$ARGUMENTS"`/);
+  assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.ts" adversarial-review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex adversarial review"/);
   assert.match(source, /Do not call `BashOutput`/);
   assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
@@ -257,12 +257,12 @@ test("transfer, result, and cancel commands are exposed as deterministic runtime
   const resultHandling = read("skills/codex-result-handling/SKILL.md");
 
   assert.match(transfer, /disable-model-invocation:\s*true/);
-  assert.match(transfer, /codex-companion\.mjs" transfer "\$ARGUMENTS"/);
+  assert.match(transfer, /codex-companion\.ts" transfer "\$ARGUMENTS"/);
   assert.match(transfer, /codex resume <session-id>/);
   assert.match(result, /disable-model-invocation:\s*true/);
-  assert.match(result, /codex-companion\.mjs" result "\$ARGUMENTS"/);
+  assert.match(result, /codex-companion\.ts" result "\$ARGUMENTS"/);
   assert.match(cancel, /disable-model-invocation:\s*true/);
-  assert.match(cancel, /codex-companion\.mjs" cancel "\$ARGUMENTS"/);
+  assert.match(cancel, /codex-companion\.ts" cancel "\$ARGUMENTS"/);
   assert.match(resultHandling, /do not turn a failed or incomplete Codex run into a Claude-side implementation attempt/i);
   assert.match(resultHandling, /if Codex was never successfully invoked, do not generate a substitute answer at all/i);
 });
@@ -272,7 +272,7 @@ test("internal docs use task terminology for rescue runs", () => {
   const promptingSkill = read("skills/gpt-5-4-prompting/SKILL.md");
   const promptRecipes = read("skills/gpt-5-4-prompting/references/codex-prompt-recipes.md");
 
-  assert.match(runtimeSkill, /codex-companion\.mjs" task "<raw arguments>"/);
+  assert.match(runtimeSkill, /codex-companion\.ts" task "<raw arguments>"/);
   assert.match(runtimeSkill, /Use `task` for every rescue request/i);
   assert.match(runtimeSkill, /task --resume-last/i);
   assert.match(promptingSkill, /Use `task` when the task is diagnosis/i);
@@ -286,8 +286,8 @@ test("hooks keep session-end cleanup and stop gating enabled", () => {
   const source = read("hooks/hooks.json");
   assert.match(source, /SessionStart/);
   assert.match(source, /SessionEnd/);
-  assert.match(source, /stop-review-gate-hook\.mjs/);
-  assert.match(source, /session-lifecycle-hook\.mjs/);
+  assert.match(source, /stop-review-gate-hook\.ts/);
+  assert.match(source, /session-lifecycle-hook\.ts/);
 });
 
 test("setup command can offer Codex install and still points users to codex login", () => {
@@ -297,7 +297,7 @@ test("setup command can offer Codex install and still points users to codex logi
   assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\]'/);
   assert.match(setup, /AskUserQuestion/);
   assert.match(setup, /npm install -g @openai\/codex/);
-  assert.match(setup, /codex-companion\.mjs" setup --json \$ARGUMENTS/);
+  assert.match(setup, /codex-companion\.ts" setup --json \$ARGUMENTS/);
   assert.match(setup, /Always preserve stranded-reservation next steps with their exact file paths/i);
   assert.match(readme, /!codex login/);
   assert.match(readme, /offer to install Codex for you/i);

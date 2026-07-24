@@ -10,8 +10,6 @@ export const SCHEMAS_DIR = path.join(PLUGIN_ROOT, "schemas");
 // loadPromptTemplate joins "prompts" itself, so the prompts root is the plugin root.
 export const PROMPTS_ROOT = PLUGIN_ROOT;
 
-// PHASE-5: repoint to the src/cli entry once the scripts/ shim is retired.
-export const COMPANION_ENTRY = path.join(PLUGIN_ROOT, "scripts", "codex-companion.mjs");
+export const COMPANION_ENTRY = path.join(PLUGIN_ROOT, "scripts", "codex-companion.ts");
 
-// PHASE-5: repoint to the src broker entry once the scripts/ shim is retired.
-export const BROKER_ENTRY = path.join(PLUGIN_ROOT, "scripts", "app-server-broker.mjs");
+export const BROKER_ENTRY = path.join(PLUGIN_ROOT, "scripts", "app-server-broker.ts");

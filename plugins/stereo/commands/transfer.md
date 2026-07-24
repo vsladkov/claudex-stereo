@@ -5,6 +5,6 @@ disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" transfer "$ARGUMENTS"`
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" transfer "$ARGUMENTS"`
 
 Present the command output to the user exactly as returned. Preserve the Codex session ID and the `codex resume <session-id>` command.

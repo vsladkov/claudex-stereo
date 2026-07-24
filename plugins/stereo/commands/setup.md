@@ -7,7 +7,7 @@ allowed-tools: Bash(node:*), Bash(npm:*), AskUserQuestion
 Run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" setup --json $ARGUMENTS
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" setup --json $ARGUMENTS
 ```
 
 If the result says Codex is unavailable and npm is available:
@@ -25,7 +25,7 @@ npm install -g @openai/codex
 - Then rerun:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" setup --json $ARGUMENTS
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" setup --json $ARGUMENTS
 ```
 
 If Codex is already installed or npm is unavailable:

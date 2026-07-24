@@ -20,7 +20,7 @@ Phase 0 - Preflight:
 - Load the stored plan:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" plan-state --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 ```
 
 - If `available` is `false`, stop and tell the user to run `/stereo:plan` first.
@@ -35,7 +35,7 @@ Phase 1 - Codex implements:
 - Embed the full stored plan text verbatim from `plan-state`, and use the stored `model`/`effort` unless the user overrode them.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task --background --json --write --thread <threadId> --model <storedModel> --effort <storedEffort> <<'CODEX_PAIR_IMPL'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <threadId> --model <storedModel> --effort <storedEffort> <<'CODEX_PAIR_IMPL'
 <task>
 Implement the approved plan below in this repository. You reviewed and approved this plan earlier in this thread.
 
@@ -60,7 +60,7 @@ CODEX_PAIR_IMPL
 - Poll exactly like `/stereo:plan`, with a Bash `timeout` of 600000 per poll call:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" status <jobId> --wait --timeout-ms 540000 --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 540000 --json
 ```
 
 - Then fetch the payload with `result <jobId> --json`.
@@ -74,7 +74,7 @@ Phase 2 - Claude reviews and iterates:
 - Otherwise write a numbered fix list - for each issue: file and line, what is wrong, and what correct looks like - and send it to the same thread:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task --background --json --write --thread <threadId> --model <storedModel> --effort <storedEffort> <<'CODEX_PAIR_FIX'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <threadId> --model <storedModel> --effort <storedEffort> <<'CODEX_PAIR_FIX'
 <task>
 Fix the review findings below in this repository. Keep all other behavior unchanged.
 

@@ -21,6 +21,7 @@
 - Harden the shared broker: survive bad client writes, never wedge busy after an instantly-completing turn, drop stalled clients instead of buffering unbounded output, and restrict the unix socket to the owning user
 - Keep the stop-time review gate working under symlinked plugin installs
 - Emit structured `{"error": ...}` JSON on stdout when a `--json` command fails
+- Migrate the runtime to TypeScript: layered `src/` architecture (cli, workflows, runtime, jobs, broker, transport, workspace, render, models, shared) running natively on Node >= 24 type stripping - no build step; typed model registry as the provider expansion point
 
 ## 1.0.0
 

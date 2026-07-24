@@ -5,7 +5,7 @@ disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" status "$ARGUMENTS"`
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status "$ARGUMENTS"`
 
 If the user did not pass a job ID:
 - When the user passed `--verbose`, do not compress the command output to the single compact table; include its per-job detail lines for log paths, timestamps, and progress.

@@ -33,7 +33,7 @@ Phase 2 - Codex review loop:
 - Launch round 1 in the background. Never run `plan-review` in the foreground: long `max` reviews can exceed the Bash timeout.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" plan-review --background --json --round 1 <<'CODEX_PAIR_PLAN'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <<'CODEX_PAIR_PLAN'
 <full plan document>
 CODEX_PAIR_PLAN
 ```
@@ -41,7 +41,7 @@ CODEX_PAIR_PLAN
 - Parse the launch JSON for `jobId`, then poll until the job leaves `queued`/`running`, passing a Bash `timeout` of 600000 for each poll call:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" status <jobId> --wait --timeout-ms 540000 --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 540000 --json
 ```
 
 - If any launch or poll command prints a top-level `{"error": ...}` JSON object instead of a job payload, surface that error to the user and stop the loop - do not keep polling.
@@ -49,7 +49,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" status <jobId> --wait -
 - When the job finishes, fetch the stored result:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" result <jobId> --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" result <jobId> --json
 ```
 
 - Read `storedJob.result`: `.threadId` (save it as the pair thread id), `.model` and `.effort` (the resolved values), `.result.verdict`, `.result.findings`, `.result.revision_instructions`, `.result.open_questions`, `.result.residual_risks`, and `.parseError`.
@@ -65,7 +65,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" result <jobId> --json
 - Resubmit the full revised plan on the same thread with the next round number:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" plan-review --background --json --thread <threadId> --round <n> <<'CODEX_PAIR_PLAN'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --thread <threadId> --round <n> <<'CODEX_PAIR_PLAN'
 <full revised plan document>
 CODEX_PAIR_PLAN
 ```

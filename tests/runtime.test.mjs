@@ -26,10 +26,10 @@ import { resolveStateDir } from "../plugins/stereo/src/workspace/state.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "stereo");
-const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex-companion.mjs");
-const BROKER_SCRIPT = path.join(PLUGIN_ROOT, "scripts", "app-server-broker.mjs");
-const STOP_HOOK = path.join(PLUGIN_ROOT, "scripts", "stop-review-gate-hook.mjs");
-const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.mjs");
+const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex-companion.ts");
+const BROKER_SCRIPT = path.join(PLUGIN_ROOT, "scripts", "app-server-broker.ts");
+const STOP_HOOK = path.join(PLUGIN_ROOT, "scripts", "stop-review-gate-hook.ts");
+const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.ts");
 
 async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
   const start = Date.now();

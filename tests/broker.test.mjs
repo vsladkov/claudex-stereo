@@ -21,7 +21,7 @@ import {
 } from "../plugins/stereo/src/broker/lifecycle.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const BROKER_SCRIPT = path.join(ROOT, "plugins", "stereo", "scripts", "app-server-broker.mjs");
+const BROKER_SCRIPT = path.join(ROOT, "plugins", "stereo", "scripts", "app-server-broker.ts");
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));

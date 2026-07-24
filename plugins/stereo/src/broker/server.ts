@@ -78,7 +78,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
 
   const [subcommand, ...argv] = fullArgv;
   if (subcommand !== "serve") {
-    throw new Error("Usage: node scripts/app-server-broker.mjs serve --endpoint <value> [--cwd <path>] [--pid-file <path>]");
+    throw new Error("Usage: node scripts/app-server-broker.ts serve --endpoint <value> [--cwd <path>] [--pid-file <path>]");
   }
 
   const { options } = parseArgs(argv, {

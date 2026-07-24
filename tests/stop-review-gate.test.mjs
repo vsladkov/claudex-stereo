@@ -56,7 +56,7 @@ test("stop review timeout defaults below the hooks.json Stop budget and honors t
   assert.equal(resolveStopReviewTimeoutMs({ CODEX_STOP_REVIEW_TIMEOUT_MS: "-1" }), defaultTimeout);
 });
 
-const STOP_HOOK = path.join(ROOT, "plugins", "stereo", "scripts", "stop-review-gate-hook.mjs");
+const STOP_HOOK = path.join(ROOT, "plugins", "stereo", "scripts", "stop-review-gate-hook.ts");
 const IS_WINDOWS = process.platform === "win32";
 
 function seedRunningJob(repo, sessionId) {
@@ -105,7 +105,7 @@ test("the hook still runs when invoked through a symlinked install path", { skip
   seedRunningJob(repo, "sess-current");
 
   const linkDir = makeTempDir("stop-hook-link-");
-  const link = path.join(linkDir, "stop-review-gate-hook.mjs");
+  const link = path.join(linkDir, "stop-review-gate-hook.ts");
   try {
     fs.symlinkSync(STOP_HOOK, link);
   } catch (error) {
