@@ -9,21 +9,65 @@ import {
   listStrandedThreadReservations
 } from "../../runtime/index.ts";
 import { binaryAvailable } from "../../platform/process.ts";
+import { MODEL_REGISTRY } from "../../models/registry.ts";
 import { getConfig, setConfig } from "../../workspace/state.ts";
 import { resolveWorkspaceRoot } from "../../workspace/workspace.ts";
 import { renderSetupReport } from "../../render/render.ts";
 import { parseCommandInput, resolveCommandCwd, resolveCommandWorkspace } from "../io.ts";
 import { outputResult } from "../../shared/text.ts";
 
-export async function buildSetupReport(cwd: string, actionsTaken: string[] = []) {
+export interface SetupDeps {
+  binaryAvailable: typeof binaryAvailable;
+  getCodexAvailability: typeof getCodexAvailability;
+  getCodexWriteSandboxStatus: typeof getCodexWriteSandboxStatus;
+  getCodexAuthStatus: typeof getCodexAuthStatus;
+  listStrandedThreadReservations: typeof listStrandedThreadReservations;
+  env?: NodeJS.ProcessEnv;
+}
+
+export const defaultSetupDeps: SetupDeps = {
+  binaryAvailable,
+  getCodexAvailability,
+  getCodexWriteSandboxStatus,
+  getCodexAuthStatus,
+  listStrandedThreadReservations
+};
+
+export async function buildSetupReport(
+  cwd: string,
+  actionsTaken: string[] = [],
+  deps: SetupDeps = defaultSetupDeps
+) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
-  const nodeStatus = binaryAvailable("node", ["--version"], { cwd });
-  const npmStatus = binaryAvailable("npm", ["--version"], { cwd });
-  const codexStatus = getCodexAvailability(cwd);
-  const writeSandbox = codexStatus.available ? getCodexWriteSandboxStatus(cwd) : null;
-  const authStatus = await getCodexAuthStatus(cwd);
+  const env = deps.env ?? process.env;
+  const nodeStatus = deps.binaryAvailable("node", ["--version"], { cwd });
+  const npmStatus = deps.binaryAvailable("npm", ["--version"], { cwd });
+  const codexStatus = deps.getCodexAvailability(cwd);
+  const writeSandbox = codexStatus.available ? deps.getCodexWriteSandboxStatus(cwd) : null;
+  const authStatus = await deps.getCodexAuthStatus(cwd);
   const config = getConfig(workspaceRoot);
-  const strandedReservations = listStrandedThreadReservations();
+  const strandedReservations = deps.listStrandedThreadReservations();
+  const configuredProviders = authStatus.configuredProviders.map((provider) => ({
+    ...provider,
+    keySet: provider.envKey ? Boolean(env[provider.envKey]) : null
+  }));
+  const configuredById = new Map(configuredProviders.map((provider) => [provider.id, provider]));
+  const aliases = Object.entries(MODEL_REGISTRY).flatMap(([alias, entry]) => {
+    if (!("modelProvider" in entry) || !entry.modelProvider) {
+      return [];
+    }
+    const configuredProvider = configuredById.get(entry.modelProvider) ?? null;
+    return [
+      {
+        alias,
+        model: entry.model,
+        providerId: entry.modelProvider,
+        configured: Boolean(configuredProvider),
+        envKey: configuredProvider?.envKey ?? null,
+        keySet: configuredProvider?.keySet ?? null
+      }
+    ];
+  });
 
   const nextSteps: string[] = [];
   if (!codexStatus.available) {
@@ -41,6 +85,21 @@ export async function buildSetupReport(cwd: string, actionsTaken: string[] = [])
   for (const reservation of strandedReservations) {
     nextSteps.push(describeStrandedReservation(reservation));
   }
+  const unconfiguredAliases = aliases.filter((entry) => !entry.configured);
+  if (unconfiguredAliases.length > 0) {
+    nextSteps.push(
+      `Optional: third-party aliases without a configured provider: ${unconfiguredAliases
+        .map((entry) => `${entry.alias} (${entry.providerId})`)
+        .join(", ")} — see README "Other model providers" and npm run provider-probe.`
+    );
+  }
+  for (const provider of configuredProviders) {
+    if (provider.envKey && !provider.keySet) {
+      nextSteps.push(
+        `Set ${provider.envKey} for configured provider ${provider.id}; setup checks only whether the variable is set.`
+      );
+    }
+  }
   if (!config.stopReviewGate) {
     nextSteps.push("Optional: run `/stereo:setup --enable-review-gate` to require a fresh review before stop.");
   }
@@ -52,7 +111,12 @@ export async function buildSetupReport(cwd: string, actionsTaken: string[] = [])
     codex: codexStatus,
     writeSandbox,
     auth: authStatus,
-    sessionRuntime: getSessionRuntimeStatus(process.env, workspaceRoot),
+    providers: {
+      active: authStatus.provider,
+      configured: configuredProviders,
+      aliases
+    },
+    sessionRuntime: getSessionRuntimeStatus(env, workspaceRoot),
     strandedReservations,
     reviewGateEnabled: Boolean(config.stopReviewGate),
     actionsTaken,

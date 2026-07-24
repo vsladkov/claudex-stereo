@@ -34,7 +34,12 @@ import {
 // plan-review request distinguished by its optional kind marker.
 type PersistedWorkerRequest = TaskRunRequest & PlanReviewRunRequest & { kind?: string };
 
-function buildTaskJob(workspaceRoot: string, taskMetadata: TaskRunMetadata, write: boolean): CompanionJob {
+function buildTaskJob(
+  workspaceRoot: string,
+  taskMetadata: TaskRunMetadata,
+  model: string | null,
+  write: boolean
+): CompanionJob {
   return createCompanionJob({
     prefix: "task",
     kind: "task",
@@ -42,6 +47,7 @@ function buildTaskJob(workspaceRoot: string, taskMetadata: TaskRunMetadata, writ
     workspaceRoot,
     jobClass: "task",
     summary: taskMetadata.summary,
+    model,
     write
   });
 }
@@ -107,7 +113,7 @@ export async function handleTask(argv: string[]): Promise<void> {
   requireTaskRequest(prompt, resumeLast || Boolean(threadId));
 
   if (options.background) {
-    const job = buildTaskJob(workspaceRoot, taskMetadata, write);
+    const job = buildTaskJob(workspaceRoot, taskMetadata, model, write);
     const request = buildTaskRequest({
       cwd,
       model,
@@ -123,7 +129,7 @@ export async function handleTask(argv: string[]): Promise<void> {
     return;
   }
 
-  const job = buildTaskJob(workspaceRoot, taskMetadata, write);
+  const job = buildTaskJob(workspaceRoot, taskMetadata, model, write);
   await runForegroundCommand(
     job,
     (progress) =>

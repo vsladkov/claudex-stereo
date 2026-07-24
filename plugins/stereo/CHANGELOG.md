@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1
+
+- Show the active and configured model providers in setup, including whether each declared provider environment key is set
+- Persist requested models on every tracked job and show provider-qualified model names in status and stored results
+
 ## 1.3.0
 
 - Add Kimi, Qwen, DeepSeek, and GLM model aliases with per-thread custom-provider routing

@@ -98,7 +98,15 @@ function buildConfigReadResult() {
   switch (BEHAVIOR) {
     case "provider-no-auth":
       return {
-        config: { model_provider: "ollama" },
+        config: {
+          model_provider: "ollama",
+          model_providers: {
+            ollama: {
+              name: "Ollama",
+              env_key: "OLLAMA_API_KEY"
+            }
+          }
+        },
         origins: {}
       };
     case "env-key-provider":
@@ -108,8 +116,21 @@ function buildConfigReadResult() {
           model_providers: {
             "openai-custom": {
               name: "OpenAI custom",
-              env_key: "OPENAI_API_KEY",
+              env_key: "CUSTOM_KEY",
               requires_openai_auth: false
+            }
+          }
+        },
+        origins: {}
+      };
+    case "refreshable-auth":
+      return {
+        config: {
+          model_provider: "openai",
+          model_providers: {
+            moonshot: {
+              name: "Moonshot",
+              env_key: "MOONSHOT_API_KEY"
             }
           }
         },

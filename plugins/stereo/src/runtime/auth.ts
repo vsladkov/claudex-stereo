@@ -12,16 +12,23 @@ export interface CodexAuthStatus {
   verified: boolean | null;
   requiresOpenaiAuth: boolean | null;
   provider: string | null;
+  configuredProviders: ConfiguredProvider[];
 }
 
 export interface CodexAuthStatusOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+export interface ConfiguredProvider {
+  id: string;
+  envKey: string | null;
+}
+
 // The provider table lives in user-editable config, so its shape is read
 // defensively rather than trusted from the protocol types.
 interface ProviderConfigLike {
   name?: unknown;
+  env_key?: unknown;
 }
 
 const BUILTIN_PROVIDER_LABELS = new Map([
@@ -56,6 +63,7 @@ function buildAuthStatus(fields: Partial<CodexAuthStatus> = {}): CodexAuthStatus
     verified: null,
     requiresOpenaiAuth: null,
     provider: null,
+    configuredProviders: [],
     ...fields
   };
 }
@@ -63,12 +71,14 @@ function buildAuthStatus(fields: Partial<CodexAuthStatus> = {}): CodexAuthStatus
 function resolveProviderConfig(configResponse: ConfigReadResponse | null | undefined): {
   providerId: string | null;
   providerConfig: ProviderConfigLike | null;
+  configuredProviders: ConfiguredProvider[];
 } {
   const config = configResponse?.config;
   if (!config || typeof config !== "object") {
     return {
       providerId: null,
-      providerConfig: null
+      providerConfig: null,
+      configuredProviders: []
     };
   }
 
@@ -81,24 +91,42 @@ function resolveProviderConfig(configResponse: ConfigReadResponse | null | undef
       ? (providersValue as Record<string, unknown>)
       : null;
   const providerConfig =
-    providerId && providers?.[providerId] && typeof providers[providerId] === "object"
+    providerId &&
+    providers?.[providerId] &&
+    typeof providers[providerId] === "object" &&
+    !Array.isArray(providers[providerId])
       ? (providers[providerId] as ProviderConfigLike)
       : null;
+  const configuredProviders = providers
+    ? Object.entries(providers).flatMap(([id, value]) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return [];
+        }
+        const provider = value as ProviderConfigLike;
+        return [
+          {
+            id,
+            envKey: typeof provider.env_key === "string" ? provider.env_key : null
+          }
+        ];
+      })
+    : [];
 
   return {
     providerId,
-    providerConfig
+    providerConfig,
+    configuredProviders
   };
 }
 
-function buildAppServerAuthStatus(
+export function buildAppServerAuthStatus(
   accountResponse: GetAccountResponse | null | undefined,
   configResponse: ConfigReadResponse | null | undefined
 ): CodexAuthStatus {
   const account = accountResponse?.account ?? null;
   const requiresOpenaiAuth =
     typeof accountResponse?.requiresOpenaiAuth === "boolean" ? accountResponse.requiresOpenaiAuth : null;
-  const { providerId, providerConfig } = resolveProviderConfig(configResponse);
+  const { providerId, providerConfig, configuredProviders } = resolveProviderConfig(configResponse);
   const providerLabel = formatProviderLabel(providerId, providerConfig);
 
   if (account?.type === "chatgpt") {
@@ -110,7 +138,8 @@ function buildAppServerAuthStatus(
       authMethod: "chatgpt",
       verified: true,
       requiresOpenaiAuth,
-      provider: providerId
+      provider: providerId,
+      configuredProviders
     });
   }
 
@@ -122,7 +151,8 @@ function buildAppServerAuthStatus(
       authMethod: "apiKey",
       verified: false,
       requiresOpenaiAuth,
-      provider: providerId
+      provider: providerId,
+      configuredProviders
     });
   }
 
@@ -132,7 +162,8 @@ function buildAppServerAuthStatus(
       detail: `${providerLabel} is configured and does not require OpenAI authentication`,
       source: "app-server",
       requiresOpenaiAuth,
-      provider: providerId
+      provider: providerId,
+      configuredProviders
     });
   }
 
@@ -141,7 +172,8 @@ function buildAppServerAuthStatus(
     detail: `${providerLabel} requires OpenAI authentication`,
     source: "app-server",
     requiresOpenaiAuth,
-    provider: providerId
+    provider: providerId,
+    configuredProviders
   });
 }
 
@@ -174,7 +206,8 @@ export async function getCodexAuthStatus(cwd: string, options: CodexAuthStatusOp
       authMethod: null,
       verified: null,
       requiresOpenaiAuth: null,
-      provider: null
+      provider: null,
+      configuredProviders: []
     };
   }
 

@@ -32,6 +32,7 @@ export async function handleReviewCommand(argv: string[], config: ReviewCommandC
   });
 
   config.validateRequest?.(target, focusText);
+  const model = normalizeRequestedModel(options.model);
   const metadata = buildReviewJobMetadata(config.reviewName, target);
   const job = createCompanionJob({
     prefix: "review",
@@ -39,7 +40,8 @@ export async function handleReviewCommand(argv: string[], config: ReviewCommandC
     title: metadata.title,
     workspaceRoot,
     jobClass: "review",
-    summary: metadata.summary
+    summary: metadata.summary,
+    model
   });
   await runForegroundCommand(
     job,
@@ -49,7 +51,7 @@ export async function handleReviewCommand(argv: string[], config: ReviewCommandC
         base: options.base as string | undefined,
         scope: options.scope as string | undefined,
         target,
-        model: normalizeRequestedModel(options.model),
+        model,
         focusText,
         reviewName: config.reviewName,
         onProgress: progress

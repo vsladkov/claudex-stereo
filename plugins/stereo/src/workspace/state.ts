@@ -33,6 +33,7 @@ export interface JobRecord {
   jobClass?: string;
   kind?: string;
   summary?: string;
+  model?: string | null;
   errorMessage?: string;
   logFile?: string | null;
   request?: unknown;

@@ -1,5 +1,6 @@
 import { describeStrandedReservation } from "../runtime/reservations.ts";
 import type { StrandedReservationEntry } from "../runtime/reservations.ts";
+import { formatJobModel, resolveJobModel } from "../jobs/job-control.ts";
 
 // Renderer inputs are typed from usage: jobs and stored payloads come from
 // state files written across plugin versions, so every field beyond the id is
@@ -22,6 +23,8 @@ export interface RenderableJob {
   write?: boolean | null;
   errorMessage?: string | null;
   progressPreview?: string[] | null;
+  model?: string | null;
+  modelDisplay?: string | null;
 }
 
 export interface ParsedResultLike {
@@ -70,7 +73,24 @@ export interface StoredJobLike {
   jobClass?: string | null;
   rendered?: string | null;
   errorMessage?: string | null;
+  model?: unknown;
+  request?: unknown;
   result?: StoredJobResultLike | null;
+}
+
+export interface SetupProviderAlias {
+  alias: string;
+  model: string;
+  providerId: string;
+  configured: boolean;
+  envKey: string | null;
+  keySet: boolean | null;
+}
+
+export interface SetupConfiguredProvider {
+  id: string;
+  envKey: string | null;
+  keySet: boolean | null;
 }
 
 export interface SetupRenderReport {
@@ -80,6 +100,11 @@ export interface SetupRenderReport {
   codex: { detail: string };
   writeSandbox?: { available: boolean | null; detail: string } | null;
   auth: { detail: string };
+  providers: {
+    active: string | null;
+    configured: SetupConfiguredProvider[];
+    aliases: SetupProviderAlias[];
+  };
   sessionRuntime: { label: string };
   strandedReservations?: StrandedReservationEntry[] | null;
   reviewGateEnabled?: boolean | null;
@@ -334,21 +359,22 @@ function formatCodexResumeCommand(job: RenderableJob | null | undefined): string
 
 function appendActiveJobsTable(lines: string[], jobs: RenderableJob[]): void {
   lines.push("Active jobs:");
-  lines.push("| Job | Kind | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| Job | Kind | Model | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const job of jobs) {
     const actions = [`/stereo:status ${job.id}`];
     if (job.status === "queued" || job.status === "running") {
       actions.push(`/stereo:cancel ${job.id}`);
     }
     lines.push(
-      `| ${escapeMarkdownCell(job.id)} | ${escapeMarkdownCell(job.kindLabel)} | ${escapeMarkdownCell(job.status)} | ${escapeMarkdownCell(job.phase ?? "")} | ${escapeMarkdownCell(job.elapsed ?? "")} | ${escapeMarkdownCell(job.threadId ?? "")} | ${escapeMarkdownCell(job.summary ?? "")} | ${actions.map((action) => `\`${action}\``).join("<br>")} |`
+      `| ${escapeMarkdownCell(job.id)} | ${escapeMarkdownCell(job.kindLabel)} | ${escapeMarkdownCell(job.modelDisplay ?? "-")} | ${escapeMarkdownCell(job.status)} | ${escapeMarkdownCell(job.phase ?? "")} | ${escapeMarkdownCell(job.elapsed ?? "")} | ${escapeMarkdownCell(job.threadId ?? "")} | ${escapeMarkdownCell(job.summary ?? "")} | ${actions.map((action) => `\`${action}\``).join("<br>")} |`
     );
   }
 }
 
 function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailOptions = {}): void {
   lines.push(`- ${formatJobLine(job)}`);
+  lines.push(`  Model: ${job.modelDisplay ?? "-"}`);
   if (job.summary) {
     lines.push(`  Summary: ${job.summary}`);
   }
@@ -426,6 +452,16 @@ function appendStrandedReservationWarnings(lines: string[], entries: StrandedRes
 }
 
 export function renderSetupReport(report: SetupRenderReport): string {
+  const configuredProviderLines = report.providers.configured.map((provider) => {
+    const aliases = report.providers.aliases
+      .filter((entry) => entry.providerId === provider.id)
+      .map((entry) => `${entry.alias} → ${entry.model}`);
+    const aliasSuffix = aliases.length > 0 ? ` (${aliases.join(", ")})` : "";
+    const keyStatus = provider.envKey
+      ? `${provider.envKey} ${provider.keySet ? "set" : "missing"}`
+      : "no env_key declared";
+    return `- Custom provider ${provider.id}${aliasSuffix}: ${keyStatus}`;
+  });
   const lines = [
     "# Codex Setup",
     "",
@@ -447,6 +483,8 @@ export function renderSetupReport(report: SetupRenderReport): string {
         ]
       : []),
     `- auth: ${report.auth.detail}`,
+    `- Model provider: ${report.providers.active ?? "unknown"} (default)`,
+    ...configuredProviderLines,
     `- session runtime: ${report.sessionRuntime.label}`,
     `- thread reservations: ${
       Array.isArray(report.strandedReservations) && report.strandedReservations.length > 0
@@ -778,26 +816,28 @@ function fencedBlock(text: string, lang = "text"): string[] {
   return [`${fence}${lang}`, String(text ?? ""), fence];
 }
 
-function withResumeFooter(text: string, threadId: string | null): string {
+function withResultFooter(text: string, threadId: string | null, modelDisplay: string): string {
   const output = text.endsWith("\n") ? text : `${text}\n`;
-  if (!threadId) {
-    return output;
+  const footer = [`Model: ${modelDisplay}`];
+  if (threadId) {
+    footer.push(`Codex session ID: ${threadId}`);
+    footer.push(`Resume in Codex: codex resume ${threadId}`);
   }
-  return `${output}\nCodex session ID: ${threadId}\nResume in Codex: codex resume ${threadId}\n`;
+  return `${output}\n${footer.join("\n")}\n`;
 }
 
 export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLike | null | undefined): string {
   const threadId = storedJob?.threadId ?? job.threadId ?? null;
-  const resumeCommand = threadId ? `codex resume ${threadId}` : null;
+  const modelDisplay = job.modelDisplay ?? formatJobModel(resolveJobModel(job, storedJob));
   const taskClass = storedJob?.jobClass ?? job.jobClass ?? null;
   if (taskClass === "task" && storedJob?.rendered) {
-    return withResumeFooter(storedJob.rendered, threadId);
+    return withResultFooter(storedJob.rendered, threadId, modelDisplay);
   }
   // Review-class jobs always prefer the stored rendering: native reviews
   // carry no result/parseError keys, so keying only on the structured shape
   // dropped their heading/Target/reasoning in favor of raw stdout.
   if ((taskClass === "review" || isStructuredReviewStoredResult(storedJob)) && storedJob?.rendered) {
-    return withResumeFooter(storedJob.rendered, threadId);
+    return withResultFooter(storedJob.rendered, threadId, modelDisplay);
   }
 
   const rawOutput =
@@ -805,11 +845,11 @@ export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLi
     (typeof storedJob?.result?.codex?.stdout === "string" && storedJob.result.codex.stdout) ||
     "";
   if (rawOutput) {
-    return withResumeFooter(rawOutput, threadId);
+    return withResultFooter(rawOutput, threadId, modelDisplay);
   }
 
   if (storedJob?.rendered) {
-    return withResumeFooter(storedJob.rendered, threadId);
+    return withResultFooter(storedJob.rendered, threadId, modelDisplay);
   }
 
   const lines = [
@@ -818,11 +858,6 @@ export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLi
     `Job: ${job.id}`,
     `Status: ${job.status}`
   ];
-
-  if (threadId) {
-    lines.push(`Codex session ID: ${threadId}`);
-    lines.push(`Resume in Codex: ${resumeCommand}`);
-  }
 
   if (job.summary) {
     lines.push(`Summary: ${job.summary}`);
@@ -836,7 +871,7 @@ export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLi
     lines.push("", "No captured result payload was stored for this job.");
   }
 
-  return `${lines.join("\n").trimEnd()}\n`;
+  return withResultFooter(`${lines.join("\n").trimEnd()}\n`, threadId, modelDisplay);
 }
 
 export function renderCancelReport(job: RenderableJob): string {

@@ -5,6 +5,7 @@ import {
   renderJobStatusReport,
   renderPlanReviewResult,
   renderReviewResult,
+  renderSetupReport,
   renderStatusReport,
   renderStoredJobResult,
   renderTaskResult
@@ -22,7 +23,9 @@ const runningStatusJob = {
   logFile: "/tmp/task-running.log",
   createdAt: "2026-07-20T08:00:00.000Z",
   startedAt: "2026-07-20T08:00:01.000Z",
-  progressPreview: ["Inspecting status renderer", "Applying file changes"]
+  progressPreview: ["Inspecting status renderer", "Applying file changes"],
+  model: "kimi-k3",
+  modelDisplay: "kimi-k3@moonshot"
 };
 
 const completedStatusJob = {
@@ -38,7 +41,9 @@ const completedStatusJob = {
   createdAt: "2026-07-20T07:30:00.000Z",
   startedAt: "2026-07-20T07:30:05.000Z",
   completedAt: "2026-07-20T07:31:10.000Z",
-  progressPreview: []
+  progressPreview: [],
+  model: "gpt-5.6-sol",
+  modelDisplay: "gpt-5.6-sol"
 };
 
 const recentStatusJob = {
@@ -71,14 +76,14 @@ test("renderStatusReport preserves its non-verbose output byte-for-byte", () => 
   // finished-job details, with no Live details or Progress blocks.
   assert.equal(
     renderStatusReport(statusReport),
-    "# Codex Status\n\nSession runtime: direct startup\nReview gate: disabled\n\nActive jobs:\n| Job | Kind | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| task-running | rescue | running | editing | 42s | thr_running | Implement status diagnostics | `/stereo:status task-running`<br>`/stereo:cancel task-running` |\n\nLatest finished:\n- review-complete | completed | review | Codex Review\n  Summary: Review working tree diff\n  Phase: done\n  Duration: 1m 5s\n  Codex session ID: thr_complete\n  Resume in Codex: codex resume thr_complete\n\nRecent jobs:\n- task-recent | completed | rescue | Codex Task\n  Summary: Update documentation\n  Phase: done\n  Duration: 12s\n  Codex session ID: thr_recent\n  Resume in Codex: codex resume thr_recent\n"
+    "# Codex Status\n\nSession runtime: direct startup\nReview gate: disabled\n\nActive jobs:\n| Job | Kind | Model | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| task-running | rescue | kimi-k3@moonshot | running | editing | 42s | thr_running | Implement status diagnostics | `/stereo:status task-running`<br>`/stereo:cancel task-running` |\n\nLatest finished:\n- review-complete | completed | review | Codex Review\n  Model: gpt-5.6-sol\n  Summary: Review working tree diff\n  Phase: done\n  Duration: 1m 5s\n  Codex session ID: thr_complete\n  Resume in Codex: codex resume thr_complete\n\nRecent jobs:\n- task-recent | completed | rescue | Codex Task\n  Model: -\n  Summary: Update documentation\n  Phase: done\n  Duration: 12s\n  Codex session ID: thr_recent\n  Resume in Codex: codex resume thr_recent\n"
   );
 });
 
 test("renderJobStatusReport preserves its non-verbose output byte-for-byte", () => {
   assert.equal(
     renderJobStatusReport(completedStatusJob),
-    "# Codex Job Status\n\n- review-complete | completed | review | Codex Review\n  Summary: Review working tree diff\n  Phase: done\n  Duration: 1m 5s\n  Codex session ID: thr_complete\n  Resume in Codex: codex resume thr_complete\n  Log: /tmp/review-complete.log\n  Result: /stereo:result review-complete\n"
+    "# Codex Job Status\n\n- review-complete | completed | review | Codex Review\n  Model: gpt-5.6-sol\n  Summary: Review working tree diff\n  Phase: done\n  Duration: 1m 5s\n  Codex session ID: thr_complete\n  Resume in Codex: codex resume thr_complete\n  Log: /tmp/review-complete.log\n  Result: /stereo:result review-complete\n"
   );
 });
 
@@ -99,6 +104,41 @@ test("renderJobStatusReport includes timestamps in verbose output", () => {
   assert.match(output, /  Created: 2026-07-20T07:30:00\.000Z/);
   assert.match(output, /  Started: 2026-07-20T07:30:05\.000Z/);
   assert.match(output, /  Completed: 2026-07-20T07:31:10\.000Z/);
+});
+
+test("renderSetupReport prints the active and configured provider key status", () => {
+  const output = renderSetupReport({
+    ready: true,
+    node: { detail: "v24" },
+    npm: { detail: "11" },
+    codex: { detail: "codex-cli" },
+    writeSandbox: { available: true, detail: "workspace-write sandbox launches" },
+    auth: { detail: "ChatGPT login active" },
+    providers: {
+      active: "openai",
+      configured: [
+        { id: "moonshot", envKey: "MOONSHOT_API_KEY", keySet: true }
+      ],
+      aliases: [
+        {
+          alias: "kimi",
+          model: "kimi-k3",
+          providerId: "moonshot",
+          configured: true,
+          envKey: "MOONSHOT_API_KEY",
+          keySet: true
+        }
+      ]
+    },
+    sessionRuntime: { label: "direct startup" },
+    strandedReservations: [],
+    reviewGateEnabled: false,
+    actionsTaken: [],
+    nextSteps: []
+  });
+
+  assert.match(output, /- Model provider: openai \(default\)/);
+  assert.match(output, /- Custom provider moonshot \(kimi → kimi-k3\): MOONSHOT_API_KEY set/);
 });
 
 test("renderReviewResult degrades gracefully when JSON is missing required review fields", () => {
@@ -143,7 +183,8 @@ test("renderStoredJobResult prefers rendered output for structured review jobs",
       status: "completed",
       title: "Codex Adversarial Review",
       jobClass: "review",
-      threadId: "thr_123"
+      threadId: "thr_123",
+      model: "kimi-k3"
     },
     {
       threadId: "thr_123",
@@ -163,6 +204,7 @@ test("renderStoredJobResult prefers rendered output for structured review jobs",
 
   assert.match(output, /^# Codex Adversarial Review/);
   assert.doesNotMatch(output, /^\{/);
+  assert.match(output, /Model: kimi-k3@moonshot/);
   assert.match(output, /Codex session ID: thr_123/);
   assert.match(output, /Resume in Codex: codex resume thr_123/);
 });
@@ -205,7 +247,8 @@ test("renderStoredJobResult prefers rendered task output over raw output", () =>
       status: "completed",
       title: "Codex Task",
       jobClass: "task",
-      threadId: "thr_task"
+      threadId: "thr_task",
+      model: "gpt-5.6-sol"
     },
     {
       jobClass: "task",
@@ -219,7 +262,50 @@ test("renderStoredJobResult prefers rendered task output over raw output", () =>
 
   assert.match(output, /^Task output\./);
   assert.match(output, /Note: this write-capable run reported no file changes\./);
+  assert.match(output, /Model: gpt-5.6-sol/);
   assert.match(output, /Codex session ID: thr_task/);
+});
+
+test("renderStoredJobResult uses the non-throwing legacy request model fallback", () => {
+  const output = renderStoredJobResult(
+    {
+      id: "task-legacy",
+      status: "completed",
+      title: "Codex Task",
+      jobClass: "task",
+      threadId: null
+    },
+    {
+      jobClass: "task",
+      threadId: null,
+      rendered: "Legacy task output.\n",
+      request: {
+        model: "kimi-k3"
+      }
+    }
+  );
+
+  assert.equal(output, "Legacy task output.\n\nModel: kimi-k3@moonshot\n");
+});
+
+test("renderStoredJobResult tolerates a malformed legacy request while resolving the model", () => {
+  const output = renderStoredJobResult(
+    {
+      id: "task-malformed",
+      status: "completed",
+      title: "Codex Task",
+      jobClass: "task",
+      threadId: null
+    },
+    {
+      jobClass: "task",
+      threadId: null,
+      rendered: "Legacy task output.\n",
+      request: "truncated legacy payload"
+    }
+  );
+
+  assert.equal(output, "Legacy task output.\n\nModel: -\n");
 });
 
 test("renderPlanReviewResult orders findings by severity and lists revision guidance", () => {
@@ -439,4 +525,3 @@ test("raw-output fences grow past embedded backtick runs", () => {
   assert.ok(opener, "outer fence must be 4+ backticks when payload contains ```");
   assert.ok(rendered.includes(hostile), "payload must be embedded verbatim");
 });
-

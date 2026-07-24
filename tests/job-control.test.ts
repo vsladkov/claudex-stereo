@@ -11,12 +11,13 @@ import {
   buildStatusSnapshot,
   enrichJob,
   filterJobsForCurrentSession,
+  formatJobModel,
   readJobProgressPreview,
   resolveCancelableJob,
   resolveResultJob,
   sortJobsNewestFirst
 } from "../plugins/stereo/src/jobs/job-control.ts";
-import { saveState } from "../plugins/stereo/src/workspace/state.ts";
+import { resolveJobFile, saveState, writeJobFile } from "../plugins/stereo/src/workspace/state.ts";
 import type { JobRecord } from "../plugins/stereo/src/workspace/state.ts";
 
 const DEAD_PID = 2147483647;
@@ -139,6 +140,35 @@ test("buildSingleJobSnapshot reports unknown references with its own message", (
 
   assert.equal(buildSingleJobSnapshot(workspace, "task-known").job.id, "task-known");
   assert.throws(() => buildSingleJobSnapshot(workspace, "task-unknown"), /No job found for "task-unknown"/);
+});
+
+test("status enrichment recovers a provider-qualified model from a legacy request", (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  seedJobs(workspace, [jobAt("task-legacy", 1)]);
+  writeJobFile(workspace, "task-legacy", {
+    id: "task-legacy",
+    status: "completed",
+    request: {
+      model: "kimi-k3"
+    }
+  });
+
+  const snapshot = buildSingleJobSnapshot(workspace, "task-legacy");
+  assert.equal(snapshot.job.model, "kimi-k3");
+  assert.equal(snapshot.job.modelDisplay, "kimi-k3@moonshot");
+  assert.equal(formatJobModel("gpt-5.6-sol"), "gpt-5.6-sol");
+});
+
+test("status enrichment treats truncated legacy job JSON as an unknown model", (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  seedJobs(workspace, [jobAt("task-truncated", 1)]);
+  fs.writeFileSync(resolveJobFile(workspace, "task-truncated"), '{"request":', "utf8");
+
+  const snapshot = buildSingleJobSnapshot(workspace, "task-truncated");
+  assert.equal(snapshot.job.model, null);
+  assert.equal(snapshot.job.modelDisplay, "-");
 });
 
 test("enrichJob marks running jobs with dead pids as stalled", { skip: IS_WINDOWS }, () => {

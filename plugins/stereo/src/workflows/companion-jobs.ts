@@ -38,6 +38,7 @@ export interface CompanionJob extends TrackedJob {
   title: string;
   jobClass: string;
   summary: string;
+  model: string | null;
   write: boolean;
   createdAt: string;
   sessionId?: string;
@@ -81,10 +82,20 @@ export interface CreateCompanionJobOptions {
   workspaceRoot: string;
   jobClass: string;
   summary: string;
+  model: string | null;
   write?: boolean;
 }
 
-export function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summary, write = false }: CreateCompanionJobOptions): CompanionJob {
+export function createCompanionJob({
+  prefix,
+  kind,
+  title,
+  workspaceRoot,
+  jobClass,
+  summary,
+  model,
+  write = false
+}: CreateCompanionJobOptions): CompanionJob {
   return createJobRecord({
     id: generateJobId(prefix),
     kind,
@@ -93,6 +104,7 @@ export function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClas
     workspaceRoot,
     jobClass,
     summary,
+    model,
     write
   });
 }

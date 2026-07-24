@@ -41,7 +41,8 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
     title: buildPlanReviewTitle(round),
     workspaceRoot,
     jobClass: "review",
-    summary: shorten(plan)
+    summary: shorten(plan),
+    model
   });
 
   if (options.background) {

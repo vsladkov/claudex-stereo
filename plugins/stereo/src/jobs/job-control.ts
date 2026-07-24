@@ -9,6 +9,7 @@ import {
 import type { SessionRuntimeStatus, StrandedReservationEntry } from "../runtime/index.ts";
 import { getConfig, listJobs, readJobFile, resolveJobFile } from "../workspace/state.ts";
 import type { JobRecord, StereoConfig } from "../workspace/state.ts";
+import { modelProviderFor } from "../models/registry.ts";
 import { SESSION_ID_ENV } from "./tracked-jobs.ts";
 import { resolveWorkspaceRoot } from "../workspace/workspace.ts";
 
@@ -23,6 +24,7 @@ export interface SessionFilterOptions {
 
 export interface EnrichJobOptions {
   maxProgressLines?: number;
+  workspaceRoot?: string;
 }
 
 export interface StatusSnapshotOptions extends SessionFilterOptions, EnrichJobOptions {
@@ -38,6 +40,48 @@ export interface EnrichedJob extends JobRecord {
   elapsed: string | null;
   duration: string | null;
   phase: string;
+  model: string | null;
+  modelDisplay: string;
+}
+
+export interface JobModelLike {
+  model?: unknown;
+  request?: unknown;
+  result?: unknown;
+}
+
+function recordLike(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function normalizedStoredModel(value: unknown): string | null {
+  const model = typeof value === "string" ? value.trim() : "";
+  return model || null;
+}
+
+export function resolveJobModel(
+  job: JobModelLike | null | undefined,
+  storedJob: JobModelLike | null | undefined = null
+): string | null {
+  const direct = normalizedStoredModel(job?.model) ?? normalizedStoredModel(storedJob?.model);
+  if (direct) {
+    return direct;
+  }
+
+  const request = recordLike(storedJob?.request);
+  const result = recordLike(storedJob?.result);
+  return normalizedStoredModel(request?.model) ?? normalizedStoredModel(result?.model);
+}
+
+export function formatJobModel(model: unknown): string {
+  const normalized = normalizedStoredModel(model);
+  if (!normalized) {
+    return "-";
+  }
+  const provider = modelProviderFor(normalized);
+  return provider ? `${normalized}@${provider}` : normalized;
 }
 
 export interface StatusSnapshot {
@@ -249,8 +293,21 @@ function isJobProcessGone(job: JobRecord): boolean {
 
 export function enrichJob(job: JobRecord, options: EnrichJobOptions = {}): EnrichedJob {
   const maxProgressLines = options.maxProgressLines ?? DEFAULT_MAX_PROGRESS_LINES;
+  let storedJob: JobRecord | null = null;
+  if (!resolveJobModel(job) && options.workspaceRoot) {
+    try {
+      storedJob = readStoredJob(options.workspaceRoot, job.id);
+    } catch {
+      // Job files are written by another process and may be absent or
+      // temporarily incomplete. Model visibility is advisory.
+      storedJob = null;
+    }
+  }
+  const model = resolveJobModel(job, storedJob);
   const enriched = {
     ...job,
+    model,
+    modelDisplay: formatJobModel(model),
     kindLabel: getJobTypeLabel(job),
     progressPreview:
       job.status === "queued" || job.status === "running" || job.status === "failed"
@@ -322,16 +379,18 @@ export function buildStatusSnapshot(cwd: string, options: StatusSnapshotOptions 
 
   const running = jobs
     .filter((job) => job.status === "queued" || job.status === "running")
-    .map((job) => enrichJob(job, { maxProgressLines }));
+    .map((job) => enrichJob(job, { maxProgressLines, workspaceRoot }));
 
   const latestFinishedRaw = jobs.find((job) => job.status !== "queued" && job.status !== "running") ?? null;
-  const latestFinished = latestFinishedRaw ? enrichJob(latestFinishedRaw, { maxProgressLines }) : null;
+  const latestFinished = latestFinishedRaw
+    ? enrichJob(latestFinishedRaw, { maxProgressLines, workspaceRoot })
+    : null;
 
   const finishedPastLatest = jobs.filter(
     (job) => job.status !== "queued" && job.status !== "running" && job.id !== latestFinished?.id
   );
   const recent = (options.all ? finishedPastLatest : finishedPastLatest.slice(0, maxJobs)).map((job) =>
-    enrichJob(job, { maxProgressLines })
+    enrichJob(job, { maxProgressLines, workspaceRoot })
   );
 
   return {
@@ -357,7 +416,7 @@ export function buildSingleJobSnapshot(cwd: string, reference: string, options: 
   return {
     workspaceRoot,
     strandedReservations: listStrandedThreadReservations(),
-    job: enrichJob(selected, { maxProgressLines: options.maxProgressLines })
+    job: enrichJob(selected, { maxProgressLines: options.maxProgressLines, workspaceRoot })
   };
 }
 

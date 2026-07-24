@@ -14,6 +14,7 @@ import {
   initializeBasicRepo,
   readFakeState,
   registerBrokerReaping,
+  registerSessionCleanup,
   waitFor
 } from "./runtime-helpers.ts";
 import { loadBrokerSession, saveBrokerSession } from "../plugins/stereo/src/broker/lifecycle.ts";
@@ -173,10 +174,14 @@ test("setup is ready when the active provider does not require OpenAI login", ()
 test("setup treats custom providers with app-server-ready config as ready", () => {
   const binDir = makeTempDir();
   installFakeCodex(binDir, "env-key-provider");
+  const env = {
+    ...buildEnv(binDir),
+    CUSTOM_KEY: "test-key"
+  };
 
   const result = run("node", [SCRIPT, "setup", "--json"], {
     cwd: ROOT,
-    env: buildEnv(binDir)
+    env
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -185,7 +190,47 @@ test("setup treats custom providers with app-server-ready config as ready", () =
   assert.equal(payload.auth.loggedIn, true);
   assert.equal(payload.auth.authMethod, null);
   assert.equal(payload.auth.source, "app-server");
+  assert.deepEqual(payload.auth.configuredProviders, [
+    { id: "openai-custom", envKey: "CUSTOM_KEY" }
+  ]);
+  assert.equal(payload.providers.active, "openai-custom");
+  assert.deepEqual(payload.providers.configured, [
+    { id: "openai-custom", envKey: "CUSTOM_KEY", keySet: true }
+  ]);
   assert.match(payload.auth.detail, /configured and does not require OpenAI authentication/i);
+
+  const rendered = run("node", [SCRIPT, "setup"], {
+    cwd: ROOT,
+    env
+  });
+  assert.equal(rendered.status, 0, rendered.stderr);
+  assert.match(rendered.stdout, /Model provider: openai-custom \(default\)/);
+  assert.match(rendered.stdout, /Custom provider openai-custom: CUSTOM_KEY set/);
+});
+
+test("setup preserves configured providers when OpenAI auth is logged out", () => {
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "refreshable-auth");
+  const env = {
+    ...buildEnv(binDir),
+    MOONSHOT_API_KEY: "test-key"
+  };
+
+  const result = run("node", [SCRIPT, "setup", "--json"], {
+    cwd: ROOT,
+    env
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.auth.loggedIn, false);
+  assert.deepEqual(payload.auth.configuredProviders, [
+    { id: "moonshot", envKey: "MOONSHOT_API_KEY" }
+  ]);
+  assert.equal(
+    payload.providers.aliases.find((entry: Record<string, unknown>) => entry.alias === "kimi").configured,
+    true
+  );
 });
 
 test("setup reports not ready when app-server config read fails", () => {
@@ -498,6 +543,90 @@ test("review accepts --background while still running as a tracked review job", 
   assert.match(status.stdout, /completed/);
 });
 
+test("status shows a provider-qualified model for an active background task", async (t) => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "interruptible-slow-task");
+  const env = {
+    ...buildEnv(binDir),
+    CODEX_COMPANION_SESSION_ID: "sess-model-background"
+  };
+  registerSessionCleanup(t, repo, env);
+
+  const launched = run("node", [SCRIPT, "task", "--background", "--model", "kimi", "--json", "inspect model routing"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId as string;
+
+  await waitFor(() => {
+    const state = JSON.parse(
+      fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8")
+    );
+    return state.jobs.find((job: Record<string, unknown>) => job.id === jobId && job.status === "running");
+  }, { timeoutMs: 10000 });
+
+  const jsonStatus = run("node", [SCRIPT, "status", "--json"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(jsonStatus.status, 0, jsonStatus.stderr);
+  const snapshot = JSON.parse(jsonStatus.stdout);
+  const job = snapshot.running.find((entry: Record<string, unknown>) => entry.id === jobId);
+  assert.equal(job.model, "kimi-k3");
+  assert.equal(job.modelDisplay, "kimi-k3@moonshot");
+
+  const renderedStatus = run("node", [SCRIPT, "status"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(renderedStatus.status, 0, renderedStatus.stderr);
+  assert.match(renderedStatus.stdout, new RegExp(`\\| ${jobId} \\| rescue \\| kimi-k3@moonshot \\| running \\|`));
+
+  const cancelled = run("node", [SCRIPT, "cancel", jobId, "--json"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(cancelled.status, 0, cancelled.stderr);
+});
+
+test("foreground task status and result retain the provider-qualified model", () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const task = run("node", [SCRIPT, "task", "--model", "kimi", "inspect model routing"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(task.status, 0, task.stderr);
+
+  const jsonStatus = run("node", [SCRIPT, "status", "--json"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(jsonStatus.status, 0, jsonStatus.stderr);
+  const snapshot = JSON.parse(jsonStatus.stdout);
+  assert.equal(snapshot.latestFinished.model, "kimi-k3");
+  assert.equal(snapshot.latestFinished.modelDisplay, "kimi-k3@moonshot");
+
+  const renderedStatus = run("node", [SCRIPT, "status"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(renderedStatus.status, 0, renderedStatus.stderr);
+  assert.match(renderedStatus.stdout, /Model: kimi-k3@moonshot/);
+
+  const result = run("node", [SCRIPT, "result"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Model: kimi-k3@moonshot/);
+});
+
 test("status shows phases, hints, and the latest finished job", () => {
   const workspace = makeTempDir();
   const stateDir = resolveStateDir(workspace);
@@ -586,8 +715,8 @@ test("status shows phases, hints, and the latest finished job", () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Active jobs:/);
-  assert.match(result.stdout, /\| Job \| Kind \| Status \| Phase \| Elapsed \| Codex Session ID \| Summary \| Actions \|/);
-  assert.match(result.stdout, /\| review-live \| review \| running \| reviewing \| .* \| thr_1 \| Review working tree diff \|/);
+  assert.match(result.stdout, /\| Job \| Kind \| Model \| Status \| Phase \| Elapsed \| Codex Session ID \| Summary \| Actions \|/);
+  assert.match(result.stdout, /\| review-live \| review \| - \| running \| reviewing \| .* \| thr_1 \| Review working tree diff \|/);
   assert.match(result.stdout, /`\/stereo:status review-live`<br>`\/stereo:cancel review-live`/);
   assert.match(result.stdout, /Latest finished:/);
   assert.match(result.stdout, /Session runtime: direct startup/);
@@ -792,7 +921,7 @@ test("status preserves adversarial review kind labels", () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /\| review-adv-live \| adversarial-review \| running \| reviewing \|/);
+  assert.match(result.stdout, /\| review-adv-live \| adversarial-review \| - \| running \| reviewing \|/);
   assert.match(result.stdout, /- review-adv \| completed \| adversarial-review \| Codex Adversarial Review/);
   // The running job's session id lives in the table cell (details are
   // verbose-only); the finished job keeps its detail line.
@@ -860,6 +989,44 @@ test("status --wait times out cleanly when a job is still active", () => {
   assert.equal(payload.waitTimedOut, true);
 });
 
+test("status treats a truncated legacy job file as an unknown model", () => {
+  const workspace = makeTempDir();
+  const stateDir = resolveStateDir(workspace);
+  const jobsDir = path.join(stateDir, "jobs");
+  fs.mkdirSync(jobsDir, { recursive: true });
+  fs.writeFileSync(path.join(jobsDir, "task-truncated.json"), '{"request":', "utf8");
+  fs.writeFileSync(
+    path.join(stateDir, "state.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: "task-truncated",
+            status: "completed",
+            title: "Codex Task",
+            jobClass: "task",
+            updatedAt: "2026-03-18T15:30:00.000Z"
+          }
+        ]
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const result = run("node", [SCRIPT, "status", "task-truncated", "--json"], {
+    cwd: workspace
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.job.model, null);
+  assert.equal(payload.job.modelDisplay, "-");
+});
+
 test("result returns the stored output for the latest finished job by default", () => {
   const workspace = makeTempDir();
   const stateDir = resolveStateDir(workspace);
@@ -921,7 +1088,7 @@ test("result returns the stored output for the latest finished job by default", 
   // review-class jobs.
   assert.equal(
     result.stdout,
-    "# Codex Review\n\nReviewed uncommitted changes.\nNo material issues found.\n\nCodex session ID: thr_review_finished\nResume in Codex: codex resume thr_review_finished\n"
+    "# Codex Review\n\nReviewed uncommitted changes.\nNo material issues found.\n\nModel: -\nCodex session ID: thr_review_finished\nResume in Codex: codex resume thr_review_finished\n"
   );
 });
 
@@ -1019,7 +1186,7 @@ test("result without a job id prefers the latest finished job from the current C
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
     result.stdout,
-    "Current session output.\n\nCodex session ID: thr_current\nResume in Codex: codex resume thr_current\n"
+    "Current session output.\n\nModel: -\nCodex session ID: thr_current\nResume in Codex: codex resume thr_current\n"
   );
 });
 
