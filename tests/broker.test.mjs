@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
 import { makeTempDir } from "./helpers.ts";
 import { createBrokerEndpoint, parseBrokerEndpoint } from "../plugins/stereo/src/broker/endpoint.ts";
-import { BROKER_BUSY_RPC_CODE } from "../plugins/stereo/scripts/lib/app-server.mjs";
+import { BROKER_BUSY_RPC_CODE } from "../plugins/stereo/src/transport/app-server-client.ts";
 import {
   ensureBrokerSession,
   loadBrokerSession,
@@ -18,7 +18,7 @@ import {
   sendBrokerShutdownIfIdle,
   spawnBrokerProcess,
   waitForBrokerEndpoint
-} from "../plugins/stereo/scripts/lib/broker-lifecycle.mjs";
+} from "../plugins/stereo/src/broker/lifecycle.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BROKER_SCRIPT = path.join(ROOT, "plugins", "stereo", "scripts", "app-server-broker.mjs");

@@ -9,8 +9,8 @@ import {
   createJobRecord,
   normalizeProgressEvent,
   runTrackedJob
-} from "../plugins/stereo/scripts/lib/tracked-jobs.mjs";
-import { listJobs, readJobFile, resolveJobFile, saveState } from "../plugins/stereo/scripts/lib/state.mjs";
+} from "../plugins/stereo/src/jobs/tracked-jobs.ts";
+import { listJobs, readJobFile, resolveJobFile, saveState } from "../plugins/stereo/src/workspace/state.ts";
 
 const IS_WINDOWS = process.platform === "win32";
 
@@ -20,7 +20,7 @@ function makeWorkspace() {
   return workspace;
 }
 
-function baseJob(workspace, id) {
+function baseJob(workspace: string, id: string) {
   return createJobRecord(
     {
       id,
@@ -53,6 +53,7 @@ test("runTrackedJob persists completed state for a successful runner", async () 
   assert.deepEqual(stored.result, { done: true });
 
   const indexed = listJobs(workspace).find((job) => job.id === "job-ok");
+  assert.ok(indexed);
   assert.equal(indexed.status, "completed");
   assert.equal(indexed.summary, "All good.");
   assert.equal(indexed.pid, null);
@@ -90,6 +91,7 @@ test("runTrackedJob records a thrown runner error and rethrows it", async () => 
   assert.equal(stored.pid, null);
 
   const indexed = listJobs(workspace).find((job) => job.id === "job-throws");
+  assert.ok(indexed);
   assert.equal(indexed.status, "failed");
   assert.equal(indexed.errorMessage, "runner exploded");
 });
@@ -129,6 +131,7 @@ test(
     // ...and the index reached terminal state via the minimal fallback
     // upsert, so the job can never linger as running/stalled.
     const indexed = listJobs(workspace).find((entry) => entry.id === "job-degraded");
+    assert.ok(indexed);
     assert.equal(indexed.status, "completed");
     assert.equal(indexed.pid, null);
   }

@@ -1,20 +1,35 @@
-/**
- * @typedef {Error & { data?: unknown, rpcCode?: number }} ProtocolError
- * @typedef {import("./app-server-protocol").AppServerMethod} AppServerMethod
- * @typedef {import("./app-server-protocol").AppServerNotification} AppServerNotification
- * @typedef {import("./app-server-protocol").AppServerNotificationHandler} AppServerNotificationHandler
- * @typedef {import("./app-server-protocol").ClientInfo} ClientInfo
- * @typedef {import("./app-server-protocol").CodexAppServerClientOptions} CodexAppServerClientOptions
- * @typedef {import("./app-server-protocol").InitializeCapabilities} InitializeCapabilities
- */
 import fs from "node:fs";
 import net from "node:net";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
-import { parseBrokerEndpoint } from "../../src/broker/endpoint.ts";
-import { ensureBrokerSession, loadBrokerSession } from "./broker-lifecycle.mjs";
-import { terminateProcessTree } from "../../src/platform/process.ts";
+import type { ChildProcessByStdio } from "node:child_process";
+import type { Interface as ReadlineInterface } from "node:readline";
+import type { Socket } from "node:net";
+import type { Readable, Writable } from "node:stream";
+import { parseBrokerEndpoint } from "../broker/endpoint.ts";
+import { ensureBrokerSession, loadBrokerSession } from "../broker/lifecycle.ts";
+import { terminateProcessTree } from "../platform/process.ts";
+import type {
+  AppServerMethod,
+  AppServerNotification,
+  AppServerNotificationHandler,
+  AppServerRequestParams,
+  AppServerResponse,
+  ClientInfo,
+  CodexAppServerClientOptions,
+  InitializeCapabilities
+} from "../protocol/app-server.ts";
+
+type ProtocolError = Error & { data?: unknown; rpcCode?: number };
+
+interface PendingRequest {
+  // The pending map is heterogeneous across methods, so the per-method result
+  // type is erased at the storage boundary.
+  resolve: (value: any) => void;
+  reject: (error: Error) => void;
+  method: string;
+}
 
 const PLUGIN_MANIFEST_URL = new URL("../../.claude-plugin/plugin.json", import.meta.url);
 const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, "utf8"));
@@ -22,15 +37,13 @@ const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, "utf8"))
 export const BROKER_ENDPOINT_ENV = "CODEX_COMPANION_APP_SERVER_ENDPOINT";
 export const BROKER_BUSY_RPC_CODE = -32001;
 
-/** @type {ClientInfo} */
-const DEFAULT_CLIENT_INFO = {
+const DEFAULT_CLIENT_INFO: ClientInfo = {
   title: "Codex Plugin",
   name: "Claude Code",
   version: PLUGIN_MANIFEST.version ?? "0.0.0"
 };
 
-/** @type {InitializeCapabilities} */
-const DEFAULT_CAPABILITIES = {
+const DEFAULT_CAPABILITIES: InitializeCapabilities = {
   experimentalApi: false,
   requestAttestation: false,
   optOutNotificationMethods: [
@@ -41,21 +54,36 @@ const DEFAULT_CAPABILITIES = {
   ]
 };
 
-function buildJsonRpcError(code, message, data) {
+function buildJsonRpcError(code: number, message: string, data?: unknown): { code: number; message: string; data?: unknown } {
   return data === undefined ? { code, message } : { code, message, data };
 }
 
-function createProtocolError(message, data) {
-  const error = /** @type {ProtocolError} */ (new Error(message));
+function createProtocolError(message: string, data?: unknown): ProtocolError {
+  const error = new Error(message) as ProtocolError;
   error.data = data;
-  if (data?.code !== undefined) {
-    error.rpcCode = data.code;
+  const typedData = data as { code?: number } | null | undefined;
+  if (typedData?.code !== undefined) {
+    error.rpcCode = typedData.code;
   }
   return error;
 }
 
 class AppServerClientBase {
-  constructor(cwd, options = {}) {
+  declare cwd: string;
+  declare options: CodexAppServerClientOptions;
+  declare pending: Map<number, PendingRequest>;
+  declare nextId: number;
+  declare stderr: string;
+  declare closed: boolean;
+  declare exitResolved: boolean;
+  declare exitError: Error | null;
+  declare notificationHandler: AppServerNotificationHandler | null;
+  declare lineBuffer: string;
+  declare transport: string;
+  declare exitPromise: Promise<unknown>;
+  declare resolveExit: (value?: unknown) => void;
+
+  constructor(cwd: string, options: CodexAppServerClientOptions = {}) {
     this.cwd = cwd;
     this.options = options;
     this.pending = new Map();
@@ -64,7 +92,6 @@ class AppServerClientBase {
     this.closed = false;
     this.exitResolved = false;
     this.exitError = null;
-    /** @type {AppServerNotificationHandler | null} */
     this.notificationHandler = null;
     this.lineBuffer = "";
     this.transport = "unknown";
@@ -74,17 +101,11 @@ class AppServerClientBase {
     });
   }
 
-  setNotificationHandler(handler) {
+  setNotificationHandler(handler: AppServerNotificationHandler | null): void {
     this.notificationHandler = handler;
   }
 
-  /**
-   * @template {AppServerMethod} M
-   * @param {M} method
-   * @param {import("./app-server-protocol").AppServerRequestParams<M>} params
-   * @returns {Promise<import("./app-server-protocol").AppServerResponse<M>>}
-   */
-  request(method, params) {
+  request<M extends AppServerMethod>(method: M, params: AppServerRequestParams<M>): Promise<AppServerResponse<M>> {
     if (this.closed) {
       return Promise.reject(new Error("codex app-server client is closed."));
     }
@@ -101,14 +122,14 @@ class AppServerClientBase {
     });
   }
 
-  notify(method, params = {}) {
+  notify(method: string, params: unknown = {}): void {
     if (this.closed) {
       return;
     }
     this.sendMessage({ method, params });
   }
 
-  handleChunk(chunk) {
+  handleChunk(chunk: string | Buffer): void {
     this.lineBuffer += chunk;
     let newlineIndex = this.lineBuffer.indexOf("\n");
     while (newlineIndex !== -1) {
@@ -119,7 +140,7 @@ class AppServerClientBase {
     }
   }
 
-  handleLine(line) {
+  handleLine(line: string): void {
     if (!line.trim()) {
       return;
     }
@@ -128,7 +149,7 @@ class AppServerClientBase {
     try {
       message = JSON.parse(line);
     } catch (error) {
-      this.handleExit(createProtocolError(`Failed to parse codex app-server JSONL: ${error.message}`, { line }));
+      this.handleExit(createProtocolError(`Failed to parse codex app-server JSONL: ${(error as Error).message}`, { line }));
       return;
     }
 
@@ -153,11 +174,11 @@ class AppServerClientBase {
     }
 
     if (message.method && this.notificationHandler) {
-      this.notificationHandler(/** @type {AppServerNotification} */ (message));
+      this.notificationHandler(message as AppServerNotification);
     }
   }
 
-  handleServerRequest(message) {
+  handleServerRequest(message: { id?: unknown; method?: unknown }): void {
     process.stderr.write(`Unsupported codex app-server request: ${message.method}\n`);
     try {
       this.sendMessage({
@@ -169,7 +190,7 @@ class AppServerClientBase {
     }
   }
 
-  handleExit(error) {
+  handleExit(error?: Error | null): void {
     if (this.exitResolved) {
       return;
     }
@@ -184,18 +205,21 @@ class AppServerClientBase {
     this.resolveExit(undefined);
   }
 
-  sendMessage(_message) {
+  sendMessage(_message: unknown): void {
     throw new Error("sendMessage must be implemented by subclasses.");
   }
 }
 
 class SpawnedCodexAppServerClient extends AppServerClientBase {
-  constructor(cwd, options = {}) {
+  declare proc?: ChildProcessByStdio<Writable, Readable, Readable>;
+  declare readline?: ReadlineInterface;
+
+  constructor(cwd: string, options: CodexAppServerClientOptions = {}) {
     super(cwd, options);
     this.transport = "direct";
   }
 
-  async initialize() {
+  async initialize(): Promise<void> {
     this.proc = spawn("codex", ["app-server"], {
       cwd: this.cwd,
       env: this.options.env ?? process.env,
@@ -238,7 +262,7 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
     this.notify("initialized", {});
   }
 
-  async close() {
+  async close(): Promise<void> {
     if (this.closed) {
       await this.exitPromise;
       return;
@@ -259,7 +283,7 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
           // the grandchild node process.
           if (process.platform === "win32") {
             try {
-              terminateProcessTree(this.proc.pid);
+              terminateProcessTree(this.proc.pid as number);
             } catch {
               // Best-effort cleanup inside an unref'd timer — swallow errors
               // to avoid crashing the host process during shutdown.
@@ -274,7 +298,7 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
     await this.exitPromise;
   }
 
-  sendMessage(message) {
+  override sendMessage(message: unknown): void {
     const line = `${JSON.stringify(message)}\n`;
     const stdin = this.proc?.stdin;
     if (!stdin) {
@@ -285,15 +309,18 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
 }
 
 class BrokerCodexAppServerClient extends AppServerClientBase {
-  constructor(cwd, options = {}) {
+  declare endpoint: string | undefined;
+  declare socket?: Socket;
+
+  constructor(cwd: string, options: CodexAppServerClientOptions = {}) {
     super(cwd, options);
     this.transport = "broker";
     this.endpoint = options.brokerEndpoint;
   }
 
-  async initialize() {
+  async initialize(): Promise<void> {
     await new Promise((resolve, reject) => {
-      const target = parseBrokerEndpoint(this.endpoint);
+      const target = parseBrokerEndpoint(this.endpoint as string);
       this.socket = net.createConnection({ path: target.path });
       this.socket.setEncoding("utf8");
       this.socket.on("connect", resolve);
@@ -318,7 +345,7 @@ class BrokerCodexAppServerClient extends AppServerClientBase {
     this.notify("initialized", {});
   }
 
-  async close() {
+  async close(): Promise<void> {
     if (this.closed) {
       await this.exitPromise;
       return;
@@ -331,7 +358,7 @@ class BrokerCodexAppServerClient extends AppServerClientBase {
     await this.exitPromise;
   }
 
-  sendMessage(message) {
+  override sendMessage(message: unknown): void {
     const line = `${JSON.stringify(message)}\n`;
     const socket = this.socket;
     if (!socket) {
@@ -342,8 +369,8 @@ class BrokerCodexAppServerClient extends AppServerClientBase {
 }
 
 export class CodexAppServerClient {
-  static async connect(cwd, options = {}) {
-    let brokerEndpoint = null;
+  static async connect(cwd: string, options: CodexAppServerClientOptions = {}): Promise<SpawnedCodexAppServerClient | BrokerCodexAppServerClient> {
+    let brokerEndpoint: string | null | undefined = null;
     if (!options.disableBroker) {
       brokerEndpoint = options.brokerEndpoint ?? options.env?.[BROKER_ENDPOINT_ENV] ?? process.env[BROKER_ENDPOINT_ENV] ?? null;
       if (!brokerEndpoint && options.reuseExistingBroker) {

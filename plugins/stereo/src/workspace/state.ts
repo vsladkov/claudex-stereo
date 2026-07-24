@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveWorkspaceRoot } from "./workspace.mjs";
+import { resolveWorkspaceRoot } from "./workspace.ts";
 
 const STATE_VERSION = 1;
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
@@ -12,11 +12,56 @@ const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 50;
 
-export function nowIso() {
+export interface StereoConfig {
+  stopReviewGate: boolean;
+}
+
+export interface JobRecord {
+  id: string;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  phase?: string | null;
+  pid?: number | null;
+  threadId?: string | null;
+  turnId?: string | null;
+  sessionId?: string;
+  workspaceRoot?: string;
+  title?: string;
+  jobClass?: string;
+  kind?: string;
+  summary?: string;
+  errorMessage?: string;
+  logFile?: string | null;
+  request?: unknown;
+  result?: unknown;
+  rendered?: string;
+  [key: string]: unknown;
+}
+
+export type JobPatch = Partial<JobRecord> & { id: string };
+
+export interface StereoState {
+  version: number;
+  config: StereoConfig;
+  jobs: JobRecord[];
+}
+
+// saveState tolerates stale or partial snapshots, so its input is looser than
+// the fully-populated StereoState it returns.
+export interface StereoStateInput {
+  version?: number;
+  config?: Partial<StereoConfig> | null;
+  jobs?: JobRecord[] | null;
+}
+
+export function nowIso(): string {
   return new Date().toISOString();
 }
 
-function defaultState() {
+function defaultState(): StereoState {
   return {
     version: STATE_VERSION,
     config: {
@@ -27,13 +72,13 @@ function defaultState() {
 }
 
 // The shared index stores lightweight metadata; full request payloads live only in per-job files.
-function stripIndexOnlyFields(job) {
+function stripIndexOnlyFields(job: JobRecord): JobRecord {
   const indexJob = { ...job };
   delete indexJob.request;
   return indexJob;
 }
 
-export function resolveStateDir(cwd) {
+export function resolveStateDir(cwd: string): string {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   let canonicalWorkspaceRoot = workspaceRoot;
   try {
@@ -50,19 +95,19 @@ export function resolveStateDir(cwd) {
   return path.join(stateRoot, `${slug}-${hash}`);
 }
 
-export function resolveStateFile(cwd) {
+export function resolveStateFile(cwd: string): string {
   return path.join(resolveStateDir(cwd), STATE_FILE_NAME);
 }
 
-export function resolveJobsDir(cwd) {
+export function resolveJobsDir(cwd: string): string {
   return path.join(resolveStateDir(cwd), JOBS_DIR_NAME);
 }
 
-export function ensureStateDir(cwd) {
+export function ensureStateDir(cwd: string): void {
   fs.mkdirSync(resolveJobsDir(cwd), { recursive: true });
 }
 
-export function loadState(cwd) {
+export function loadState(cwd: string): StereoState {
   const stateFile = resolveStateFile(cwd);
   if (!fs.existsSync(stateFile)) {
     return defaultState();
@@ -84,13 +129,13 @@ export function loadState(cwd) {
   }
 }
 
-function pruneJobs(jobs) {
+function pruneJobs(jobs: JobRecord[]): JobRecord[] {
   return [...jobs]
     .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")))
     .slice(0, MAX_JOBS);
 }
 
-function removeFileIfExists(filePath) {
+function removeFileIfExists(filePath: string | null | undefined): void {
   if (filePath && fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);
   }
@@ -98,7 +143,7 @@ function removeFileIfExists(filePath) {
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
-function readJobFileFresh(jobFile) {
+function readJobFileFresh(jobFile: string): { missing: boolean; record: JobRecord | null } {
   if (!fs.existsSync(jobFile)) {
     return { missing: true, record: null };
   }
@@ -109,7 +154,7 @@ function readJobFileFresh(jobFile) {
   }
 }
 
-export function saveState(cwd, state) {
+export function saveState(cwd: string, state: StereoStateInput): StereoState {
   const previousJobs = loadState(cwd).jobs;
   ensureStateDir(cwd);
   const nextJobs = pruneJobs(state.jobs ?? []).map(stripIndexOnlyFields);
@@ -139,7 +184,7 @@ export function saveState(cwd, state) {
     retainedIds.add(job.id);
   }
 
-  const nextState = {
+  const nextState: StereoState = {
     version: STATE_VERSION,
     config: {
       ...defaultState().config,
@@ -152,18 +197,18 @@ export function saveState(cwd, state) {
   return nextState;
 }
 
-export function updateState(cwd, mutate) {
+export function updateState(cwd: string, mutate: (state: StereoState) => void): StereoState {
   const state = loadState(cwd);
   mutate(state);
   return saveState(cwd, state);
 }
 
-export function generateJobId(prefix = "job") {
+export function generateJobId(prefix = "job"): string {
   const random = Math.random().toString(36).slice(2, 8);
   return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
 
-export function upsertJob(cwd, jobPatch) {
+export function upsertJob(cwd: string, jobPatch: JobPatch): StereoState {
   return updateState(cwd, (state) => {
     const timestamp = nowIso();
     const existingIndex = state.jobs.findIndex((job) => job.id === jobPatch.id);
@@ -172,22 +217,22 @@ export function upsertJob(cwd, jobPatch) {
         createdAt: timestamp,
         updatedAt: timestamp,
         ...jobPatch
-      });
+      } as JobRecord);
       return;
     }
     state.jobs[existingIndex] = {
       ...state.jobs[existingIndex],
       ...jobPatch,
       updatedAt: timestamp
-    };
+    } as JobRecord;
   });
 }
 
-export function listJobs(cwd) {
+export function listJobs(cwd: string): JobRecord[] {
   return loadState(cwd).jobs;
 }
 
-export function setConfig(cwd, key, value) {
+export function setConfig(cwd: string, key: string, value: unknown): StereoState {
   return updateState(cwd, (state) => {
     state.config = {
       ...state.config,
@@ -196,50 +241,50 @@ export function setConfig(cwd, key, value) {
   });
 }
 
-export function getConfig(cwd) {
+export function getConfig(cwd: string): StereoConfig {
   return loadState(cwd).config;
 }
 
-export function writeJobFile(cwd, jobId, payload) {
+export function writeJobFile(cwd: string, jobId: string, payload: unknown): string {
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
   fs.writeFileSync(jobFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   return jobFile;
 }
 
-export function readJobFile(jobFile) {
+export function readJobFile(jobFile: string): JobRecord {
   return JSON.parse(fs.readFileSync(jobFile, "utf8"));
 }
 
-function removeJobFile(jobFile) {
+function removeJobFile(jobFile: string): void {
   if (fs.existsSync(jobFile)) {
     fs.unlinkSync(jobFile);
   }
 }
 
-export function resolveJobLogFile(cwd, jobId) {
+export function resolveJobLogFile(cwd: string, jobId: string): string {
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.log`);
 }
 
-export function resolveJobFile(cwd, jobId) {
+export function resolveJobFile(cwd: string, jobId: string): string {
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
 }
 
 const PAIR_PLAN_FILE_NAME = "pair-plan.json";
 
-export function resolvePairPlanFile(cwd) {
+export function resolvePairPlanFile(cwd: string): string {
   return path.join(resolveStateDir(cwd), PAIR_PLAN_FILE_NAME);
 }
 
-export function savePairPlanState(cwd, record) {
+export function savePairPlanState<T>(cwd: string, record: T): T {
   ensureStateDir(cwd);
   fs.writeFileSync(resolvePairPlanFile(cwd), `${JSON.stringify(record, null, 2)}\n`, "utf8");
   return record;
 }
 
-export function loadPairPlanState(cwd) {
+export function loadPairPlanState(cwd: string): unknown {
   const pairPlanFile = resolvePairPlanFile(cwd);
   if (!fs.existsSync(pairPlanFile)) {
     return null;

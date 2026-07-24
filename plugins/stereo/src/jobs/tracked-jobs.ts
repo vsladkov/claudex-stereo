@@ -1,20 +1,58 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { nowIso, readJobFile, resolveJobFile, resolveJobLogFile, upsertJob, writeJobFile } from "./state.mjs";
+import { nowIso, readJobFile, resolveJobFile, resolveJobLogFile, upsertJob, writeJobFile } from "../workspace/state.ts";
+import type { JobPatch, JobRecord } from "../workspace/state.ts";
 
 export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
 
-export function normalizeProgressEvent(value) {
+export interface ProgressEvent {
+  message: string;
+  phase: string | null;
+  threadId: string | null;
+  turnId: string | null;
+  stderrMessage: string | null;
+  logTitle: string | null;
+  logBody: string | null;
+}
+
+// The runner-result shape runTrackedJob consumes.
+export interface JobExecution {
+  exitStatus: number;
+  threadId?: string | null;
+  turnId?: string | null;
+  payload?: unknown;
+  rendered?: string;
+  summary?: string;
+}
+
+// A job handed to runTrackedJob must know which workspace owns its artifacts.
+export interface TrackedJob extends JobRecord {
+  workspaceRoot: string;
+}
+
+export interface CreateJobRecordOptions {
+  env?: NodeJS.ProcessEnv;
+  sessionIdEnv?: string;
+}
+
+export interface CreateProgressReporterOptions {
+  stderr?: boolean;
+  logFile?: string | null;
+  onEvent?: ((event: ProgressEvent) => void) | null;
+}
+
+export function normalizeProgressEvent(value: unknown): ProgressEvent {
   if (value && typeof value === "object" && !Array.isArray(value)) {
+    const event = value as Record<string, unknown>;
     return {
-      message: String(value.message ?? "").trim(),
-      phase: typeof value.phase === "string" && value.phase.trim() ? value.phase.trim() : null,
-      threadId: typeof value.threadId === "string" && value.threadId.trim() ? value.threadId.trim() : null,
-      turnId: typeof value.turnId === "string" && value.turnId.trim() ? value.turnId.trim() : null,
-      stderrMessage: value.stderrMessage == null ? null : String(value.stderrMessage).trim(),
-      logTitle: typeof value.logTitle === "string" && value.logTitle.trim() ? value.logTitle.trim() : null,
-      logBody: value.logBody == null ? null : String(value.logBody).trimEnd()
+      message: String(event.message ?? "").trim(),
+      phase: typeof event.phase === "string" && event.phase.trim() ? event.phase.trim() : null,
+      threadId: typeof event.threadId === "string" && event.threadId.trim() ? event.threadId.trim() : null,
+      turnId: typeof event.turnId === "string" && event.turnId.trim() ? event.turnId.trim() : null,
+      stderrMessage: event.stderrMessage == null ? null : String(event.stderrMessage).trim(),
+      logTitle: typeof event.logTitle === "string" && event.logTitle.trim() ? event.logTitle.trim() : null,
+      logBody: event.logBody == null ? null : String(event.logBody).trimEnd()
     };
   }
 
@@ -29,7 +67,7 @@ export function normalizeProgressEvent(value) {
   };
 }
 
-export function appendLogLine(logFile, message) {
+export function appendLogLine(logFile: string | null | undefined, message: unknown): void {
   const normalized = String(message ?? "").trim();
   if (!logFile || !normalized) {
     return;
@@ -37,14 +75,14 @@ export function appendLogLine(logFile, message) {
   fs.appendFileSync(logFile, `[${nowIso()}] ${normalized}\n`, "utf8");
 }
 
-export function appendLogBlock(logFile, title, body) {
+export function appendLogBlock(logFile: string | null | undefined, title: string | null | undefined, body: string | null | undefined): void {
   if (!logFile || !body) {
     return;
   }
   fs.appendFileSync(logFile, `\n[${nowIso()}] ${title}\n${String(body).trimEnd()}\n`, "utf8");
 }
 
-export function createJobLogFile(workspaceRoot, jobId, title) {
+export function createJobLogFile(workspaceRoot: string, jobId: string, title?: string): string {
   const logFile = resolveJobLogFile(workspaceRoot, jobId);
   fs.writeFileSync(logFile, "", "utf8");
   if (title) {
@@ -53,7 +91,7 @@ export function createJobLogFile(workspaceRoot, jobId, title) {
   return logFile;
 }
 
-export function createJobRecord(base, options = {}) {
+export function createJobRecord<T extends JobRecord>(base: T, options: CreateJobRecordOptions = {}): T & { createdAt: string; sessionId?: string } {
   const env = options.env ?? process.env;
   const sessionId = env[options.sessionIdEnv ?? SESSION_ID_ENV];
   return {
@@ -63,14 +101,14 @@ export function createJobRecord(base, options = {}) {
   };
 }
 
-export function createJobProgressUpdater(workspaceRoot, jobId) {
-  let lastPhase = null;
-  let lastThreadId = null;
-  let lastTurnId = null;
+export function createJobProgressUpdater(workspaceRoot: string, jobId: string): (event: unknown) => void {
+  let lastPhase: string | null = null;
+  let lastThreadId: string | null = null;
+  let lastTurnId: string | null = null;
 
   return (event) => {
     const normalized = normalizeProgressEvent(event);
-    const patch = { id: jobId };
+    const patch: JobPatch = { id: jobId };
     let changed = false;
 
     if (normalized.phase && normalized.phase !== lastPhase) {
@@ -110,7 +148,9 @@ export function createJobProgressUpdater(workspaceRoot, jobId) {
   };
 }
 
-export function createProgressReporter({ stderr = false, logFile = null, onEvent = null } = {}) {
+export function createProgressReporter(
+  { stderr = false, logFile = null, onEvent = null }: CreateProgressReporterOptions = {}
+): ((eventOrMessage: unknown) => void) | null {
   if (!stderr && !logFile && !onEvent) {
     return null;
   }
@@ -127,7 +167,7 @@ export function createProgressReporter({ stderr = false, logFile = null, onEvent
   };
 }
 
-function readStoredJobOrNull(workspaceRoot, jobId) {
+function readStoredJobOrNull(workspaceRoot: string, jobId: string): JobRecord | null {
   const jobFile = resolveJobFile(workspaceRoot, jobId);
   if (!fs.existsSync(jobFile)) {
     return null;
@@ -135,7 +175,13 @@ function readStoredJobOrNull(workspaceRoot, jobId) {
   return readJobFile(jobFile);
 }
 
-function persistTerminalState(workspaceRoot, jobId, logFile, fullRecord, indexPatch) {
+function persistTerminalState(
+  workspaceRoot: string,
+  jobId: string,
+  logFile: string | null,
+  fullRecord: JobRecord,
+  indexPatch: JobPatch
+): void {
   // A bookkeeping failure must never change the run's outcome: a successful
   // run stays successful and a failed run rethrows its own error, while the
   // record is degraded to the best terminal state we can still write
@@ -159,7 +205,11 @@ function persistTerminalState(workspaceRoot, jobId, logFile, fullRecord, indexPa
   }
 }
 
-export async function runTrackedJob(job, runner, options = {}) {
+export async function runTrackedJob(
+  job: TrackedJob,
+  runner: () => Promise<JobExecution>,
+  options: { logFile?: string | null } = {}
+): Promise<JobExecution> {
   const runningRecord = {
     ...job,
     status: "running",

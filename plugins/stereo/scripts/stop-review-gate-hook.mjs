@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
 import { getCodexAvailability } from "./lib/codex.mjs";
 import { readStdinIfPiped } from "../src/shared/fs.ts";
 import { loadPromptTemplate, interpolateTemplate } from "../src/shared/prompts.ts";
-import { getConfig, listJobs } from "./lib/state.mjs";
+import { getConfig, listJobs } from "../src/workspace/state.ts";
 import { filterJobsForCurrentSession, sortJobsNewestFirst } from "./lib/job-control.mjs";
-import { SESSION_ID_ENV } from "./lib/tracked-jobs.mjs";
-import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
+import { SESSION_ID_ENV } from "../src/jobs/tracked-jobs.ts";
+import { resolveWorkspaceRoot } from "../src/workspace/workspace.ts";
 
 // Must stay comfortably below the Stop hook timeout in hooks.json (900 s) so
 // spawnSync's ETIMEDOUT fires and the graceful "timed out" block is emitted

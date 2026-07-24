@@ -5,12 +5,12 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { makeTempDir, run } from "./helpers.ts";
-import { resolveStateDir } from "../plugins/stereo/scripts/lib/state.mjs";
+import { resolveStateDir } from "../plugins/stereo/src/workspace/state.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BOOTSTRAP = path.join(ROOT, "tests", "env-bootstrap.cjs");
 const STATE_MODULE_URL = pathToFileURL(
-  path.join(ROOT, "plugins", "stereo", "scripts", "lib", "state.mjs")
+  path.join(ROOT, "plugins", "stereo", "src", "workspace", "state.ts")
 ).href;
 
 test("preload strips leaked plugin variables", () => {

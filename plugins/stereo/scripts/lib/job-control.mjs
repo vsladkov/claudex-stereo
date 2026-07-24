@@ -5,9 +5,9 @@ import {
   listStrandedThreadReservations,
   looksLikeVerificationCommand
 } from "./codex.mjs";
-import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
-import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
-import { resolveWorkspaceRoot } from "./workspace.mjs";
+import { getConfig, listJobs, readJobFile, resolveJobFile } from "../../src/workspace/state.ts";
+import { SESSION_ID_ENV } from "../../src/jobs/tracked-jobs.ts";
+import { resolveWorkspaceRoot } from "../../src/workspace/workspace.ts";
 
 export const DEFAULT_MAX_STATUS_JOBS = 8;
 export const DEFAULT_MAX_PROGRESS_LINES = 4;

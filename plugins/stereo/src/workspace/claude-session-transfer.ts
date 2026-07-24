@@ -2,22 +2,32 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ensureAbsolutePath } from "../../src/shared/fs.ts";
+import { ensureAbsolutePath } from "../shared/fs.ts";
 
 export const TRANSCRIPT_PATH_ENV = "CODEX_COMPANION_TRANSCRIPT_PATH";
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");
 
-function resolveUserPath(cwd, value) {
+export interface ResolveClaudeSessionOptions {
+  source?: string;
+}
+
+function resolveUserPath(cwd: string, value: string): string {
   if (value === "~") {
     return os.homedir();
   }
-  if (String(value).startsWith("~/")) {
-    return path.join(os.homedir(), String(value).slice(2));
+  if (value.startsWith("~/")) {
+    return path.join(os.homedir(), value.slice(2));
   }
   return ensureAbsolutePath(cwd, value);
 }
 
-export function resolveClaudeSessionPath(cwd, options = {}) {
+function errorCode(error: unknown): string {
+  return error && typeof error === "object" && "code" in error
+    ? String((error as { code: unknown }).code)
+    : String(error);
+}
+
+export function resolveClaudeSessionPath(cwd: string, options: ResolveClaudeSessionOptions = {}): string {
   const requestedPath = options.source || process.env[TRANSCRIPT_PATH_ENV];
   if (!requestedPath) {
     throw new Error("Could not identify the current Claude transcript. Retry with --source <path-to-claude-jsonl>.");
@@ -28,18 +38,18 @@ export function resolveClaudeSessionPath(cwd, options = {}) {
     throw new Error(`Claude session source must be a JSONL file: ${sourcePath}`);
   }
 
-  let source;
+  let source: string;
   try {
     source = fs.realpathSync(sourcePath);
   } catch (error) {
-    throw new Error(`Claude session file not found: ${sourcePath} (${error?.code ?? error})`);
+    throw new Error(`Claude session file not found: ${sourcePath} (${errorCode(error)})`);
   }
 
-  let projects;
+  let projects: string;
   try {
     projects = fs.realpathSync(CLAUDE_PROJECTS_DIR);
   } catch (error) {
-    throw new Error(`Claude projects directory unavailable: ${CLAUDE_PROJECTS_DIR} (${error?.code ?? error})`);
+    throw new Error(`Claude projects directory unavailable: ${CLAUDE_PROJECTS_DIR} (${errorCode(error)})`);
   }
   const relative = path.relative(projects, source);
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {

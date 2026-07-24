@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 
 import { parseArgs } from "../src/shared/args.ts";
-import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "./lib/app-server.mjs";
+import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "../src/transport/app-server-client.ts";
 import { parseBrokerEndpoint } from "../src/broker/endpoint.ts";
 
 const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);

@@ -13,7 +13,8 @@ import {
   resolveStateFile,
   saveState,
   upsertJob
-} from "../plugins/stereo/scripts/lib/state.mjs";
+} from "../plugins/stereo/src/workspace/state.ts";
+import type { JobRecord } from "../plugins/stereo/src/workspace/state.ts";
 
 test("resolveStateDir uses a temp-backed per-workspace directory", () => {
   const workspace = makeTempDir();
@@ -94,9 +95,9 @@ test("state index strips request payloads from legacy, updated, and new jobs", (
   });
 
   const persistedAfterUpdate = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-  assert.equal(persistedAfterUpdate.jobs.every((job) => !Object.hasOwn(job, "request")), true);
+  assert.equal(persistedAfterUpdate.jobs.every((job: JobRecord) => !Object.hasOwn(job, "request")), true);
   assert.equal(
-    persistedAfterUpdate.jobs.find((job) => job.id === "unrelated-job").phase,
+    persistedAfterUpdate.jobs.find((job: JobRecord) => job.id === "unrelated-job").phase,
     "investigating"
   );
   for (const job of legacyJobs.slice(0, 2)) {
@@ -111,7 +112,7 @@ test("state index strips request payloads from legacy, updated, and new jobs", (
   });
 
   const persistedAfterInsert = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-  assert.equal(persistedAfterInsert.jobs.every((job) => !Object.hasOwn(job, "request")), true);
+  assert.equal(persistedAfterInsert.jobs.every((job: JobRecord) => !Object.hasOwn(job, "request")), true);
   assert.equal(loadState(workspace).jobs.every((job) => !Object.hasOwn(job, "request")), true);
 });
 
@@ -168,7 +169,7 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
   const savedState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   assert.equal(savedState.jobs.length, 50);
   assert.deepEqual(
-    savedState.jobs.map((job) => job.id),
+    savedState.jobs.map((job: JobRecord) => job.id),
     Array.from({ length: 50 }, (_, index) => `job-${50 - index}`)
   );
   assert.deepEqual(
@@ -203,6 +204,7 @@ test("saveState keeps a live job's artifacts and index entry when dropped by a s
   assert.equal(fs.existsSync(logFile), true);
   const jobs = loadState(workspace).jobs;
   assert.equal(jobs.length, 1);
+  assert.ok(jobs[0]);
   assert.equal(jobs[0].id, "job-live");
   assert.equal(jobs[0].status, "running");
   assert.equal("request" in jobs[0], false);

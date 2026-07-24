@@ -2,28 +2,118 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { isProbablyText } from "../../src/shared/fs.ts";
-import { formatCommandFailure, runCommand, runCommandChecked } from "../../src/platform/process.ts";
+import { isProbablyText } from "../shared/fs.ts";
+import { formatCommandFailure, runCommand, runCommandChecked } from "./process.ts";
+import type { CommandResult, RunCommandOptions } from "./process.ts";
 
 const MAX_UNTRACKED_BYTES = 24 * 1024;
 const DEFAULT_INLINE_DIFF_MAX_FILES = 2;
 const DEFAULT_INLINE_DIFF_MAX_BYTES = 256 * 1024;
 const DEFAULT_REPOSITORY_FILES_MAX_BUFFER_BYTES = 1024 * 1024;
 
+export interface WorkingTreeReviewTarget {
+  mode: "working-tree";
+  label: string;
+  explicit: boolean;
+}
+
+export interface BranchReviewTarget {
+  mode: "branch";
+  label: string;
+  baseRef: string;
+  explicit: boolean;
+}
+
+export type ReviewTarget = WorkingTreeReviewTarget | BranchReviewTarget;
+
+export interface ResolveReviewTargetOptions {
+  scope?: string;
+  base?: string | null;
+}
+
+export interface WorkingTreeState {
+  staged: string[];
+  unstaged: string[];
+  untracked: string[];
+  isDirty: boolean;
+}
+
+export interface BranchComparison {
+  mergeBase: string;
+  commitRange: string;
+  reviewRange: string;
+}
+
+export interface RepositoryFilesListing {
+  root: string;
+  files: string[];
+  truncated: boolean;
+}
+
+export interface RepositoryFilesRunResult {
+  error?: NodeJS.ErrnoException | null;
+  status: number | null;
+  stdout: unknown;
+  stderr?: unknown;
+}
+
+export type RepositoryFilesRunImpl = (
+  command: string,
+  args: readonly string[],
+  options: { encoding: "buffer"; maxBuffer: number; shell: false; windowsHide: true }
+) => RepositoryFilesRunResult;
+
+export interface ListRepositoryFilesOptions {
+  maxBufferBytes?: number;
+  runImpl?: RepositoryFilesRunImpl;
+}
+
+export interface WorkingTreeReviewDetails {
+  mode: "working-tree";
+  summary: string;
+  content: string;
+  changedFiles: string[];
+}
+
+export interface BranchReviewDetails {
+  mode: "branch";
+  summary: string;
+  content: string;
+  changedFiles: string[];
+  comparison: BranchComparison;
+}
+
+export interface CollectReviewContextOptions {
+  includeDiff?: boolean;
+  maxInlineFiles?: number | string;
+  maxInlineDiffBytes?: number | string;
+}
+
+export type ReviewContext = {
+  cwd: string;
+  repoRoot: string;
+  branch: string;
+  target: ReviewTarget;
+  fileCount: number;
+  diffBytes: number;
+  inputMode: "inline-diff" | "self-collect";
+  collectionGuidance: string;
+} & (WorkingTreeReviewDetails | BranchReviewDetails);
+
 // Git is directly executable on Windows. Repository-derived arguments must never pass through a shell.
-function git(cwd, args, options = {}) {
+function git(cwd: string, args: readonly string[], options: RunCommandOptions = {}): CommandResult {
   return runCommand("git", args, { cwd, ...options, shell: false });
 }
 
-function gitChecked(cwd, args, options = {}) {
+function gitChecked(cwd: string, args: readonly string[], options: RunCommandOptions = {}): CommandResult {
   return runCommandChecked("git", args, { cwd, ...options, shell: false });
 }
 
-function listUniqueFiles(...groups) {
+function listUniqueFiles(...groups: string[][]): string[] {
   return [...new Set(groups.flat().filter(Boolean))].sort();
 }
 
-function normalizeMaxInlineFiles(value) {
+function normalizeMaxInlineFiles(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
     return DEFAULT_INLINE_DIFF_MAX_FILES;
@@ -31,7 +121,7 @@ function normalizeMaxInlineFiles(value) {
   return Math.floor(parsed);
 }
 
-function normalizeMaxInlineDiffBytes(value) {
+function normalizeMaxInlineDiffBytes(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
     return DEFAULT_INLINE_DIFF_MAX_BYTES;
@@ -39,9 +129,9 @@ function normalizeMaxInlineDiffBytes(value) {
   return Math.floor(parsed);
 }
 
-function measureGitOutputBytes(cwd, args, maxBytes) {
+function measureGitOutputBytes(cwd: string, args: readonly string[], maxBytes: number): number {
   const result = git(cwd, args, { maxBuffer: maxBytes + 1 });
-  if (result.error && /** @type {NodeJS.ErrnoException} */ (result.error).code === "ENOBUFS") {
+  if (result.error && result.error.code === "ENOBUFS") {
     return maxBytes + 1;
   }
   if (result.error) {
@@ -53,7 +143,7 @@ function measureGitOutputBytes(cwd, args, maxBytes) {
   return Buffer.byteLength(result.stdout, "utf8");
 }
 
-function measureCombinedGitOutputBytes(cwd, argSets, maxBytes) {
+function measureCombinedGitOutputBytes(cwd: string, argSets: string[][], maxBytes: number): number {
   let totalBytes = 0;
   for (const args of argSets) {
     const remainingBytes = maxBytes - totalBytes;
@@ -68,7 +158,7 @@ function measureCombinedGitOutputBytes(cwd, argSets, maxBytes) {
   return totalBytes;
 }
 
-function buildBranchComparison(cwd, baseRef) {
+function buildBranchComparison(cwd: string, baseRef: string): BranchComparison {
   const mergeBase = gitChecked(cwd, ["merge-base", "HEAD", baseRef]).stdout.trim();
   return {
     mergeBase,
@@ -77,7 +167,7 @@ function buildBranchComparison(cwd, baseRef) {
   };
 }
 
-export function ensureGitRepository(cwd) {
+export function ensureGitRepository(cwd: string): string {
   const result = git(cwd, ["rev-parse", "--show-toplevel"]);
   const errorCode = result.error && "code" in result.error ? result.error.code : null;
   if (errorCode === "ENOENT") {
@@ -89,11 +179,11 @@ export function ensureGitRepository(cwd) {
   return result.stdout.trim();
 }
 
-export function getRepoRoot(cwd) {
+export function getRepoRoot(cwd: string): string {
   return gitChecked(cwd, ["rev-parse", "--show-toplevel"]).stdout.trim();
 }
 
-function normalizeRepositoryFilesMaxBufferBytes(value) {
+function normalizeRepositoryFilesMaxBufferBytes(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return DEFAULT_REPOSITORY_FILES_MAX_BUFFER_BYTES;
@@ -101,7 +191,7 @@ function normalizeRepositoryFilesMaxBufferBytes(value) {
   return Math.floor(parsed);
 }
 
-function toOutputBuffer(output) {
+function toOutputBuffer(output: unknown): Buffer {
   if (Buffer.isBuffer(output)) {
     return output;
   }
@@ -111,9 +201,9 @@ function toOutputBuffer(output) {
   return Buffer.from(String(output ?? ""), "utf8");
 }
 
-function parseCompleteNullTerminatedPaths(output) {
+function parseCompleteNullTerminatedPaths(output: unknown): string[] {
   const buffer = toOutputBuffer(output);
-  const files = [];
+  const files: string[] = [];
   let start = 0;
 
   while (start < buffer.length) {
@@ -131,9 +221,9 @@ function parseCompleteNullTerminatedPaths(output) {
 }
 
 export function listRepositoryFiles(
-  cwd,
-  { maxBufferBytes = DEFAULT_REPOSITORY_FILES_MAX_BUFFER_BYTES, runImpl = spawnSync } = {}
-) {
+  cwd: string,
+  { maxBufferBytes = DEFAULT_REPOSITORY_FILES_MAX_BUFFER_BYTES, runImpl = spawnSync }: ListRepositoryFilesOptions = {}
+): RepositoryFilesListing | null {
   try {
     const root = getRepoRoot(cwd);
     const result = runImpl(
@@ -147,7 +237,7 @@ export function listRepositoryFiles(
       }
     );
     const files = parseCompleteNullTerminatedPaths(result.stdout);
-    const overflowed = result.error && /** @type {NodeJS.ErrnoException} */ (result.error).code === "ENOBUFS";
+    const overflowed = result.error && result.error.code === "ENOBUFS";
 
     if (overflowed) {
       return files.length > 0 ? { root, files, truncated: true } : null;
@@ -162,7 +252,7 @@ export function listRepositoryFiles(
   }
 }
 
-export function detectDefaultBranch(cwd) {
+export function detectDefaultBranch(cwd: string): string {
   const symbolic = git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
   if (symbolic.status === 0) {
     const remoteHead = symbolic.stdout.trim();
@@ -186,11 +276,11 @@ export function detectDefaultBranch(cwd) {
   throw new Error("Unable to detect the repository default branch. Pass --base <ref> or use --scope working-tree.");
 }
 
-export function getCurrentBranch(cwd) {
+export function getCurrentBranch(cwd: string): string {
   return gitChecked(cwd, ["branch", "--show-current"]).stdout.trim() || "HEAD";
 }
 
-function gitPathList(cwd, args) {
+function gitPathList(cwd: string, args: readonly string[]): string[] {
   // -z output is NUL-delimited and never C-quoted, so newline and non-ASCII
   // path text survives quotePath. Buffer output skips a wasteful
   // decode/re-encode round trip and matches listRepositoryFiles; JS strings
@@ -208,7 +298,7 @@ function gitPathList(cwd, args) {
   return parseCompleteNullTerminatedPaths(result.stdout);
 }
 
-export function getWorkingTreeState(cwd) {
+export function getWorkingTreeState(cwd: string): WorkingTreeState {
   const staged = gitPathList(cwd, ["diff", "--cached", "--name-only"]);
   const unstaged = gitPathList(cwd, ["diff", "--name-only"]);
   const untracked = gitPathList(cwd, ["ls-files", "--others", "--exclude-standard"]);
@@ -221,7 +311,7 @@ export function getWorkingTreeState(cwd) {
   };
 }
 
-export function resolveReviewTarget(cwd, options = {}) {
+export function resolveReviewTarget(cwd: string, options: ResolveReviewTargetOptions = {}): ReviewTarget {
   ensureGitRepository(cwd);
 
   const requestedScope = options.scope ?? "auto";
@@ -279,11 +369,11 @@ export function resolveReviewTarget(cwd, options = {}) {
   };
 }
 
-function formatSection(title, body) {
+function formatSection(title: string, body: string): string {
   return [`## ${title}`, "", body.trim() ? body.trim() : "(none)", ""].join("\n");
 }
 
-function formatUntrackedFile(cwd, relativePath) {
+function formatUntrackedFile(cwd: string, relativePath: string): string {
   const absolutePath = path.join(cwd, relativePath);
   let stat;
   try {
@@ -311,7 +401,11 @@ function formatUntrackedFile(cwd, relativePath) {
   return [`### ${relativePath}`, "```", buffer.toString("utf8").trimEnd(), "```"].join("\n");
 }
 
-function collectWorkingTreeContext(cwd, state, options = {}) {
+function collectWorkingTreeContext(
+  cwd: string,
+  state: WorkingTreeState,
+  options: { includeDiff?: boolean } = {}
+): WorkingTreeReviewDetails {
   const includeDiff = options.includeDiff !== false;
   const status = gitChecked(cwd, ["status", "--short", "--untracked-files=all"]).stdout.trim();
   const changedFiles = listUniqueFiles(state.staged, state.unstaged, state.untracked);
@@ -348,7 +442,11 @@ function collectWorkingTreeContext(cwd, state, options = {}) {
   };
 }
 
-function collectBranchContext(cwd, baseRef, options = {}) {
+function collectBranchContext(
+  cwd: string,
+  baseRef: string,
+  options: { includeDiff?: boolean; comparison?: BranchComparison } = {}
+): BranchReviewDetails {
   const includeDiff = options.includeDiff !== false;
   const comparison = options.comparison ?? buildBranchComparison(cwd, baseRef);
   const currentBranch = getCurrentBranch(cwd);
@@ -378,7 +476,7 @@ function collectBranchContext(cwd, baseRef, options = {}) {
   };
 }
 
-function buildAdversarialCollectionGuidance(options = {}) {
+function buildAdversarialCollectionGuidance(options: { includeDiff?: boolean } = {}): string {
   if (options.includeDiff !== false) {
     return "Use the repository context below as primary evidence.";
   }
@@ -386,14 +484,14 @@ function buildAdversarialCollectionGuidance(options = {}) {
   return "The repository context below is a lightweight summary. Inspect the target diff yourself with read-only git commands before finalizing findings.";
 }
 
-export function collectReviewContext(cwd, target, options = {}) {
+export function collectReviewContext(cwd: string, target: ReviewTarget, options: CollectReviewContextOptions = {}): ReviewContext {
   const repoRoot = getRepoRoot(cwd);
   const currentBranch = getCurrentBranch(repoRoot);
   const maxInlineFiles = normalizeMaxInlineFiles(options.maxInlineFiles);
   const maxInlineDiffBytes = normalizeMaxInlineDiffBytes(options.maxInlineDiffBytes);
-  let details;
-  let includeDiff;
-  let diffBytes;
+  let details: WorkingTreeReviewDetails | BranchReviewDetails;
+  let includeDiff: boolean;
+  let diffBytes: number;
 
   if (target.mode === "working-tree") {
     const state = getWorkingTreeState(repoRoot);

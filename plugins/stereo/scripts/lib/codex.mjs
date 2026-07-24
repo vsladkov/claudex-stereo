@@ -1,11 +1,11 @@
 /**
- * @typedef {import("./app-server-protocol").AppServerNotification} AppServerNotification
- * @typedef {import("./app-server-protocol").ReviewTarget} ReviewTarget
- * @typedef {import("./app-server-protocol").ThreadItem} ThreadItem
- * @typedef {import("./app-server-protocol").ThreadResumeParams} ThreadResumeParams
- * @typedef {import("./app-server-protocol").ThreadStartParams} ThreadStartParams
- * @typedef {import("./app-server-protocol").Turn} Turn
- * @typedef {import("./app-server-protocol").UserInput} UserInput
+ * @typedef {import("../../src/protocol/app-server.ts").AppServerNotification} AppServerNotification
+ * @typedef {import("../../src/protocol/app-server.ts").ReviewTarget} ReviewTarget
+ * @typedef {import("../../src/protocol/app-server.ts").ThreadItem} ThreadItem
+ * @typedef {import("../../src/protocol/app-server.ts").ThreadResumeParams} ThreadResumeParams
+ * @typedef {import("../../src/protocol/app-server.ts").ThreadStartParams} ThreadStartParams
+ * @typedef {import("../../src/protocol/app-server.ts").Turn} Turn
+ * @typedef {import("../../src/protocol/app-server.ts").UserInput} UserInput
  * @typedef {((update: string | { message: string, phase: string | null, threadId?: string | null, turnId?: string | null, stderrMessage?: string | null, logTitle?: string | null, logBody?: string | null }) => void)} ProgressReporter
  * @typedef {{
  *   threadId: string,
@@ -41,8 +41,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { readJsonFile } from "../../src/shared/fs.ts";
-import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV, CodexAppServerClient } from "./app-server.mjs";
-import { loadBrokerSession, sendBrokerShutdownIfIdle } from "./broker-lifecycle.mjs";
+import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV, CodexAppServerClient } from "../../src/transport/app-server-client.ts";
+import { loadBrokerSession, sendBrokerShutdownIfIdle } from "../../src/broker/lifecycle.ts";
 import { binaryAvailable } from "../../src/platform/process.ts";
 
 const SERVICE_NAME = "claude_code_codex_plugin";

@@ -5,7 +5,7 @@ import process from "node:process";
 
 import { readStdinIfPiped } from "../src/shared/fs.ts";
 import { terminateProcessTree } from "../src/platform/process.ts";
-import { BROKER_ENDPOINT_ENV } from "./lib/app-server.mjs";
+import { BROKER_ENDPOINT_ENV } from "../src/transport/app-server-client.ts";
 import { releaseThreadReservationForCancelledJob } from "./lib/codex.mjs";
 import {
   clearBrokerSession,
@@ -14,10 +14,10 @@ import {
   PID_FILE_ENV,
   sendBrokerShutdown,
   teardownBrokerSession
-} from "./lib/broker-lifecycle.mjs";
-import { loadState, nowIso, readJobFile, resolveJobFile, resolveStateFile, saveState, writeJobFile } from "./lib/state.mjs";
-import { TRANSCRIPT_PATH_ENV } from "./lib/claude-session-transfer.mjs";
-import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
+} from "../src/broker/lifecycle.ts";
+import { loadState, nowIso, readJobFile, resolveJobFile, resolveStateFile, saveState, writeJobFile } from "../src/workspace/state.ts";
+import { TRANSCRIPT_PATH_ENV } from "../src/workspace/claude-session-transfer.ts";
+import { resolveWorkspaceRoot } from "../src/workspace/workspace.ts";
 
 export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";

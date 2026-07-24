@@ -15,7 +15,7 @@ process.env.USERPROFILE = home;
 const projectsDir = path.join(home, ".claude", "projects", "workspace");
 fs.mkdirSync(projectsDir, { recursive: true });
 
-const { resolveClaudeSessionPath } = await import("../plugins/stereo/scripts/lib/claude-session-transfer.mjs");
+const { resolveClaudeSessionPath } = await import("../plugins/stereo/src/workspace/claude-session-transfer.ts");
 
 const IS_WINDOWS = process.platform === "win32";
 const cwd = makeTempDir("transfer-cwd-");

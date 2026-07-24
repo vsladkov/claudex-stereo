@@ -26,9 +26,9 @@ import {
     runAppServerReview,
     runAppServerTurn
   } from "./lib/codex.mjs";
-import { resolveClaudeSessionPath } from "./lib/claude-session-transfer.mjs";
+import { resolveClaudeSessionPath } from "../src/workspace/claude-session-transfer.ts";
 import { readStdinIfPiped } from "../src/shared/fs.ts";
-import { collectReviewContext, ensureGitRepository, listRepositoryFiles, resolveReviewTarget } from "./lib/git.mjs";
+import { collectReviewContext, ensureGitRepository, listRepositoryFiles, resolveReviewTarget } from "../src/platform/git.ts";
 import { binaryAvailable, terminateProcessTree } from "../src/platform/process.ts";
 import { loadPromptTemplate, interpolateTemplate } from "../src/shared/prompts.ts";
 import { serializeRepositoryMap } from "../src/workspace/repo-map.ts";
@@ -42,7 +42,7 @@ import {
   setConfig,
   upsertJob,
   writeJobFile
-} from "./lib/state.mjs";
+} from "../src/workspace/state.ts";
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
@@ -61,8 +61,8 @@ import {
   createProgressReporter,
   runTrackedJob,
   SESSION_ID_ENV
-} from "./lib/tracked-jobs.mjs";
-import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
+} from "../src/jobs/tracked-jobs.ts";
+import { resolveWorkspaceRoot } from "../src/workspace/workspace.ts";
 import {
   renderNativeReviewResult,
   renderPlanReviewResult,

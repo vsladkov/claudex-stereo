@@ -8,7 +8,8 @@ import {
   getWorkingTreeState,
   listRepositoryFiles,
   resolveReviewTarget
-} from "../plugins/stereo/scripts/lib/git.mjs";
+} from "../plugins/stereo/src/platform/git.ts";
+import type { RepositoryFilesRunImpl } from "../plugins/stereo/src/platform/git.ts";
 import { initGitRepo, makeTempDir, run } from "./helpers.ts";
 
 test("getWorkingTreeState preserves non-ASCII and quoted path text", () => {
@@ -296,9 +297,9 @@ test("listRepositoryFiles salvages complete records after ENOBUFS", () => {
   for (const name of ["alpha.js", "beta.js", "incomplete.js"]) {
     fs.writeFileSync(path.join(cwd, name), `${name}\n`, "utf8");
   }
-  let invocation = null;
+  let invocation = null as { command: string; args: readonly string[]; options: { maxBuffer: number; shell: boolean } } | null;
   const overflowError = Object.assign(new Error("stdout maxBuffer length exceeded"), { code: "ENOBUFS" });
-  const runImpl = (command, args, options) => {
+  const runImpl: RepositoryFilesRunImpl = (command, args, options) => {
     invocation = { command, args, options };
     return {
       error: overflowError,
@@ -313,6 +314,7 @@ test("listRepositoryFiles salvages complete records after ENOBUFS", () => {
   assert.ok(listing);
   assert.deepEqual(listing.files, ["alpha.js", "beta.js"]);
   assert.equal(listing.truncated, true);
+  assert.ok(invocation);
   assert.equal(invocation.command, "git");
   assert.deepEqual(invocation.args.slice(-5), ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
   assert.equal(invocation.options.maxBuffer, 32);

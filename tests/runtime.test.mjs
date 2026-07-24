@@ -17,12 +17,12 @@ import {
   sendBrokerShutdown,
   spawnBrokerProcess,
   waitForBrokerEndpoint
-} from "../plugins/stereo/scripts/lib/broker-lifecycle.mjs";
+} from "../plugins/stereo/src/broker/lifecycle.ts";
 import {
   acquireThreadReservation,
   releaseThreadReservation
 } from "../plugins/stereo/scripts/lib/codex.mjs";
-import { resolveStateDir } from "../plugins/stereo/scripts/lib/state.mjs";
+import { resolveStateDir } from "../plugins/stereo/src/workspace/state.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "stereo");

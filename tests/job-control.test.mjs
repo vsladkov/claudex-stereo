@@ -15,7 +15,7 @@ import {
   resolveResultJob,
   sortJobsNewestFirst
 } from "../plugins/stereo/scripts/lib/job-control.mjs";
-import { saveState } from "../plugins/stereo/scripts/lib/state.mjs";
+import { saveState } from "../plugins/stereo/src/workspace/state.ts";
 
 const DEAD_PID = 2147483647;
 const IS_WINDOWS = process.platform === "win32";
