@@ -10,7 +10,6 @@ import { resolveWorkspaceRoot } from "../workspace/workspace.ts";
 // Parsed option bags as the command handlers receive them.
 export type CommandOptions = Record<string, ParsedOptionValue>;
 
-export { firstMeaningfulLine, outputResult, shorten, sleep } from "../shared/text.ts";
 import { outputResult } from "../shared/text.ts";
 
 export function outputCommandResult(payload: unknown, rendered: string, asJson: unknown): void {

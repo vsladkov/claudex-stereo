@@ -10,7 +10,8 @@ import type { JobRecord } from "../../workspace/state.ts";
 import { renderJobStatusReport, renderStatusReport, renderStoredJobResult } from "../../render/render.ts";
 import type { StatusRenderOptions, StoredJobLike } from "../../render/render.ts";
 import { waitForSingleJobSnapshot } from "../../workflows/task.ts";
-import { outputCommandResult, outputResult, parseCommandInput, resolveCommandCwd } from "../io.ts";
+import { outputCommandResult, parseCommandInput, resolveCommandCwd } from "../io.ts";
+import { outputResult } from "../../shared/text.ts";
 
 function renderStatusPayload(report: StatusSnapshot, asJson: unknown, options: StatusRenderOptions = {}): StatusSnapshot | string {
   return asJson ? report : renderStatusReport(report, options);

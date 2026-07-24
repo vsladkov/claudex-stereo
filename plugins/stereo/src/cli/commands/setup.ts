@@ -12,7 +12,8 @@ import { binaryAvailable } from "../../platform/process.ts";
 import { getConfig, setConfig } from "../../workspace/state.ts";
 import { resolveWorkspaceRoot } from "../../workspace/workspace.ts";
 import { renderSetupReport } from "../../render/render.ts";
-import { outputResult, parseCommandInput, resolveCommandCwd, resolveCommandWorkspace } from "../io.ts";
+import { parseCommandInput, resolveCommandCwd, resolveCommandWorkspace } from "../io.ts";
+import { outputResult } from "../../shared/text.ts";
 
 export async function buildSetupReport(cwd: string, actionsTaken: string[] = []) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);

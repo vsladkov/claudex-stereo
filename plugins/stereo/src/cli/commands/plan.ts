@@ -12,14 +12,8 @@ import {
   executePlanReviewRun,
   normalizePlanReviewRound
 } from "../../workflows/plan-review.ts";
-import {
-  outputCommandResult,
-  parseCommandInput,
-  readPlanInput,
-  resolveCommandCwd,
-  resolveCommandWorkspace,
-  shorten
-} from "../io.ts";
+import { outputCommandResult, parseCommandInput, readPlanInput, resolveCommandCwd, resolveCommandWorkspace } from "../io.ts";
+import { shorten } from "../../shared/text.ts";
 
 export async function handlePlanReview(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
