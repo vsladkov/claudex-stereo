@@ -108,7 +108,23 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   // read. Remember the abandoned turn, ask codex to interrupt it, and refuse
   // new streaming work until it completes (or the grace window expires).
   const ORPHAN_GRACE_MS = 10_000;
-  let orphanedTurn: { threadIds: Set<string>; at: number } | null = null;
+  let orphanedTurn: { threadIds: Set<string>; at: number; extended: boolean } | null = null;
+
+  function interruptRunningTurn(threadId: string): void {
+    const turnId = runningTurns.get(threadId);
+    if (!turnId) {
+      return;
+    }
+    void appClient
+      .request(
+        "turn/interrupt" as AppServerMethod,
+        { threadId, turnId } as AppServerRequestParams<AppServerMethod>
+      )
+      .catch(() => {
+        // Best effort: if the interrupt fails, the grace window still
+        // clears the orphan marker.
+      });
+  }
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let serverClosePromise: Promise<void> | null = null;
@@ -120,21 +136,9 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
     }
     if (activeStreamSocket === socket) {
       if (activeStreamThreadIds && activeStreamThreadIds.size > 0) {
-        orphanedTurn = { threadIds: new Set(activeStreamThreadIds), at: Date.now() };
+        orphanedTurn = { threadIds: new Set(activeStreamThreadIds), at: Date.now(), extended: false };
         for (const threadId of activeStreamThreadIds) {
-          const turnId = runningTurns.get(threadId);
-          if (!turnId) {
-            continue;
-          }
-          void appClient
-            .request(
-              "turn/interrupt" as AppServerMethod,
-              { threadId, turnId } as AppServerRequestParams<AppServerMethod>
-            )
-            .catch(() => {
-              // Best effort: if the interrupt fails, the grace window still
-              // clears the orphan marker.
-            });
+          interruptRunningTurn(threadId);
         }
       }
       activeStreamSocket = null;
@@ -158,14 +162,23 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
       const turnId = notifParams?.turnId ?? notifParams?.turn?.id ?? null;
       if (turnId) {
         runningTurns.set(notifThreadId, turnId);
+        // Late interrupt: the owner may have died between the turn/start
+        // response and this notification - the orphan marker is armed but no
+        // runningTurns entry existed yet to aim the interrupt at.
+        if (orphanedTurn?.threadIds.has(notifThreadId)) {
+          interruptRunningTurn(notifThreadId);
+        }
       }
     }
     if (message.method === "turn/completed" && notifThreadId) {
       runningTurns.delete(notifThreadId);
       // The orphan's completion usually arrives with no connected client, so
-      // this must run before the target check below.
+      // this must run before the target check below - and it must NOT be
+      // forwarded: any current request socket belongs to an unrelated client
+      // that never started this turn.
       if (orphanedTurn?.threadIds.has(notifThreadId)) {
         orphanedTurn = null;
+        return;
       }
     }
     const target = activeRequestSocket ?? activeStreamSocket;
@@ -301,6 +314,9 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
 
         if (message.id !== undefined && message.method === "broker/shutdown") {
           if (message.params?.ifIdle) {
+            // Deliberately ignores orphanedTurn: SessionEnd must be able to
+            // reap a broker whose own worker just died - shutdown closes the
+            // codex child, which kills the abandoned turn with it.
             const anotherClientConnected = [...sockets].some(
               (candidate) => candidate !== socket && !candidate.destroyed
             );
@@ -372,7 +388,20 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
 
         const isStreaming = STREAMING_METHODS.has(message.method as string);
         if (orphanedTurn && Date.now() - orphanedTurn.at >= ORPHAN_GRACE_MS) {
-          orphanedTurn = null;
+          const stillRunning = [...orphanedTurn.threadIds].some((threadId) => runningTurns.has(threadId));
+          if (stillRunning && !orphanedTurn.extended) {
+            // The interrupt was lost or codex is winding down slowly: try
+            // once more and extend the gate one grace period before giving up.
+            for (const threadId of orphanedTurn.threadIds) {
+              interruptRunningTurn(threadId);
+            }
+            orphanedTurn = { ...orphanedTurn, at: Date.now(), extended: true };
+          } else {
+            if (stillRunning) {
+              process.stderr.write("broker: abandoned turn ignored two interrupts; reopening the stream gate\n");
+            }
+            orphanedTurn = null;
+          }
         }
         if (isStreaming && orphanedTurn) {
           send(socket, {

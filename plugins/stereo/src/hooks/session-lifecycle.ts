@@ -62,15 +62,15 @@ function appendEnvVar(name: string, value: string | null | undefined): void {
   fs.appendFileSync(process.env.CLAUDE_ENV_FILE, `export ${name}=${shellEscape(value)}\n`, "utf8");
 }
 
-async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): Promise<void> {
+async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): Promise<number> {
   if (!cwd || !sessionId) {
-    return;
+    return 0;
   }
 
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const stateFile = resolveStateFile(workspaceRoot);
   if (!fs.existsSync(stateFile)) {
-    return;
+    return 0;
   }
 
   const state = loadState(workspaceRoot);
@@ -81,7 +81,7 @@ async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): P
     (job) => job.sessionId === sessionId && (job.status === "queued" || job.status === "running")
   );
   if (removedJobs.length === 0) {
-    return;
+    return 0;
   }
 
   for (const job of removedJobs) {
@@ -136,6 +136,7 @@ async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): P
     ...state,
     jobs: state.jobs.filter((job) => !removedIds.has(job.id))
   });
+  return removedJobs.length;
 }
 
 function handleSessionStart(input: SessionHookInput): void {
@@ -161,6 +162,12 @@ async function handleSessionEnd(input: SessionHookInput): Promise<void> {
   const sessionDir = brokerSession?.sessionDir ?? null;
   const pid = brokerSession?.pid ?? null;
 
+  // Kill this session's own jobs BEFORE probing the broker: a worker of ours
+  // mid-turn would otherwise answer the idle probe with busy and the broker
+  // would outlive the session (killing the worker closes its socket, the
+  // broker interrupts the orphaned turn, and idleness follows within ~ms-s).
+  const killedJobs = await cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
+
   // Guarded shutdown: the workspace broker is shared by every session in
   // this cwd, so an unconditional kill here would abort another session's
   // in-flight Codex turn. accepted:true additionally means the broker's exit
@@ -168,9 +175,16 @@ async function handleSessionEnd(input: SessionHookInput): Promise<void> {
   let shutdown: ShutdownOutcome | null = null;
   if (brokerEndpoint) {
     shutdown = await sendBrokerShutdownIfIdle(brokerEndpoint, { timeoutMs: 1500 });
+    // busy + we just killed jobs = plausibly our own worker's orphaned turn
+    // still winding down; retry briefly. busy + nothing killed = another live
+    // session owns the broker; leave immediately.
+    let retries = killedJobs > 0 ? 6 : 0;
+    while (retries > 0 && shutdown && !shutdown.accepted && shutdown.busy) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      shutdown = await sendBrokerShutdownIfIdle(brokerEndpoint, { timeoutMs: 1500 });
+      retries -= 1;
+    }
   }
-
-  await cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
 
   if (shutdown && !shutdown.accepted && shutdown.busy) {
     // Another live session (or an in-flight turn) still owns the broker.

@@ -205,6 +205,9 @@ function createJsonlClient(endpoint: string) {
     get connected() {
       return connected;
     },
+    get notifications() {
+      return notifications;
+    },
     get isClosed() {
       return closed;
     },
@@ -338,6 +341,93 @@ test("a client that vanishes mid-turn gets its turn interrupted and the broker r
     return retry.error === undefined;
   }, { timeoutMs: 8000, intervalMs: 200 });
   assert.equal(processIsAlive(broker.child.pid), true);
+});
+
+test("an owner dying before turn/started still gets its turn interrupted", async (t) => {
+  const broker = await startBroker(t, "slow-turn");
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request("thread/start", {
+    cwd: broker.cwd,
+    sandbox: "read-only",
+    ephemeral: false
+  });
+  const threadId = started.result.thread.id;
+  const turn = await owner.request("turn/start", {
+    threadId,
+    input: [{ type: "text", text: "die before turn/started lands", text_elements: [] }]
+  });
+  assert.equal(turn.error, undefined);
+
+  // Destroy WITHOUT waiting for turn/started: the orphan marker is armed
+  // before any runningTurns entry exists, so the interrupt must be issued
+  // late, when turn/started arrives.
+  owner.socket.destroy();
+
+  await waitFor(() => {
+    const stateFile = path.join(broker.binDir, "fake-codex-state.json");
+    if (!fs.existsSync(stateFile)) {
+      return false;
+    }
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    return state.lastInterrupt?.threadId === threadId;
+  });
+  assert.equal(processIsAlive(broker.child.pid), true);
+});
+
+test("an orphaned turn's completion is not forwarded to an unrelated client", async (t) => {
+  const broker = await startBroker(t, "slow-turn");
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request("thread/start", {
+    cwd: broker.cwd,
+    sandbox: "read-only",
+    ephemeral: false
+  });
+  const threadId = started.result.thread.id;
+  const turn = await owner.request("turn/start", {
+    threadId,
+    input: [{ type: "text", text: "abandon and leak nothing", text_elements: [] }]
+  });
+  assert.equal(turn.error, undefined);
+  await owner.waitForNotification(
+    (message) => message.method === "turn/started" && message.params?.threadId === threadId
+  );
+
+  owner.socket.destroy();
+
+  // A bystander issues non-streaming requests during the orphan recovery so
+  // it holds activeRequestSocket when the interrupt completion arrives.
+  const bystander = createJsonlClient(broker.endpoint);
+  t.after(() => bystander.close());
+  await initializeClient(bystander);
+  await waitFor(async () => {
+    const probe = await bystander.request("thread/start", {
+      cwd: broker.cwd,
+      sandbox: "read-only",
+      ephemeral: true
+    });
+    if (probe.error) {
+      return false;
+    }
+    // The orphan resolves once its interrupt-induced completion lands; keep
+    // probing until the fixture records it.
+    const stateFile = path.join(broker.binDir, "fake-codex-state.json");
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    return state.lastInterrupt?.threadId === threadId;
+  }, { timeoutMs: 8000, intervalMs: 100 });
+
+  // Give any wrongly-forwarded notification time to arrive, then assert the
+  // bystander never saw the foreign thread's lifecycle.
+  await delay(200);
+  const foreign = bystander.notifications.filter(
+    (message) => message.method === "turn/completed" && message.params?.threadId === threadId
+  );
+  assert.deepEqual(foreign, []);
 });
 
 test("guarded broker shutdown refuses while another client owns an active stream", async (t) => {

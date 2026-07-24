@@ -3994,6 +3994,42 @@ test("SessionEnd leaves a busy shared broker (and its session state) running", a
   assert.equal(finished.status, 0, finished.stderr);
 });
 
+test("SessionEnd reaps the broker after killing this session's own running job", async () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "slow-turn");
+  const env = { ...buildEnv(binDir), CODEX_COMPANION_SESSION_ID: "sess-own" };
+
+  const launch = run(process.execPath, [SCRIPT, "task", "--background", "--json", "own slow turn"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(launch.status, 0, launch.stderr);
+  const jobId = JSON.parse(launch.stdout).jobId;
+  await waitFor(() => {
+    const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+    return job?.turnId ? job : null;
+  }, { timeoutMs: 10000 });
+
+  const session = loadBrokerSession(repo);
+  assert.ok(session, "expected the background task to auto-start a workspace broker");
+
+  // The ending session owns the running job: the hook must kill the job
+  // first, then reap the now-idle broker (bounded busy retry covers the
+  // orphaned turn winding down after the worker dies).
+  const cleanup = run(process.execPath, [SESSION_HOOK, "SessionEnd"], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ hook_event_name: "SessionEnd", session_id: "sess-own", cwd: repo })
+  });
+  assert.equal(cleanup.status, 0, cleanup.stderr);
+
+  await waitFor(() => !processIsAlive(session.pid), { timeoutMs: 4000 });
+  assert.equal(loadBrokerSession(repo), null, "broker session state must be cleared");
+  const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+  assert.equal(job, undefined, "the killed job must leave the index");
+});
+
 test("SessionEnd hard-kills only a wedged broker that is provably still alive", async () => {
   const repo = initializeBasicRepo();
   const binDir = makeTempDir();
