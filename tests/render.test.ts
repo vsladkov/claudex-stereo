@@ -8,7 +8,7 @@ import {
   renderStatusReport,
   renderStoredJobResult,
   renderTaskResult
-} from "../plugins/stereo/scripts/lib/render.mjs";
+} from "../plugins/stereo/src/render/render.ts";
 
 const runningStatusJob = {
   id: "task-running",

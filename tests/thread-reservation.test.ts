@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { TestContext } from "node:test";
 
 import {
   acquireThreadReservation,
@@ -11,12 +12,18 @@ import {
   listStrandedThreadReservations,
   releaseThreadReservation,
   releaseThreadReservationForCancelledJob
-} from "../plugins/stereo/scripts/lib/codex.mjs";
+} from "../plugins/stereo/src/runtime/index.ts";
+import type { StrandedReservationEntry } from "../plugins/stereo/src/runtime/index.ts";
 import { makeTempDir } from "./helpers.ts";
 
 const DEAD_PID = 2147483647;
 
-function useTempCodexHome(t) {
+interface ReservationPathPair {
+  lockPath: string;
+  claimPath: string;
+}
+
+function useTempCodexHome(t: TestContext) {
   const previous = process.env.CODEX_HOME;
   const codexHome = makeTempDir("codex-home-");
   process.env.CODEX_HOME = codexHome;
@@ -31,20 +38,20 @@ function useTempCodexHome(t) {
 }
 
 function deferred() {
-  let resolve;
-  const promise = new Promise((done) => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
     resolve = done;
   });
   return { promise, resolve };
 }
 
-function reservationPaths(codexHome, threadId) {
+function reservationPaths(codexHome: string, threadId: string): ReservationPathPair {
   const digest = crypto.createHash("sha256").update(String(threadId)).digest("hex").slice(0, 32);
   const lockPath = path.join(codexHome, "companion-thread-locks", `${digest}.lock`);
   return { lockPath, claimPath: `${lockPath}.cleanup` };
 }
 
-function lockRecord(threadId, { jobId, pid }) {
+function lockRecord(threadId: string, { jobId, pid }: { jobId: string; pid: number }) {
   return {
     token: `token-${threadId}`,
     pid,
@@ -54,7 +61,7 @@ function lockRecord(threadId, { jobId, pid }) {
   };
 }
 
-function claimRecord({ jobId, pid }) {
+function claimRecord({ jobId, pid }: { jobId: string; pid: number }) {
   return {
     pid,
     jobId,
@@ -62,12 +69,12 @@ function claimRecord({ jobId, pid }) {
   };
 }
 
-function writeRecord(recordPath, record) {
+function writeRecord(recordPath: string, record: unknown) {
   fs.mkdirSync(path.dirname(recordPath), { recursive: true });
   fs.writeFileSync(recordPath, `${JSON.stringify(record)}\n`, "utf8");
 }
 
-function entrySortPath(entry) {
+function entrySortPath(entry: StrandedReservationEntry) {
   return entry.lockPath ?? entry.claimPath ?? entry.path ?? entry.paths?.[0] ?? "";
 }
 
@@ -97,7 +104,7 @@ test("thread reservations are exclusive, path-safe, and token-released", (t) => 
   fs.writeFileSync(reservation.cleanupPath, "{}\n", "utf8");
   assert.throws(
     () => acquireThreadReservation("../escape", { jobId: "job-after-cleanup-crash", pid: process.pid }),
-    (error) => {
+    (error: Error) => {
       assert.match(error.message, /if it appears stuck, run `\/stereo:setup`/);
       assert.doesNotMatch(error.message, /delete .*\.lock/i);
       return true;
@@ -118,16 +125,16 @@ test("thread reservations are exclusive, path-safe, and token-released", (t) => 
 
 test("stranded reservation scanning reconciles every readable lock and claim state", (t) => {
   const codexHome = useTempCodexHome(t);
-  const paths = {};
+  const paths: Record<string, ReservationPathPair> = {};
 
-  function seedLock(name, pid) {
+  function seedLock(name: string, pid: number) {
     const pair = reservationPaths(codexHome, name);
     paths[name] = pair;
     writeRecord(pair.lockPath, lockRecord(name, { jobId: `job-${name}`, pid }));
     return pair;
   }
 
-  function seedClaim(name, pid) {
+  function seedClaim(name: string, pid: number) {
     const pair = paths[name] ?? reservationPaths(codexHome, name);
     paths[name] = pair;
     writeRecord(pair.claimPath, claimRecord({ jobId: `job-${name}`, pid }));
@@ -151,10 +158,10 @@ test("stranded reservation scanning reconciles every readable lock and claim sta
   assert.equal(stranded.length, 4);
 
   assert.deepEqual(
-    stranded.find((entry) => entry.lockPath === paths["dead-lock"].lockPath),
+    stranded.find((entry) => entry.lockPath === paths["dead-lock"]!.lockPath),
     {
       kind: "stranded-reservation",
-      lockPath: paths["dead-lock"].lockPath,
+      lockPath: paths["dead-lock"]!.lockPath,
       threadId: "dead-lock",
       jobId: "job-dead-lock",
       pid: DEAD_PID
@@ -162,43 +169,44 @@ test("stranded reservation scanning reconciles every readable lock and claim sta
   );
 
   const strandedCleanup = stranded.find(
-    (entry) => entry.lockPath === paths["dead-lock-dead-claim"].lockPath
+    (entry) => entry.lockPath === paths["dead-lock-dead-claim"]!.lockPath
   );
   assert.deepEqual(strandedCleanup, {
     kind: "stranded-cleanup",
-    lockPath: paths["dead-lock-dead-claim"].lockPath,
-    claimPath: paths["dead-lock-dead-claim"].claimPath,
+    lockPath: paths["dead-lock-dead-claim"]!.lockPath,
+    claimPath: paths["dead-lock-dead-claim"]!.claimPath,
     threadId: "dead-lock-dead-claim",
     jobId: "job-dead-lock-dead-claim",
     pid: DEAD_PID
   });
+  assert.ok(strandedCleanup);
   const cleanupRemedy = describeStrandedReservation(strandedCleanup);
   assert.match(cleanupRemedy, /Delete both/);
   assert.ok(cleanupRemedy.includes(`\`${strandedCleanup.lockPath}\``));
   assert.ok(cleanupRemedy.includes(`\`${strandedCleanup.claimPath}\``));
 
   assert.deepEqual(
-    stranded.find((entry) => entry.claimPath === paths["orphaned-dead-claim"].claimPath),
+    stranded.find((entry) => entry.claimPath === paths["orphaned-dead-claim"]!.claimPath),
     {
       kind: "orphaned-claim",
-      claimPath: paths["orphaned-dead-claim"].claimPath,
+      claimPath: paths["orphaned-dead-claim"]!.claimPath,
       jobId: "job-orphaned-dead-claim",
       pid: DEAD_PID
     }
   );
 
   const claimOnly = stranded.find(
-    (entry) => entry.claimPath === paths["live-lock-dead-claim"].claimPath
+    (entry) => entry.claimPath === paths["live-lock-dead-claim"]!.claimPath
   );
   assert.deepEqual(claimOnly, {
     kind: "orphaned-claim",
-    claimPath: paths["live-lock-dead-claim"].claimPath,
+    claimPath: paths["live-lock-dead-claim"]!.claimPath,
     jobId: "job-live-lock-dead-claim",
     pid: DEAD_PID
   });
   const claimOnlyRemedy = describeStrandedReservation(claimOnly);
-  assert.ok(claimOnlyRemedy.includes(`\`${paths["live-lock-dead-claim"].claimPath}\``));
-  assert.equal(claimOnlyRemedy.includes(`\`${paths["live-lock-dead-claim"].lockPath}\``), false);
+  assert.ok(claimOnlyRemedy.includes(`\`${paths["live-lock-dead-claim"]!.claimPath}\``));
+  assert.equal(claimOnlyRemedy.includes(`\`${paths["live-lock-dead-claim"]!.lockPath}\``), false);
 
   for (const healthyName of [
     "live-lock",
@@ -209,8 +217,8 @@ test("stranded reservation scanning reconciles every readable lock and claim sta
     assert.equal(
       stranded.some(
         (entry) =>
-          entry.lockPath === paths[healthyName].lockPath ||
-          entry.claimPath === paths[healthyName].claimPath
+          entry.lockPath === paths[healthyName]!.lockPath ||
+          entry.claimPath === paths[healthyName]!.claimPath
       ),
       false,
       `${healthyName} should not be reported`
@@ -229,13 +237,14 @@ test("stranded reservation scanning handles malformed records and directory fail
 
   fs.writeFileSync(lockDir, "not a directory\n", "utf8");
   const [scanError] = listStrandedThreadReservations();
+  assert.ok(scanError);
   assert.equal(scanError.kind, "scan-error");
   assert.equal(scanError.path, lockDir);
   assert.ok(describeStrandedReservation(scanError).includes(`\`${lockDir}\``));
   fs.unlinkSync(lockDir);
   fs.mkdirSync(lockDir, { recursive: true });
 
-  const malformed = [
+  const malformed: Array<[string, string]> = [
     [path.join(lockDir, "empty.lock"), "{}\n"],
     [path.join(lockDir, "null.lock.cleanup"), "null\n"],
     [path.join(lockDir, "array.lock"), "[]\n"],
@@ -271,7 +280,8 @@ test("stranded reservation scanning handles malformed records and directory fail
     assert.doesNotMatch(remedy, /crashed Codex run|Delete both/i);
   }
 
-  const invalidClaimEntry = unreadable.find((entry) => entry.paths.includes(invalidClaimPair.claimPath));
+  const invalidClaimEntry = unreadable.find((entry) => entry.paths?.includes(invalidClaimPair.claimPath));
+  assert.ok(invalidClaimEntry?.paths);
   assert.deepEqual(invalidClaimEntry.paths, [invalidClaimPair.claimPath]);
   assert.equal(invalidClaimEntry.paths.includes(invalidClaimPair.lockPath), false);
 

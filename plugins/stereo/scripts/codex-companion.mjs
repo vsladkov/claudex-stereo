@@ -25,7 +25,13 @@ import {
     releaseThreadReservationForCancelledJob,
     runAppServerReview,
     runAppServerTurn
-  } from "./lib/codex.mjs";
+  } from "../src/runtime/index.ts";
+import {
+  defaultPairEffort,
+  normalizeReasoningEffort,
+  normalizeRequestedModel,
+  PAIR_DEFAULT_MODEL
+} from "../src/models/registry.ts";
 import { resolveClaudeSessionPath } from "../src/workspace/claude-session-transfer.ts";
 import { readStdinIfPiped } from "../src/shared/fs.ts";
 import { collectReviewContext, ensureGitRepository, listRepositoryFiles, resolveReviewTarget } from "../src/platform/git.ts";
@@ -73,34 +79,16 @@ import {
   renderSetupReport,
   renderStatusReport,
   renderTaskResult
-} from "./lib/render.mjs";
+} from "../src/render/render.ts";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const REVIEW_SCHEMA = path.join(ROOT_DIR, "schemas", "review-output.schema.json");
 const PLAN_REVIEW_SCHEMA = path.join(ROOT_DIR, "schemas", "plan-review-output.schema.json");
 const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000;
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 2000;
-const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
-const MODEL_ALIASES = new Map([
-  ["spark", "gpt-5.3-codex-spark"],
-  ["sol", "gpt-5.6-sol"],
-  ["terra", "gpt-5.6-terra"],
-  ["luna", "gpt-5.6-luna"]
-]);
-const PAIR_DEFAULT_MODEL = "sol";
-const PAIR_DEFAULT_EFFORT = "max"; // gpt-5.6-family models
-const PAIR_MODEL_OVERRIDE_EFFORT = "xhigh"; // non-5.6 models
-const PAIR_MAX_EFFORT_MODEL_FAMILY = "gpt-5.6";
 const PLAN_REVIEW_REVISION_CONTEXT =
   "This plan is a revision that responds to your earlier findings in this thread. Verify that each earlier finding was addressed, explicitly rebutted, or explicitly descoped into `## Out of scope` with a documented residual. Then review the revised sections and their interactions with the rest of the plan; do not re-audit unchanged, previously accepted sections for new concerns unless a revision changed their assumptions.";
 const STOP_REVIEW_TASK_MARKER = "Run a stop-gate review of the previous Claude turn.";
-
-function defaultPairEffort(resolvedModel) {
-  const inMaxFamily =
-    resolvedModel === PAIR_MAX_EFFORT_MODEL_FAMILY ||
-    resolvedModel.startsWith(`${PAIR_MAX_EFFORT_MODEL_FAMILY}-`);
-  return inMaxFamily ? PAIR_DEFAULT_EFFORT : PAIR_MODEL_OVERRIDE_EFFORT;
-}
 
 function printUsage() {
   console.log(
@@ -130,33 +118,6 @@ function outputResult(value, asJson) {
 
 function outputCommandResult(payload, rendered, asJson) {
   outputResult(asJson ? payload : rendered, asJson);
-}
-
-function normalizeRequestedModel(model) {
-  if (model == null) {
-    return null;
-  }
-  const normalized = String(model).trim();
-  if (!normalized) {
-    return null;
-  }
-  return MODEL_ALIASES.get(normalized.toLowerCase()) ?? normalized;
-}
-
-function normalizeReasoningEffort(effort) {
-  if (effort == null) {
-    return null;
-  }
-  const normalized = String(effort).trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  if (!VALID_REASONING_EFFORTS.has(normalized)) {
-    throw new Error(
-      `Unsupported reasoning effort "${effort}". Use one of: none, minimal, low, medium, high, xhigh, max.`
-    );
-  }
-  return normalized;
 }
 
 function normalizePlanReviewRound(round) {

@@ -4,7 +4,7 @@ import {
   getSessionRuntimeStatus,
   listStrandedThreadReservations,
   looksLikeVerificationCommand
-} from "./codex.mjs";
+} from "../../src/runtime/index.ts";
 import { getConfig, listJobs, readJobFile, resolveJobFile } from "../../src/workspace/state.ts";
 import { SESSION_ID_ENV } from "../../src/jobs/tracked-jobs.ts";
 import { resolveWorkspaceRoot } from "../../src/workspace/workspace.ts";

@@ -21,7 +21,7 @@ import {
 import {
   acquireThreadReservation,
   releaseThreadReservation
-} from "../plugins/stereo/scripts/lib/codex.mjs";
+} from "../plugins/stereo/src/runtime/index.ts";
 import { resolveStateDir } from "../plugins/stereo/src/workspace/state.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

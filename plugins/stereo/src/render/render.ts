@@ -1,6 +1,157 @@
-import { describeStrandedReservation } from "./codex.mjs";
+import { describeStrandedReservation } from "../runtime/reservations.ts";
+import type { StrandedReservationEntry } from "../runtime/reservations.ts";
 
-function severityRank(severity) {
+// Renderer inputs are typed from usage: jobs and stored payloads come from
+// state files written across plugin versions, so every field beyond the id is
+// treated as optional and read defensively.
+export interface RenderableJob {
+  id: string;
+  status?: string | null;
+  kindLabel?: string | null;
+  title?: string | null;
+  summary?: string | null;
+  phase?: string | null;
+  elapsed?: string | null;
+  duration?: string | null;
+  threadId?: string | null;
+  logFile?: string | null;
+  createdAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  jobClass?: string | null;
+  write?: boolean | null;
+  errorMessage?: string | null;
+  progressPreview?: string[] | null;
+}
+
+export interface ParsedResultLike {
+  parsed?: unknown;
+  parseError?: string | null;
+  rawOutput?: string | null;
+  reasoningSummary?: string[] | null;
+}
+
+export interface ReviewRenderMeta {
+  reviewLabel: string;
+  targetLabel: string;
+  reasoningSummary?: string[] | null;
+}
+
+export interface PlanReviewRenderMeta {
+  round?: number;
+  reasoningSummary?: string[] | null;
+}
+
+export interface NativeReviewRenderResult {
+  status?: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+export interface TaskRenderMeta {
+  write?: boolean | null;
+  touchedFiles?: unknown;
+}
+
+export interface StoredJobResultLike {
+  rawOutput?: unknown;
+  parseError?: unknown;
+  result?: unknown;
+  codex?: { stdout?: unknown; [key: string]: unknown } | null;
+  [key: string]: unknown;
+}
+
+export interface StoredJobLike {
+  threadId?: string | null;
+  jobClass?: string | null;
+  rendered?: string | null;
+  errorMessage?: string | null;
+  result?: StoredJobResultLike | null;
+}
+
+export interface SetupRenderReport {
+  ready: boolean;
+  node: { detail: string };
+  npm: { detail: string };
+  codex: { detail: string };
+  writeSandbox?: { available: boolean | null; detail: string } | null;
+  auth: { detail: string };
+  sessionRuntime: { label: string };
+  strandedReservations?: StrandedReservationEntry[] | null;
+  reviewGateEnabled?: boolean | null;
+  actionsTaken: string[];
+  nextSteps: string[];
+}
+
+export interface StatusRenderReport {
+  sessionRuntime: { label: string };
+  config: { stopReviewGate?: unknown };
+  strandedReservations?: StrandedReservationEntry[] | null;
+  running: RenderableJob[];
+  latestFinished?: RenderableJob | null;
+  recent: RenderableJob[];
+  needsReview?: boolean | null;
+}
+
+export interface StatusRenderOptions {
+  verbose?: boolean;
+}
+
+export interface JobStatusRenderOptions {
+  verbose?: boolean;
+  waitTimedOut?: boolean;
+  timeoutMs?: number | null;
+  strandedReservations?: StrandedReservationEntry[] | null;
+}
+
+interface JobDetailOptions {
+  showElapsed?: boolean;
+  showDuration?: boolean;
+  showTimestamps?: boolean;
+  showLog?: boolean;
+  showCancelHint?: boolean;
+  showResultHint?: boolean;
+  showReviewHint?: boolean;
+  showProgress?: boolean;
+}
+
+interface NormalizedReviewFinding {
+  severity: string;
+  title: string;
+  body: string;
+  file: string;
+  line_start: number | null;
+  line_end: number | null;
+  confidence: number | null;
+  recommendation: string;
+}
+
+interface ReviewResultShape {
+  verdict: string;
+  summary: string;
+  findings: unknown[];
+  next_steps: unknown[];
+}
+
+interface NormalizedPlanReviewFinding {
+  severity: string;
+  title: string;
+  body: string;
+  section: string;
+  confidence: number | null;
+  recommendation: string;
+}
+
+interface PlanReviewResultShape {
+  verdict: string;
+  summary: string;
+  findings: unknown[];
+  revision_instructions: unknown[];
+  open_questions: unknown[];
+  residual_risks?: unknown;
+}
+
+function severityRank(severity: string): number {
   switch (severity) {
     case "critical":
       return 0;
@@ -13,7 +164,7 @@ function severityRank(severity) {
   }
 }
 
-function formatLineRange(finding) {
+function formatLineRange(finding: NormalizedReviewFinding): string {
   if (!finding.line_start) {
     return "";
   }
@@ -23,31 +174,32 @@ function formatLineRange(finding) {
   return `:${finding.line_start}-${finding.line_end}`;
 }
 
-function validateReviewResultShape(data) {
+function validateReviewResultShape(data: unknown): string | null {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return "Expected a top-level JSON object.";
   }
-  if (typeof data.verdict !== "string" || !data.verdict.trim()) {
+  const shape = data as Record<string, unknown>;
+  if (typeof shape.verdict !== "string" || !shape.verdict.trim()) {
     return "Missing string `verdict`.";
   }
-  if (typeof data.summary !== "string" || !data.summary.trim()) {
+  if (typeof shape.summary !== "string" || !shape.summary.trim()) {
     return "Missing string `summary`.";
   }
-  if (!Array.isArray(data.findings)) {
+  if (!Array.isArray(shape.findings)) {
     return "Missing array `findings`.";
   }
-  if (!Array.isArray(data.next_steps)) {
+  if (!Array.isArray(shape.next_steps)) {
     return "Missing array `next_steps`.";
   }
   return null;
 }
 
-function normalizeReviewFinding(finding, index) {
-  const source = finding && typeof finding === "object" && !Array.isArray(finding) ? finding : {};
-  const lineStart = Number.isInteger(source.line_start) && source.line_start > 0 ? source.line_start : null;
+function normalizeReviewFinding(finding: unknown, index: number): NormalizedReviewFinding {
+  const source = (finding && typeof finding === "object" && !Array.isArray(finding) ? finding : {}) as Record<string, unknown>;
+  const lineStart = Number.isInteger(source.line_start) && (source.line_start as number) > 0 ? (source.line_start as number) : null;
   const lineEnd =
-    Number.isInteger(source.line_end) && source.line_end > 0 && (!lineStart || source.line_end >= lineStart)
-      ? source.line_end
+    Number.isInteger(source.line_end) && (source.line_end as number) > 0 && (!lineStart || (source.line_end as number) >= lineStart)
+      ? (source.line_end as number)
       : lineStart;
 
   return {
@@ -57,18 +209,23 @@ function normalizeReviewFinding(finding, index) {
     file: typeof source.file === "string" && source.file.trim() ? source.file.trim() : "unknown",
     line_start: lineStart,
     line_end: lineEnd,
-    confidence: Number.isFinite(source.confidence) ? Math.min(1, Math.max(0, source.confidence)) : null,
+    confidence: Number.isFinite(source.confidence) ? Math.min(1, Math.max(0, source.confidence as number)) : null,
     recommendation: typeof source.recommendation === "string" ? source.recommendation.trim() : ""
   };
 }
 
-function normalizeReviewResultData(data) {
+function normalizeReviewResultData(data: ReviewResultShape): {
+  verdict: string;
+  summary: string;
+  findings: NormalizedReviewFinding[];
+  next_steps: string[];
+} {
   return {
     verdict: data.verdict.trim(),
     summary: data.summary.trim(),
     findings: data.findings.map((finding, index) => normalizeReviewFinding(finding, index)),
     next_steps: data.next_steps
-      .filter((step) => typeof step === "string" && step.trim())
+      .filter((step): step is string => typeof step === "string" && Boolean(step.trim()))
       .map((step) => step.trim())
   };
 }
@@ -76,58 +233,66 @@ function normalizeReviewResultData(data) {
 // Tolerant-reader policy: the JSON schema sent to Codex marks residual_risks
 // as required (so the model always emits it), but this validator deliberately
 // does not — stored results from before the field existed must keep rendering.
-function validatePlanReviewResultShape(data) {
+function validatePlanReviewResultShape(data: unknown): string | null {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return "Expected a top-level JSON object.";
   }
-  if (typeof data.verdict !== "string" || !data.verdict.trim()) {
+  const shape = data as Record<string, unknown>;
+  if (typeof shape.verdict !== "string" || !shape.verdict.trim()) {
     return "Missing string `verdict`.";
   }
-  if (typeof data.summary !== "string" || !data.summary.trim()) {
+  if (typeof shape.summary !== "string" || !shape.summary.trim()) {
     return "Missing string `summary`.";
   }
-  if (!Array.isArray(data.findings)) {
+  if (!Array.isArray(shape.findings)) {
     return "Missing array `findings`.";
   }
-  if (!Array.isArray(data.revision_instructions)) {
+  if (!Array.isArray(shape.revision_instructions)) {
     return "Missing array `revision_instructions`.";
   }
-  if (!Array.isArray(data.open_questions)) {
+  if (!Array.isArray(shape.open_questions)) {
     return "Missing array `open_questions`.";
   }
   return null;
 }
 
-function normalizePlanReviewFinding(finding, index) {
-  const source = finding && typeof finding === "object" && !Array.isArray(finding) ? finding : {};
+function normalizePlanReviewFinding(finding: unknown, index: number): NormalizedPlanReviewFinding {
+  const source = (finding && typeof finding === "object" && !Array.isArray(finding) ? finding : {}) as Record<string, unknown>;
   return {
     severity: typeof source.severity === "string" && source.severity.trim() ? source.severity.trim() : "low",
     title: typeof source.title === "string" && source.title.trim() ? source.title.trim() : `Finding ${index + 1}`,
     body: typeof source.body === "string" && source.body.trim() ? source.body.trim() : "No details provided.",
     section: typeof source.section === "string" && source.section.trim() ? source.section.trim() : "general",
-    confidence: Number.isFinite(source.confidence) ? Math.min(1, Math.max(0, source.confidence)) : null,
+    confidence: Number.isFinite(source.confidence) ? Math.min(1, Math.max(0, source.confidence as number)) : null,
     recommendation: typeof source.recommendation === "string" ? source.recommendation.trim() : ""
   };
 }
 
-function normalizePlanReviewResultData(data) {
+function normalizePlanReviewResultData(data: PlanReviewResultShape): {
+  verdict: string;
+  summary: string;
+  findings: NormalizedPlanReviewFinding[];
+  revision_instructions: string[];
+  open_questions: string[];
+  residual_risks: string[];
+} {
   return {
     verdict: data.verdict.trim(),
     summary: data.summary.trim(),
     findings: data.findings.map((finding, index) => normalizePlanReviewFinding(finding, index)),
     revision_instructions: data.revision_instructions
-      .filter((instruction) => typeof instruction === "string" && instruction.trim())
+      .filter((instruction): instruction is string => typeof instruction === "string" && Boolean(instruction.trim()))
       .map((instruction) => instruction.trim()),
     open_questions: data.open_questions
-      .filter((question) => typeof question === "string" && question.trim())
+      .filter((question): question is string => typeof question === "string" && Boolean(question.trim()))
       .map((question) => question.trim()),
     residual_risks: (Array.isArray(data.residual_risks) ? data.residual_risks : [])
-      .filter((risk) => typeof risk === "string" && risk.trim())
+      .filter((risk): risk is string => typeof risk === "string" && Boolean(risk.trim()))
       .map((risk) => risk.trim())
   };
 }
 
-function isStructuredReviewStoredResult(storedJob) {
+function isStructuredReviewStoredResult(storedJob: StoredJobLike | null | undefined): boolean {
   const result = storedJob?.result;
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     return false;
@@ -138,7 +303,7 @@ function isStructuredReviewStoredResult(storedJob) {
   );
 }
 
-function formatJobLine(job) {
+function formatJobLine(job: RenderableJob): string {
   const parts = [job.id, `${job.status || "unknown"}`];
   if (job.kindLabel) {
     parts.push(job.kindLabel);
@@ -149,21 +314,21 @@ function formatJobLine(job) {
   return parts.join(" | ");
 }
 
-function escapeMarkdownCell(value) {
+function escapeMarkdownCell(value: unknown): string {
   return String(value ?? "")
     .replace(/\|/g, "\\|")
     .replace(/\r?\n/g, " ")
     .trim();
 }
 
-function formatCodexResumeCommand(job) {
+function formatCodexResumeCommand(job: RenderableJob | null | undefined): string | null {
   if (!job?.threadId) {
     return null;
   }
   return `codex resume ${job.threadId}`;
 }
 
-function appendActiveJobsTable(lines, jobs) {
+function appendActiveJobsTable(lines: string[], jobs: RenderableJob[]): void {
   lines.push("Active jobs:");
   lines.push("| Job | Kind | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
@@ -178,7 +343,7 @@ function appendActiveJobsTable(lines, jobs) {
   }
 }
 
-function pushJobDetails(lines, job, options = {}) {
+function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailOptions = {}): void {
   lines.push(`- ${formatJobLine(job)}`);
   if (job.summary) {
     lines.push(`  Summary: ${job.summary}`);
@@ -231,7 +396,7 @@ function pushJobDetails(lines, job, options = {}) {
   }
 }
 
-function appendReasoningSection(lines, reasoningSummary) {
+function appendReasoningSection(lines: string[], reasoningSummary: string[] | null | undefined): void {
   if (!Array.isArray(reasoningSummary) || reasoningSummary.length === 0) {
     return;
   }
@@ -242,7 +407,7 @@ function appendReasoningSection(lines, reasoningSummary) {
   }
 }
 
-function appendStrandedReservationWarnings(lines, entries) {
+function appendStrandedReservationWarnings(lines: string[], entries: StrandedReservationEntry[] | null | undefined): void {
   if (!Array.isArray(entries) || entries.length === 0) {
     return;
   }
@@ -256,7 +421,7 @@ function appendStrandedReservationWarnings(lines, entries) {
   lines.push("");
 }
 
-export function renderSetupReport(report) {
+export function renderSetupReport(report: SetupRenderReport): string {
   const lines = [
     "# Codex Setup",
     "",
@@ -306,7 +471,7 @@ export function renderSetupReport(report) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderReviewResult(parsedResult, meta) {
+export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewRenderMeta): string {
   if (!parsedResult.parsed) {
     const lines = [
       `# Codex ${meta.reviewLabel}`,
@@ -346,7 +511,7 @@ export function renderReviewResult(parsedResult, meta) {
     return `${lines.join("\n").trimEnd()}\n`;
   }
 
-  const data = normalizeReviewResultData(parsedResult.parsed);
+  const data = normalizeReviewResultData(parsedResult.parsed as ReviewResultShape);
   const findings = [...data.findings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
   const lines = [
     `# Codex ${meta.reviewLabel}`,
@@ -386,8 +551,8 @@ export function renderReviewResult(parsedResult, meta) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderPlanReviewResult(parsedResult, meta = {}) {
-  const heading = meta.round > 1 ? `# Codex Plan Review (round ${meta.round})` : "# Codex Plan Review";
+export function renderPlanReviewResult(parsedResult: ParsedResultLike, meta: PlanReviewRenderMeta = {}): string {
+  const heading = (meta.round as number) > 1 ? `# Codex Plan Review (round ${meta.round})` : "# Codex Plan Review";
   if (!parsedResult.parsed) {
     const lines = [
       heading,
@@ -425,7 +590,7 @@ export function renderPlanReviewResult(parsedResult, meta = {}) {
     return `${lines.join("\n").trimEnd()}\n`;
   }
 
-  const data = normalizePlanReviewResultData(parsedResult.parsed);
+  const data = normalizePlanReviewResultData(parsedResult.parsed as PlanReviewResultShape);
   const findings = [...data.findings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
   const lines = [
     heading,
@@ -477,7 +642,7 @@ export function renderPlanReviewResult(parsedResult, meta = {}) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderNativeReviewResult(result, meta) {
+export function renderNativeReviewResult(result: NativeReviewRenderResult, meta: ReviewRenderMeta): string {
   const stdout = result.stdout.trim();
   const stderr = result.stderr.trim();
   const lines = [
@@ -504,7 +669,10 @@ export function renderNativeReviewResult(result, meta) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderTaskResult(parsedResult, meta) {
+export function renderTaskResult(
+  parsedResult: { rawOutput?: unknown; failureMessage?: unknown } | null | undefined,
+  meta: TaskRenderMeta | null | undefined
+): string {
   const rawOutput = typeof parsedResult?.rawOutput === "string" ? parsedResult.rawOutput : "";
   if (rawOutput) {
     const output = rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`;
@@ -518,7 +686,7 @@ export function renderTaskResult(parsedResult, meta) {
   return `${message}\n`;
 }
 
-export function renderStatusReport(report, options = {}) {
+export function renderStatusReport(report: StatusRenderReport, options: StatusRenderOptions = {}): string {
   const lines = [
     "# Codex Status",
     "",
@@ -579,7 +747,7 @@ export function renderStatusReport(report, options = {}) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderJobStatusReport(job, options = {}) {
+export function renderJobStatusReport(job: RenderableJob, options: JobStatusRenderOptions = {}): string {
   const lines = ["# Codex Job Status", ""];
   pushJobDetails(lines, job, {
     showElapsed: job.status === "queued" || job.status === "running",
@@ -597,7 +765,7 @@ export function renderJobStatusReport(job, options = {}) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderStoredJobResult(job, storedJob) {
+export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLike | null | undefined): string {
   const threadId = storedJob?.threadId ?? job.threadId ?? null;
   const resumeCommand = threadId ? `codex resume ${threadId}` : null;
   const taskClass = storedJob?.jobClass ?? job.jobClass ?? null;
@@ -666,7 +834,7 @@ export function renderStoredJobResult(job, storedJob) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderCancelReport(job) {
+export function renderCancelReport(job: RenderableJob): string {
   const lines = [
     "# Codex Cancel",
     "",

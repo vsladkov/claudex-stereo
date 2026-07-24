@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getCodexWriteSandboxStatus } from "../plugins/stereo/scripts/lib/codex.mjs";
+import { getCodexWriteSandboxStatus } from "../plugins/stereo/src/runtime/index.ts";
+import type { BinaryAvailability } from "../plugins/stereo/src/platform/process.ts";
+
+interface ProbeCall {
+  command: string;
+  args: readonly string[];
+  options: { cwd: string };
+}
 
 const CWD = "/tmp/codex-sandbox-probe-workspace";
 const PRIMARY_ARGS = ["sandbox", "-P", ":workspace", "--", "true"];
@@ -16,19 +23,20 @@ const BWRAP_FAILURE = {
   detail: "bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted"
 };
 
-function recordingProbe(results) {
-  const calls = [];
+function recordingProbe(results: BinaryAvailability[]) {
+  const calls: ProbeCall[] = [];
   return {
     calls,
-    probeImpl(command, args, options) {
+    probeImpl(command: string, args: readonly string[], options: { cwd: string }): BinaryAvailability {
       calls.push({ command, args, options });
       assert.notEqual(results.length, 0, "probe was invoked more times than expected");
-      return results.shift();
+      return results.shift()!;
     }
   };
 }
 
-function assertProbeCall(call, expectedArgs) {
+function assertProbeCall(call: ProbeCall | undefined, expectedArgs: readonly string[]) {
+  assert.ok(call);
   assert.equal(call.command, "codex");
   assert.deepEqual(call.args, expectedArgs);
   assert.deepEqual(call.options, { cwd: CWD });

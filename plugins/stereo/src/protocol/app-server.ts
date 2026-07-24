@@ -6,11 +6,18 @@ import type {
   ServerNotification
 } from "../../.generated/app-server-types/index.js";
 import type {
+  ConfigReadParams,
+  ConfigReadResponse,
   ExternalAgentConfigImportParams,
   ExternalAgentConfigImportResponse,
+  GetAccountParams,
+  GetAccountResponse,
+  MigrationDetails,
+  ReviewDelivery,
   ReviewStartParams,
   ReviewStartResponse,
   ReviewTarget,
+  SandboxPolicy,
   Thread,
   ThreadItem,
   ThreadListParams,
@@ -31,16 +38,27 @@ import type {
 
 export type {
   ClientInfo,
+  ConfigReadResponse,
+  ExternalAgentConfigImportParams,
+  GetAccountResponse,
   InitializeCapabilities,
   InitializeParams,
   InitializeResponse,
+  MigrationDetails,
+  ReviewDelivery,
+  ReviewStartResponse,
   ReviewTarget,
+  SandboxPolicy,
   Thread,
   ThreadItem,
   ThreadListParams,
+  ThreadListResponse,
+  ThreadResumeResponse,
+  ThreadStartResponse,
   Turn,
   TurnInterruptParams,
   TurnStartParams,
+  TurnStartResponse,
   UserInput
 };
 
@@ -58,6 +76,8 @@ export interface CodexAppServerClientOptions {
 
 export interface AppServerMethodMap {
   initialize: { params: InitializeParams; result: InitializeResponse };
+  "account/read": { params: GetAccountParams; result: GetAccountResponse };
+  "config/read": { params: ConfigReadParams; result: ConfigReadResponse };
   "externalAgentConfig/import": { params: ExternalAgentConfigImportParams; result: ExternalAgentConfigImportResponse };
   "thread/start": { params: ThreadStartParams; result: ThreadStartResponse };
   "thread/resume": { params: ThreadResumeParams; result: ThreadResumeResponse };

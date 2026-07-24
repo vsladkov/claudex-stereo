@@ -6,7 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { getCodexAvailability } from "./lib/codex.mjs";
+import { getCodexAvailability } from "../src/runtime/index.ts";
 import { readStdinIfPiped } from "../src/shared/fs.ts";
 import { loadPromptTemplate, interpolateTemplate } from "../src/shared/prompts.ts";
 import { getConfig, listJobs } from "../src/workspace/state.ts";

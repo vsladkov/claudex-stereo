@@ -6,7 +6,7 @@ import process from "node:process";
 import { readStdinIfPiped } from "../src/shared/fs.ts";
 import { terminateProcessTree } from "../src/platform/process.ts";
 import { BROKER_ENDPOINT_ENV } from "../src/transport/app-server-client.ts";
-import { releaseThreadReservationForCancelledJob } from "./lib/codex.mjs";
+import { releaseThreadReservationForCancelledJob } from "../src/runtime/index.ts";
 import {
   clearBrokerSession,
   LOG_FILE_ENV,
