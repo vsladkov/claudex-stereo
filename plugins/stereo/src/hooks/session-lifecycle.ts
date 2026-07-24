@@ -10,9 +10,11 @@ import {
   LOG_FILE_ENV,
   loadBrokerSession,
   PID_FILE_ENV,
-  sendBrokerShutdown,
+  processHasExited,
+  sendBrokerShutdownIfIdle,
   teardownBrokerSession
 } from "../broker/lifecycle.ts";
+import type { ShutdownOutcome } from "../broker/lifecycle.ts";
 import { PLUGIN_DATA_ENV, loadState, nowIso, readJobFile, resolveJobFile, resolveStateFile, saveState, writeJobFile } from "../workspace/state.ts";
 import { SESSION_ID_ENV } from "../jobs/tracked-jobs.ts";
 
@@ -159,18 +161,36 @@ async function handleSessionEnd(input: SessionHookInput): Promise<void> {
   const sessionDir = brokerSession?.sessionDir ?? null;
   const pid = brokerSession?.pid ?? null;
 
+  // Guarded shutdown: the workspace broker is shared by every session in
+  // this cwd, so an unconditional kill here would abort another session's
+  // in-flight Codex turn. accepted:true additionally means the broker's exit
+  // AND closed endpoint were verified, so no kill fallback is needed then.
+  let shutdown: ShutdownOutcome | null = null;
   if (brokerEndpoint) {
-    await sendBrokerShutdown(brokerEndpoint);
+    shutdown = await sendBrokerShutdownIfIdle(brokerEndpoint, { timeoutMs: 1500 });
   }
 
   await cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
+
+  if (shutdown && !shutdown.accepted && shutdown.busy) {
+    // Another live session (or an in-flight turn) still owns the broker.
+    // Leave the process and its session state for the surviving session's
+    // own SessionEnd; interrupting orphaned turns is the lifecycle
+    // redesign's territory.
+    return;
+  }
+
+  // A gracefully-exited broker's pid may already belong to an unrelated
+  // process; kill only when the broker is provably still alive (wedged or
+  // unresponsive endpoint).
+  const brokerStillAlive = typeof pid === "number" && Number.isFinite(pid) && !processHasExited(pid);
   teardownBrokerSession({
     endpoint: brokerEndpoint,
     pidFile,
     logFile,
     sessionDir,
     pid,
-    killProcess: terminateProcessTree
+    killProcess: brokerStillAlive ? terminateProcessTree : null
   });
   clearBrokerSession(cwd);
 }

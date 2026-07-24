@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
-import { loadBrokerSession, sendBrokerShutdown, teardownBrokerSession } from "../plugins/stereo/src/broker/lifecycle.ts";
+import {
+  BROKER_SESSION_DIR_PREFIX,
+  loadBrokerSession,
+  sendBrokerShutdown,
+  teardownBrokerSession
+} from "../plugins/stereo/src/broker/lifecycle.ts";
+import { spawnSync } from "node:child_process";
 import { terminateProcessTree } from "../plugins/stereo/src/platform/process.ts";
 
 // The companion CLI auto-starts a detached, session-leader broker per
@@ -71,6 +77,17 @@ export async function reapWorkspaceBroker(cwd: string): Promise<boolean> {
   return true;
 }
 
+function readCommandLine(pid: number): string | null {
+  try {
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
+  } catch {
+    // No /proc outside Linux (e.g. macOS): fall back to ps.
+    const result = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });
+    const line = (result.stdout ?? "").trim();
+    return result.status === 0 && line ? line : null;
+  }
+}
+
 export interface LeakSweepResult {
   reaped: number;
   details: string[];
@@ -80,7 +97,8 @@ export interface LeakSweepResult {
  * Tmpdir-wide safety net for the suite's global teardown: kill any broker
  * whose pid file lives in a cxc-* session dir AND whose --cwd is itself under
  * os.tmpdir() (a live user session serves a real workspace and never matches).
- * POSIX-only (/proc cmdline verification); the advisory Windows lane skips.
+ * Cmdline verification reads /proc on Linux and falls back to `ps` elsewhere
+ * on POSIX; the advisory Windows lane skips the sweep entirely.
  */
 export function reapLeakedTestBrokers(): LeakSweepResult {
   const result: LeakSweepResult = { reaped: 0, details: [] };
@@ -97,7 +115,7 @@ export function reapLeakedTestBrokers(): LeakSweepResult {
   }
 
   for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith("cxc-")) {
+    if (!entry.isDirectory() || !entry.name.startsWith(BROKER_SESSION_DIR_PREFIX)) {
       continue;
     }
     const sessionDir = path.join(tmp, entry.name);
@@ -111,10 +129,8 @@ export function reapLeakedTestBrokers(): LeakSweepResult {
       continue;
     }
 
-    let cmdline = "";
-    try {
-      cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
-    } catch {
+    const cmdline = readCommandLine(pid);
+    if (!cmdline) {
       continue;
     }
     if (!cmdline.includes("app-server-broker") || !cmdline.includes(" serve ")) {

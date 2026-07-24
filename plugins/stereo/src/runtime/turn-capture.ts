@@ -34,7 +34,8 @@ export interface TurnCaptureState {
   finalAnswerSeen: boolean;
   pendingCollaborations: Set<string>;
   activeSubagentTurns: Set<string>;
-  completionTimer: ReturnType<typeof setTimeout> | null;
+  completionTimer: unknown | null;
+  timer: TurnCaptureTimer;
   lastAgentMessage: string;
   reviewText: string;
   reasoningSummary: string[];
@@ -45,9 +46,23 @@ export interface TurnCaptureState {
   onProgress: ProgressReporter | null;
 }
 
+export interface TurnCaptureTimer {
+  setTimeoutImpl: (callback: () => void, delayMs: number) => { unref?: () => void };
+  clearTimeoutImpl: (handle: unknown) => void;
+  inferredCompletionDelayMs: number;
+}
+
 export interface TurnCaptureStateOptions {
   onProgress?: ProgressReporter | null;
+  /** Injectable clock for the inferred-completion debounce (tests only). */
+  timer?: Partial<TurnCaptureTimer>;
 }
+
+const DEFAULT_TIMER: TurnCaptureTimer = {
+  setTimeoutImpl: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeoutImpl: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  inferredCompletionDelayMs: 250
+};
 
 export function looksLikeVerificationCommand(command: string): boolean {
   return /\b(test|tests|lint|build|typecheck|type-check|check|verify|validate|pytest|jest|vitest|cargo test|npm test|pnpm test|yarn test|go test|mvn test|gradle test|tsc|eslint|ruff)\b/i.test(
@@ -270,6 +285,7 @@ export function createTurnCaptureState(threadId: string, options: TurnCaptureSta
     pendingCollaborations: new Set(),
     activeSubagentTurns: new Set(),
     completionTimer: null,
+    timer: { ...DEFAULT_TIMER, ...options.timer },
     lastAgentMessage: "",
     reviewText: "",
     reasoningSummary: [],
@@ -283,7 +299,7 @@ export function createTurnCaptureState(threadId: string, options: TurnCaptureSta
 
 export function clearCompletionTimer(state: TurnCaptureState): void {
   if (state.completionTimer) {
-    clearTimeout(state.completionTimer);
+    state.timer.clearTimeoutImpl(state.completionTimer);
     state.completionTimer = null;
   }
 }
@@ -325,7 +341,7 @@ export function scheduleInferredCompletion(state: TurnCaptureState): void {
   }
 
   clearCompletionTimer(state);
-  state.completionTimer = setTimeout(() => {
+  const handle = state.timer.setTimeoutImpl(() => {
     state.completionTimer = null;
     if (state.completed || state.finalTurn || !state.finalAnswerSeen) {
       return;
@@ -334,8 +350,9 @@ export function scheduleInferredCompletion(state: TurnCaptureState): void {
       return;
     }
     completeTurn(state, null, { inferred: true });
-  }, 250);
-  state.completionTimer.unref?.();
+  }, state.timer.inferredCompletionDelayMs);
+  handle.unref?.();
+  state.completionTimer = handle;
 }
 
 export function belongsToTurn(state: TurnCaptureState, message: AppServerNotification): boolean {

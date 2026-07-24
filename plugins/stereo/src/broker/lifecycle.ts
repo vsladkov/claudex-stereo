@@ -53,7 +53,9 @@ export interface TeardownBrokerSessionOptions {
   killProcess?: ((pid: number) => unknown) | null;
 }
 
-export function createBrokerSessionDir(prefix = "cxc-"): string {
+export const BROKER_SESSION_DIR_PREFIX = "cxc-";
+
+export function createBrokerSessionDir(prefix = BROKER_SESSION_DIR_PREFIX): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
@@ -97,7 +99,7 @@ export async function sendBrokerShutdown(endpoint: string): Promise<void> {
   });
 }
 
-function processHasExited(pid: number): boolean {
+export function processHasExited(pid: number): boolean {
   if (!Number.isFinite(pid)) {
     return false;
   }

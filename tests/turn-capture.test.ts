@@ -7,7 +7,8 @@ import {
   captureTurn,
   clearCompletionTimer,
   completeTurn,
-  createTurnCaptureState
+  createTurnCaptureState,
+  scheduleInferredCompletion
 } from "../plugins/stereo/src/runtime/turn-capture.ts";
 import type { ProgressUpdate } from "../plugins/stereo/src/runtime/turn-capture.ts";
 import type { AppServerClient } from "../plugins/stereo/src/runtime/threads.ts";
@@ -206,3 +207,86 @@ test("captureTurn records malformed notifications instead of throwing", async ()
     )
   );
 });
+
+// --- Inferred-completion debounce with an injected fake clock ---
+
+interface FakeClock {
+  pending: Array<{ id: number; callback: () => void }>;
+  nextId: number;
+}
+
+function installFakeClock(clock: FakeClock) {
+  return {
+    setTimeoutImpl: (callback: () => void, _delayMs: number) => {
+      const entry = { id: clock.nextId++, callback, unref: () => {} };
+      clock.pending.push(entry);
+      return entry;
+    },
+    clearTimeoutImpl: (handle: unknown) => {
+      const id = (handle as { id: number }).id;
+      clock.pending = clock.pending.filter((entry) => entry.id !== id);
+    },
+    inferredCompletionDelayMs: 250
+  };
+}
+
+function fireAll(clock: FakeClock): number {
+  const due = clock.pending.splice(0, clock.pending.length);
+  for (const entry of due) {
+    entry.callback();
+  }
+  return due.length;
+}
+
+test("the inferred-completion timer completes the turn exactly once", async () => {
+  const clock: FakeClock = { pending: [], nextId: 1 };
+  const state = createTurnCaptureState("thread-timer", { timer: installFakeClock(clock) });
+  state.finalAnswerSeen = true;
+
+  scheduleInferredCompletion(state);
+  assert.equal(clock.pending.length, 1);
+
+  // Re-scheduling debounces: the earlier timer is cleared, not stacked.
+  scheduleInferredCompletion(state);
+  assert.equal(clock.pending.length, 1);
+
+  assert.equal(fireAll(clock), 1);
+  const finished = await state.completion;
+  assert.equal(finished.completed, true);
+  assert.equal(finished.finalTurn?.status, "completed");
+
+  // A late duplicate fire must not double-complete.
+  scheduleInferredCompletion(state);
+  assert.equal(clock.pending.length, 0, "completed turns never re-arm the timer");
+});
+
+test("a real completion cancels the pending inferred-completion timer", () => {
+  const clock: FakeClock = { pending: [], nextId: 1 };
+  const state = createTurnCaptureState("thread-timer-cancel", { timer: installFakeClock(clock) });
+  state.finalAnswerSeen = true;
+
+  scheduleInferredCompletion(state);
+  assert.equal(clock.pending.length, 1);
+
+  completeTurn(state, { id: "turn-real", status: "completed" } as Turn);
+  assert.equal(clock.pending.length, 0, "completeTurn must clear the debounce timer");
+  assert.equal(state.finalTurn?.id, "turn-real");
+
+  // Nothing left to fire; firing is a no-op even if a stale handle leaked.
+  assert.equal(fireAll(clock), 0);
+});
+
+test("pending collaborations veto the inferred-completion schedule", () => {
+  const clock: FakeClock = { pending: [], nextId: 1 };
+  const state = createTurnCaptureState("thread-timer-veto", { timer: installFakeClock(clock) });
+  state.finalAnswerSeen = true;
+  state.pendingCollaborations.add("collab-1");
+
+  scheduleInferredCompletion(state);
+  assert.equal(clock.pending.length, 0, "an active collaboration must block the debounce");
+
+  state.pendingCollaborations.clear();
+  scheduleInferredCompletion(state);
+  assert.equal(clock.pending.length, 1);
+});
+

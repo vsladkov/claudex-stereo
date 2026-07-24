@@ -30,7 +30,7 @@ import { resolveStateDir } from "../plugins/stereo/src/workspace/state.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-function processIsAlive(pid: number | undefined): boolean {
+function processIsAlive(pid: number | null | undefined): boolean {
   if (!pid) {
     return false;
   }
@@ -3592,7 +3592,15 @@ test("a resumed thread is reserved for exactly one run", async (t) => {
   );
   assert.equal(launched.status, 0, launched.stderr);
   const jobId = JSON.parse(launched.stdout).jobId;
-  await waitFor(() => findThreadReservation(env.CODEX_HOME, threadId), { timeoutMs: 10000 });
+  // Conjunction gate (not just "a reservation exists"): the reservation must
+  // belong to THIS job and its turn must have started, otherwise a lingering
+  // reservation from the earlier foreground run can satisfy the wait early
+  // and the post-completion null assertion races the release.
+  await waitFor(() => {
+    const reservation = findThreadReservation(env.CODEX_HOME, threadId);
+    const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+    return reservation?.record.jobId === jobId && job?.turnId ? reservation : null;
+  }, { timeoutMs: 10000 });
   const waited = run(
     process.execPath,
     [SCRIPT, "status", jobId, "--wait", "--timeout-ms", "15000", "--json"],
@@ -3920,4 +3928,110 @@ test("the same thread is exclusive across workspaces and plugin state roots", ()
   releaseThreadReservation(reservation);
 
   assert.notEqual(workspaceA, workspaceB);
+});
+
+test("SessionEnd tears down an idle workspace broker with no kill fallback", async () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const first = run(process.execPath, [SCRIPT, "task", "warm the broker up"], { cwd: repo, env });
+  assert.equal(first.status, 0, first.stderr);
+  const session = loadBrokerSession(repo);
+  assert.ok(session, "expected the task run to auto-start a workspace broker");
+  assert.equal(processIsAlive(session.pid), true);
+
+  const cleanup = run(process.execPath, [SESSION_HOOK, "SessionEnd"], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ hook_event_name: "SessionEnd", session_id: "sess-idle", cwd: repo })
+  });
+  assert.equal(cleanup.status, 0, cleanup.stderr);
+
+  await waitFor(() => !processIsAlive(session.pid), { timeoutMs: 4000 });
+  assert.equal(loadBrokerSession(repo), null);
+  assert.equal(fs.existsSync(session.sessionDir ?? ""), false);
+});
+
+test("SessionEnd leaves a busy shared broker (and its session state) running", async () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "slow-turn");
+  const env = buildEnv(binDir);
+
+  const launch = run(process.execPath, [SCRIPT, "task", "--background", "--json", "slow shared turn"], {
+    cwd: repo,
+    env
+  });
+  assert.equal(launch.status, 0, launch.stderr);
+  const jobId = JSON.parse(launch.stdout).jobId;
+  await waitFor(() => {
+    const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+    return job?.turnId ? job : null;
+  }, { timeoutMs: 10000 });
+
+  const session = loadBrokerSession(repo);
+  assert.ok(session, "expected the background task to auto-start a workspace broker");
+
+  // A different session ends while the turn is in flight: the shared broker
+  // (and the state the surviving session needs to find it) must survive.
+  const cleanup = run(process.execPath, [SESSION_HOOK, "SessionEnd"], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ hook_event_name: "SessionEnd", session_id: "sess-other", cwd: repo })
+  });
+  assert.equal(cleanup.status, 0, cleanup.stderr);
+
+  assert.equal(processIsAlive(session.pid), true, "busy broker must not be killed by another session's end");
+  assert.ok(loadBrokerSession(repo), "busy broker session state must survive");
+
+  const finished = run(
+    process.execPath,
+    [SCRIPT, "status", jobId, "--wait", "--timeout-ms", "15000", "--json"],
+    { cwd: repo, env }
+  );
+  assert.equal(finished.status, 0, finished.stderr);
+});
+
+test("SessionEnd hard-kills only a wedged broker that is provably still alive", async () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000);"], {
+    stdio: "ignore",
+    detached: true
+  });
+  sleeper.unref();
+  assert.ok(sleeper.pid);
+
+  const sessionDir = makeTempDir("wedged-broker-");
+  const pidFile = path.join(sessionDir, "broker.pid");
+  fs.writeFileSync(pidFile, String(sleeper.pid), "utf8");
+  saveBrokerSession(repo, {
+    endpoint: `unix:${path.join(sessionDir, "gone.sock")}`,
+    pid: sleeper.pid,
+    pidFile,
+    logFile: path.join(sessionDir, "broker.log"),
+    sessionDir
+  });
+
+  try {
+    const cleanup = run(process.execPath, [SESSION_HOOK, "SessionEnd"], {
+      cwd: repo,
+      env,
+      input: JSON.stringify({ hook_event_name: "SessionEnd", session_id: "sess-wedged", cwd: repo })
+    });
+    assert.equal(cleanup.status, 0, cleanup.stderr);
+
+    // Unreachable endpoint + live pid = wedged: the kill fallback applies.
+    await waitFor(() => !processIsAlive(sleeper.pid), { timeoutMs: 4000 });
+    assert.equal(loadBrokerSession(repo), null);
+  } finally {
+    if (processIsAlive(sleeper.pid)) {
+      terminateProcessTree(sleeper.pid!);
+    }
+  }
 });
