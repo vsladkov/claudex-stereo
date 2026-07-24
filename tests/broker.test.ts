@@ -2,13 +2,16 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.ts";
 import { makeTempDir } from "./helpers.ts";
+import { drainCreatedTempDirs } from "./helpers.ts";
+import { reapWorkspaceBroker } from "./broker-reaper.ts";
+import { terminateProcessTree } from "../plugins/stereo/src/platform/process.ts";
 import { createBrokerEndpoint, parseBrokerEndpoint } from "../plugins/stereo/src/broker/endpoint.ts";
 import { BROKER_BUSY_RPC_CODE } from "../plugins/stereo/src/transport/app-server-client.ts";
 import {
@@ -22,6 +25,16 @@ import {
 } from "../plugins/stereo/src/broker/lifecycle.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+// Every workspace this file created gets its broker reaped after each test:
+// the companion CLI auto-starts a detached broker per workspace, and without
+// a SessionEnd there is nothing else to stop it (one unswept full run used
+// to strand ~40 broker processes).
+afterEach(async () => {
+  for (const dir of drainCreatedTempDirs()) {
+    await reapWorkspaceBroker(dir);
+  }
+});
 const BROKER_SCRIPT = path.join(ROOT, "plugins", "stereo", "scripts", "app-server-broker.ts");
 
 // Minimal shape of the JSONL frames the broker exchanges; payloads stay loose
@@ -253,6 +266,11 @@ async function startBroker(
     if (processIsAlive(child.pid)) {
       await sendBrokerShutdown(endpoint).catch(() => {});
       await waitFor(() => !processIsAlive(child.pid), { timeoutMs: 3000 }).catch(() => {});
+    }
+    // Graceful shutdown can be refused (busy broker) or lost; never leave
+    // the detached session leader running.
+    if (processIsAlive(child.pid)) {
+      terminateProcessTree(child.pid!);
     }
   });
 

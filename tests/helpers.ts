@@ -19,8 +19,21 @@ export interface RunResult {
   error?: Error;
 }
 
+const createdTempDirs: string[] = [];
+
 export function makeTempDir(prefix = "codex-plugin-test-"): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  createdTempDirs.push(dir);
+  return dir;
+}
+
+/**
+ * Return the temp dirs created by this test-file process since the last
+ * drain. Each test file runs in its own process, so afterEach reapers built
+ * on this see only their own file's workspaces - never another file's.
+ */
+export function drainCreatedTempDirs(): string[] {
+  return createdTempDirs.splice(0, createdTempDirs.length);
 }
 
 export function writeExecutable(filePath: string, source: string): void {

@@ -2,14 +2,16 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.ts";
-import { initGitRepo, makeTempDir, run } from "./helpers.ts";
+import { drainCreatedTempDirs, initGitRepo, makeTempDir, run } from "./helpers.ts";
+import { reapWorkspaceBroker } from "./broker-reaper.ts";
+import { terminateProcessTree } from "../plugins/stereo/src/platform/process.ts";
 import { parseBrokerEndpoint } from "../plugins/stereo/src/broker/endpoint.ts";
 import {
   ensureBrokerSession,
@@ -27,6 +29,29 @@ import {
 import { resolveStateDir } from "../plugins/stereo/src/workspace/state.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function processIsAlive(pid: number | undefined): boolean {
+  if (!pid) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Every workspace this file created gets its broker reaped after each test:
+// the companion CLI auto-starts a detached broker per workspace, and without
+// a SessionEnd there is nothing else to stop it (one unswept full run used
+// to strand ~40 broker processes).
+afterEach(async () => {
+  for (const dir of drainCreatedTempDirs()) {
+    await reapWorkspaceBroker(dir);
+  }
+});
+
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "stereo");
 const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex-companion.ts");
 const BROKER_SCRIPT = path.join(PLUGIN_ROOT, "scripts", "app-server-broker.ts");
@@ -3062,6 +3087,9 @@ test("plan-review --thread resumes the same pair thread read-only and stores pla
   if (brokerSession?.endpoint) {
     await sendBrokerShutdown(brokerSession.endpoint).catch(() => {});
     await waitFor(async () => !(await waitForBrokerEndpoint(brokerSession.endpoint, 100)));
+    if (brokerSession.pid && processIsAlive(brokerSession.pid)) {
+      terminateProcessTree(brokerSession.pid);
+    }
   }
   const third = run(
     "node",
@@ -3454,6 +3482,12 @@ test("an endpoint-pinned runtime is never drained after a private write retry", 
   assert.equal(await waitForBrokerEndpoint(endpoint, 4000), true);
   t.after(async () => {
     await sendBrokerShutdown(endpoint).catch(() => {});
+    if (broker.pid && processIsAlive(broker.pid)) {
+      await waitFor(() => !processIsAlive(broker.pid!), { timeoutMs: 2000 }).catch(() => {});
+      if (processIsAlive(broker.pid)) {
+        terminateProcessTree(broker.pid);
+      }
+    }
   });
 
   const pinnedEnv = {
