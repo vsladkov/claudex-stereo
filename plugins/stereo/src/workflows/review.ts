@@ -22,7 +22,6 @@ const REVIEW_SCHEMA = path.join(SCHEMAS_DIR, "review-output.schema.json");
 export function buildAdversarialReviewPrompt(context: ReviewContext, focusText: string): string {
   const template = loadPromptTemplate(PROMPTS_ROOT, "adversarial-review");
   return interpolateTemplate(template, {
-    REVIEW_KIND: "Adversarial Review",
     TARGET_LABEL: context.target.label,
     USER_FOCUS: focusText || "No extra focus provided.",
     REVIEW_COLLECTION_GUIDANCE: context.collectionGuidance,

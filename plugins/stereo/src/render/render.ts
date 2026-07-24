@@ -487,7 +487,7 @@ export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewR
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", "```text", parsedResult.rawOutput, "```");
+      lines.push("", "Raw final message:", "", ...fencedBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
@@ -507,7 +507,7 @@ export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewR
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", "```text", parsedResult.rawOutput, "```");
+      lines.push("", "Raw final message:", "", ...fencedBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
@@ -567,7 +567,7 @@ export function renderPlanReviewResult(parsedResult: ParsedResultLike, meta: Pla
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", "```text", parsedResult.rawOutput, "```");
+      lines.push("", "Raw final message:", "", ...fencedBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
@@ -586,7 +586,7 @@ export function renderPlanReviewResult(parsedResult: ParsedResultLike, meta: Pla
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", "```text", parsedResult.rawOutput, "```");
+      lines.push("", "Raw final message:", "", ...fencedBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
@@ -665,7 +665,7 @@ export function renderNativeReviewResult(result: NativeReviewRenderResult, meta:
   }
 
   if (stderr) {
-    lines.push("", "stderr:", "", "```text", stderr, "```");
+    lines.push("", "stderr:", "", ...fencedBlock(stderr));
   }
 
   appendReasoningSection(lines, meta.reasoningSummary);
@@ -769,26 +769,35 @@ export function renderJobStatusReport(job: RenderableJob, options: JobStatusRend
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
+function fencedBlock(text: string, lang = "text"): string[] {
+  // Untrusted output can contain backtick runs (```diff blocks in Codex
+  // prose); size the fence one longer than the longest internal run so the
+  // payload can never close the fence and inject live markdown.
+  const longestRun = [...String(text ?? "").matchAll(/`+/g)].reduce((max, match) => Math.max(max, match[0].length), 0);
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
+  return [`${fence}${lang}`, String(text ?? ""), fence];
+}
+
+function withResumeFooter(text: string, threadId: string | null): string {
+  const output = text.endsWith("\n") ? text : `${text}\n`;
+  if (!threadId) {
+    return output;
+  }
+  return `${output}\nCodex session ID: ${threadId}\nResume in Codex: codex resume ${threadId}\n`;
+}
+
 export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLike | null | undefined): string {
   const threadId = storedJob?.threadId ?? job.threadId ?? null;
   const resumeCommand = threadId ? `codex resume ${threadId}` : null;
   const taskClass = storedJob?.jobClass ?? job.jobClass ?? null;
   if (taskClass === "task" && storedJob?.rendered) {
-    const output = storedJob.rendered.endsWith("\n") ? storedJob.rendered : `${storedJob.rendered}\n`;
-    if (!threadId) {
-      return output;
-    }
-    return `${output}\nCodex session ID: ${threadId}\nResume in Codex: ${resumeCommand}\n`;
+    return withResumeFooter(storedJob.rendered, threadId);
   }
   // Review-class jobs always prefer the stored rendering: native reviews
   // carry no result/parseError keys, so keying only on the structured shape
   // dropped their heading/Target/reasoning in favor of raw stdout.
   if ((taskClass === "review" || isStructuredReviewStoredResult(storedJob)) && storedJob?.rendered) {
-    const output = storedJob.rendered.endsWith("\n") ? storedJob.rendered : `${storedJob.rendered}\n`;
-    if (!threadId) {
-      return output;
-    }
-    return `${output}\nCodex session ID: ${threadId}\nResume in Codex: ${resumeCommand}\n`;
+    return withResumeFooter(storedJob.rendered, threadId);
   }
 
   const rawOutput =
@@ -796,19 +805,11 @@ export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLi
     (typeof storedJob?.result?.codex?.stdout === "string" && storedJob.result.codex.stdout) ||
     "";
   if (rawOutput) {
-    const output = rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`;
-    if (!threadId) {
-      return output;
-    }
-    return `${output}\nCodex session ID: ${threadId}\nResume in Codex: ${resumeCommand}\n`;
+    return withResumeFooter(rawOutput, threadId);
   }
 
   if (storedJob?.rendered) {
-    const output = storedJob.rendered.endsWith("\n") ? storedJob.rendered : `${storedJob.rendered}\n`;
-    if (!threadId) {
-      return output;
-    }
-    return `${output}\nCodex session ID: ${threadId}\nResume in Codex: ${resumeCommand}\n`;
+    return withResumeFooter(storedJob.rendered, threadId);
   }
 
   const lines = [

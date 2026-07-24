@@ -3930,6 +3930,20 @@ test("the same thread is exclusive across workspaces and plugin state roots", ()
   assert.notEqual(workspaceA, workspaceB);
 });
 
+test("plan-review rejects rounds above 1 without a thread", () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const result = run(process.execPath, [SCRIPT, "plan-review", "--round", "3", "Fresh plan text"], {
+    cwd: repo,
+    env
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /rounds above 1 require --thread/);
+});
+
 test("SessionEnd tears down an idle workspace broker with no kill fallback", async () => {
   const repo = initializeBasicRepo();
   const binDir = makeTempDir();

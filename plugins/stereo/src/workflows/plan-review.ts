@@ -60,6 +60,12 @@ export async function executePlanReviewRun(request: PlanReviewRunRequest): Promi
   const workspaceRoot = resolveWorkspaceRoot(request.cwd);
 
   const round = request.round ?? 1;
+  if (round > 1 && !request.threadId) {
+    // Round >1 injects "responds to your earlier findings in this thread"
+    // revision framing; without a thread there are no earlier findings and
+    // the prompt would contradict itself.
+    throw new Error("plan-review rounds above 1 require --thread <id> (the thread holding the earlier rounds).");
+  }
   const template = loadPromptTemplate(PROMPTS_ROOT, "plan-review");
   const prompt = interpolateTemplate(template, {
     PLAN_INPUT: request.plan,

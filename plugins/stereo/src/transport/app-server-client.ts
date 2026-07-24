@@ -31,6 +31,8 @@ interface PendingRequest {
   method: string;
 }
 
+
+const MAX_STDERR_BYTES = 64 * 1024;
 const PLUGIN_MANIFEST_URL = new URL("../../.claude-plugin/plugin.json", import.meta.url);
 const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, "utf8"));
 
@@ -232,7 +234,9 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
     this.proc.stderr.setEncoding("utf8");
 
     this.proc.stderr.on("data", (chunk) => {
-      this.stderr += chunk;
+      // Keep only the tail: a chatty child must not grow client memory
+      // unbounded over a long-lived direct session.
+      this.stderr = (this.stderr + chunk).slice(-MAX_STDERR_BYTES);
     });
 
     this.proc.on("error", (error) => {

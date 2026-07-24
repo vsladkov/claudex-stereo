@@ -54,8 +54,12 @@ export interface TurnCaptureTimer {
 
 export interface TurnCaptureStateOptions {
   onProgress?: ProgressReporter | null;
-  /** Injectable clock for the inferred-completion debounce (tests only). */
-  timer?: Partial<TurnCaptureTimer>;
+  /**
+   * Injectable clock for the inferred-completion debounce (tests only).
+   * All three fields or none: a fake setTimeout with the real clearTimeout
+   * cannot cancel its handles.
+   */
+  timer?: TurnCaptureTimer;
 }
 
 const DEFAULT_TIMER: TurnCaptureTimer = {
@@ -285,7 +289,7 @@ export function createTurnCaptureState(threadId: string, options: TurnCaptureSta
     pendingCollaborations: new Set(),
     activeSubagentTurns: new Set(),
     completionTimer: null,
-    timer: { ...DEFAULT_TIMER, ...options.timer },
+    timer: options.timer ?? DEFAULT_TIMER,
     lastAgentMessage: "",
     reviewText: "",
     reasoningSummary: [],

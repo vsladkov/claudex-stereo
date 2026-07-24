@@ -424,3 +424,19 @@ test("review findings render confidence when present and omit it for legacy reco
   );
   assert.match(legacy, /\[high\] Unchecked input \(src\/app\.js\)/);
 });
+
+test("raw-output fences grow past embedded backtick runs", () => {
+  const hostile = 'prose with a block:\n```diff\n- a\n+ b\n```\n# not a heading';
+  const rendered = renderReviewResult(
+    { parsed: null, parseError: "Unexpected token p", rawOutput: hostile },
+    { reviewLabel: "Review", targetLabel: "working tree" }
+  );
+  // The outer fence must be longer than any run inside the payload so the
+  // embedded ``` cannot close it and leak live markdown.
+  const fences = rendered.match(/^`{3,}/gm) ?? [];
+  assert.ok(fences.some((fence) => fence.length >= 4), `expected a grown fence, got: ${fences.join(", ")}`);
+  const opener = rendered.match(/(`{4,})text/);
+  assert.ok(opener, "outer fence must be 4+ backticks when payload contains ```");
+  assert.ok(rendered.includes(hostile), "payload must be embedded verbatim");
+});
+

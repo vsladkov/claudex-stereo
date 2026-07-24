@@ -349,12 +349,19 @@ export function teardownBrokerSession({ endpoint = null, pidFile, logFile, sessi
     }
   }
 
-  if (pidFile && fs.existsSync(pidFile)) {
-    fs.unlinkSync(pidFile);
-  }
-
-  if (logFile && fs.existsSync(logFile)) {
-    fs.unlinkSync(logFile);
+  for (const file of [pidFile, logFile]) {
+    if (!file) {
+      continue;
+    }
+    try {
+      fs.unlinkSync(file);
+    } catch (error) {
+      // A concurrent teardown (second SessionEnd, reaper, or the broker's own
+      // SIGTERM cleanup) may have removed the file between checks.
+      if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
+        throw error;
+      }
+    }
   }
 
   if (endpoint) {
