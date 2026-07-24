@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+
+- Migrate the runtime to TypeScript: layered `src/` architecture (cli, workflows, runtime, jobs, broker, transport, workspace, render, models, shared) running natively on Node >= 24 type stripping - no build step; typed model registry as the provider expansion point
+- Require Node.js 24 or later
+- Session end now shuts the shared workspace broker down only when it is idle, so ending one Claude session no longer kills another session's in-flight Codex turn; a hard kill remains only for wedged brokers that are verified still alive
+- Fast-fail foreground `task` invocations with no prompt or resume target before a job record is created, matching the background path
+- Tolerate malformed stop-hook input instead of silently bypassing an enabled review gate
+- Keep test machines clean: the test suite reaps the brokers it auto-starts (one full run used to strand ~40 processes)
+
 ## 1.1.0
 
 - Add `/stereo:plan` and `/stereo:implement`: a dual-model pair workflow where Claude drafts and revises an implementation plan, Codex adversarially reviews it until approval, Codex implements the approved plan in the same thread, and Claude reviews the diff with iterative fix rounds
@@ -21,7 +30,6 @@
 - Harden the shared broker: survive bad client writes, never wedge busy after an instantly-completing turn, drop stalled clients instead of buffering unbounded output, and restrict the unix socket to the owning user
 - Keep the stop-time review gate working under symlinked plugin installs
 - Emit structured `{"error": ...}` JSON on stdout when a `--json` command fails
-- Migrate the runtime to TypeScript: layered `src/` architecture (cli, workflows, runtime, jobs, broker, transport, workspace, render, models, shared) running natively on Node >= 24 type stripping - no build step; typed model registry as the provider expansion point
 
 ## 1.0.0
 

@@ -33,7 +33,7 @@
   "include": [
     "plugins/stereo/src/**/*.ts",
     "plugins/stereo/scripts/**/*.ts",
-    "plugins/stereo/.generated/app-server-types/**/*.ts",
+    ".generated/app-server-types/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts"
   ]

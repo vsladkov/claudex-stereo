@@ -13,7 +13,7 @@ import type { ReviewTarget as NativeReviewTarget } from "../protocol/app-server.
 import { loadPromptTemplate, interpolateTemplate } from "../shared/prompts.ts";
 import { PROMPTS_ROOT, SCHEMAS_DIR } from "../shared/paths.ts";
 import { renderNativeReviewResult, renderReviewResult } from "../render/render.ts";
-import { firstMeaningfulLine } from "../cli/io.ts";
+import { firstMeaningfulLine } from "../shared/text.ts";
 import { ensureCodexAvailable } from "./companion-jobs.ts";
 import type { CompanionExecution } from "./companion-jobs.ts";
 

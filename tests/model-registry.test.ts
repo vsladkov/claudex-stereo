@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MODEL_REGISTRY,
   defaultPairEffort,
   normalizeReasoningEffort,
-  normalizeRequestedModel
+  normalizeRequestedModel,
+  registryEntryForModel
 } from "../plugins/stereo/src/models/registry.ts";
 
 test("normalizeRequestedModel resolves the documented aliases to exact models", () => {
@@ -68,3 +70,18 @@ test("normalizeReasoningEffort rejects unknown efforts with the exact error text
     new Error('Unsupported reasoning effort " ultra ". Use one of: none, minimal, low, medium, high, xhigh, max.')
   );
 });
+
+test("registry entries drive defaultPairEffort ahead of the family prefix rule", () => {
+  // Every registry row's declared effort is what defaultPairEffort returns
+  // for its resolved model - the row is authoritative, not the string rule.
+  for (const entry of Object.values(MODEL_REGISTRY)) {
+    assert.equal(defaultPairEffort(entry.model), entry.defaultPairEffort);
+    assert.deepEqual(registryEntryForModel(entry.model), entry);
+  }
+  // Unregistered models still use the family prefix fallback.
+  assert.equal(registryEntryForModel("gpt-5.6-nova"), null);
+  assert.equal(defaultPairEffort("gpt-5.6-nova"), "max");
+  assert.equal(registryEntryForModel("kimi-k3"), null);
+  assert.equal(defaultPairEffort("kimi-k3"), "xhigh");
+});
+

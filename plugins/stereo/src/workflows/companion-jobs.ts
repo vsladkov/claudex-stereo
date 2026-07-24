@@ -15,7 +15,7 @@ import {
 import type { JobExecution, TrackedJob } from "../jobs/tracked-jobs.ts";
 import { generateJobId, upsertJob, writeJobFile } from "../workspace/state.ts";
 import { COMPANION_ENTRY } from "../shared/paths.ts";
-import { outputResult } from "../cli/io.ts";
+import { outputResult } from "../shared/text.ts";
 
 // Every workflow runner resolves to a JobExecution enriched with the
 // job-classification fields the CLI handlers persist.

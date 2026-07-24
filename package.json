@@ -1,6 +1,6 @@
 {
   "name": "claudex-stereo",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "Use Codex from Claude Code to review code or delegate tasks.",
@@ -12,7 +12,7 @@
     "bump-version": "node scripts/bump-version.ts",
     "check-version": "node scripts/bump-version.ts --check",
     "test": "node --test --require ./tests/env-bootstrap.cjs --test-global-setup=./tests/global-setup.ts \"tests/*.test.ts\"",
-    "pretypecheck": "mkdir -p plugins/stereo/.generated/app-server-types && codex app-server generate-ts --out plugins/stereo/.generated/app-server-types",
+    "pretypecheck": "node -e \"fs.mkdirSync(process.argv[1], {recursive: true})\" .generated/app-server-types && codex app-server generate-ts --out .generated/app-server-types",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck"
   },

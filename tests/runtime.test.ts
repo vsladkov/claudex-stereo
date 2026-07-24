@@ -644,6 +644,24 @@ test("--json inside prompt text does not switch error output to JSON", () => {
   assert.match(result.stderr, /Could not read --prompt-file/);
 });
 
+test("a foreground task with no prompt fast-fails without creating a job record", () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const result = run(process.execPath, [SCRIPT, "task"], { cwd: repo, env });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Provide a prompt, a prompt file, piped stdin, or use --resume-last\./);
+  // Validation must run before any job exists: the background path already
+  // fast-failed here, the foreground path used to leave a failed job behind.
+  const statusResult = run(process.execPath, [SCRIPT, "status", "--all", "--json"], { cwd: repo, env });
+  assert.equal(statusResult.status, 0, statusResult.stderr);
+  const snapshot = JSON.parse(statusResult.stdout);
+  assert.deepEqual(snapshot.jobs ?? [], []);
+});
+
 test("a pre-parse failure with a real --json flag still emits stdout JSON", () => {
   const result = run("node", [SCRIPT, "definitely-not-a-subcommand", "--json"], {
     cwd: makeTempDir()

@@ -10,13 +10,8 @@ import { resolveWorkspaceRoot } from "../workspace/workspace.ts";
 // Parsed option bags as the command handlers receive them.
 export type CommandOptions = Record<string, ParsedOptionValue>;
 
-export function outputResult(value: unknown, asJson: unknown): void {
-  if (asJson) {
-    console.log(JSON.stringify(value, null, 2));
-  } else {
-    process.stdout.write(value as string);
-  }
-}
+export { firstMeaningfulLine, outputResult, shorten, sleep } from "../shared/text.ts";
+import { outputResult } from "../shared/text.ts";
 
 export function outputCommandResult(payload: unknown, rendered: string, asJson: unknown): void {
   outputResult(asJson ? payload : rendered, asJson);
@@ -51,7 +46,7 @@ export function parseCommandInput(argv: string[], config: ParseArgsConfig = {}):
   return parsed;
 }
 
-export function wasJsonRequested(): boolean {
+export function wasJsonRequested(rawArgv: readonly string[] = process.argv.slice(2)): boolean {
   if (argvParseCompleted) {
     // Parsing decided: a --json inside prompt/focus text is a positional,
     // not a request for JSON output.
@@ -60,7 +55,7 @@ export function wasJsonRequested(): boolean {
   // Pre-parse failures (unknown subcommand, missing flag values) never reach
   // parseCommandInput; slash commands also pass all arguments as one raw
   // string, so split each raw token before looking for --json.
-  return process.argv.slice(2).some((token) => {
+  return rawArgv.some((token) => {
     if (token === "--json") {
       return true;
     }
@@ -80,28 +75,7 @@ export function resolveCommandWorkspace(options: CommandOptions = {}): string {
   return resolveWorkspaceRoot(resolveCommandCwd(options));
 }
 
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
-export function shorten(text: unknown, limit = 96): string {
-  const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
-  if (!normalized) {
-    return "";
-  }
-  if (normalized.length <= limit) {
-    return normalized;
-  }
-  return `${normalized.slice(0, limit - 3)}...`;
-}
-
-export function firstMeaningfulLine(text: unknown, fallback: string): string {
-  const line = String(text ?? "")
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .find(Boolean);
-  return line ?? fallback;
-}
 
 export function readUserFile(cwd: string, flagName: string, value: string): string {
   const resolved = path.resolve(cwd, value);

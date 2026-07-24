@@ -13,13 +13,15 @@ import {
   sendBrokerShutdown,
   teardownBrokerSession
 } from "../broker/lifecycle.ts";
-import { loadState, nowIso, readJobFile, resolveJobFile, resolveStateFile, saveState, writeJobFile } from "../workspace/state.ts";
+import { PLUGIN_DATA_ENV, loadState, nowIso, readJobFile, resolveJobFile, resolveStateFile, saveState, writeJobFile } from "../workspace/state.ts";
+import { SESSION_ID_ENV } from "../jobs/tracked-jobs.ts";
+
+export { SESSION_ID_ENV };
 import type { JobRecord } from "../workspace/state.ts";
 import { TRANSCRIPT_PATH_ENV } from "../workspace/claude-session-transfer.ts";
 import { resolveWorkspaceRoot } from "../workspace/workspace.ts";
 
-export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
-const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
+
 
 interface SessionHookInput {
   session_id?: string;

@@ -1,10 +1,11 @@
-// Public surface of the Codex runtime layer. Re-exports every name the old
-// scripts/lib/codex.mjs module exported so importers only changed specifiers.
+// Public surface of the Codex runtime layer: exactly the names cli, hooks,
+// jobs, render, and the tests consume. Runtime-internal helpers stay in
+// their defining modules.
 export { getCodexAvailability, getSessionRuntimeStatus } from "./availability.ts";
 export type { SessionRuntimeStatus } from "./availability.ts";
 export { getCodexAuthStatus } from "./auth.ts";
 export type { CodexAuthStatus } from "./auth.ts";
-export { CODEX_SANDBOX_USAGE_ERROR, getCodexWriteSandboxStatus } from "./sandbox-probe.ts";
+export { getCodexWriteSandboxStatus } from "./sandbox-probe.ts";
 export type { WriteSandboxStatus } from "./sandbox-probe.ts";
 export {
   acquireThreadReservation,
@@ -21,13 +22,9 @@ export {
   buildPersistentPairThreadName,
   buildPersistentTaskThreadName,
   DEFAULT_CONTINUE_PROMPT,
-  findLatestTaskThread,
-  PAIR_THREAD_PREFIX,
-  resumeSatisfiesWriteRequest,
-  TASK_THREAD_PREFIX
+  findLatestTaskThread
 } from "./threads.ts";
 export { looksLikeVerificationCommand } from "./turn-capture.ts";
 export type { ProgressReporter, ProgressUpdate, TurnCaptureState } from "./turn-capture.ts";
 export { interruptAppServerTurn, runAppServerReview, runAppServerTurn } from "./turn-runner.ts";
 export type { AppServerReviewResult, AppServerTurnResult } from "./turn-runner.ts";
-export { WriteEscalationRetryError } from "../shared/errors.ts";

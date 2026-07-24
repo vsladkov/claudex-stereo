@@ -7,33 +7,17 @@ import test from "node:test";
 import { makeTempDir } from "./helpers.ts";
 import { parseCommandInput, readUserFile, wasJsonRequested } from "../plugins/stereo/src/cli/io.ts";
 
-function withProcessArgv<T>(argv: string[], fn: () => T): T {
-  const original = process.argv;
-  process.argv = [...original.slice(0, 2), ...argv];
-  try {
-    return fn();
-  } finally {
-    process.argv = original;
-  }
-}
-
 // wasJsonRequested keeps module-level state: the raw-argv fallback applies
 // only until the first parseCommandInput call in this process, so this test
 // must run before any test below that parses.
-test("wasJsonRequested scans raw process.argv before any parse completes", () => {
-  withProcessArgv(["definitely-not-a-subcommand", "--json"], () => {
-    assert.equal(wasJsonRequested(), true);
-  });
+test("wasJsonRequested scans the provided raw argv before any parse completes", () => {
+  assert.equal(wasJsonRequested(["definitely-not-a-subcommand", "--json"]), true);
 
   // Slash commands pass all arguments as one raw string; the fallback splits
   // each token before looking for --json.
-  withProcessArgv(["task", "do the thing --json"], () => {
-    assert.equal(wasJsonRequested(), true);
-  });
+  assert.equal(wasJsonRequested(["task", "do the thing --json"]), true);
 
-  withProcessArgv(["task", "explain the json flag"], () => {
-    assert.equal(wasJsonRequested(), false);
-  });
+  assert.equal(wasJsonRequested(["task", "explain the json flag"]), false);
 });
 
 test("parseCommandInput separates value flags, boolean flags, and positionals", () => {
@@ -90,9 +74,7 @@ test("wasJsonRequested is false post-parse when --json only appears inside promp
 
   // Once parsing has completed, the raw-argv fallback must not resurrect a
   // --json that the parse classified as prompt text.
-  withProcessArgv(["task", "explain the --json flag"], () => {
-    assert.equal(wasJsonRequested(), false);
-  });
+  assert.equal(wasJsonRequested(["task", "explain the --json flag"]), false);
 });
 
 test("wasJsonRequested is true post-parse only with a real --json option", () => {

@@ -139,6 +139,22 @@ test("the hook still runs when invoked through a symlinked install path", { skip
   assert.match(result.stderr, /Codex task task-live is still running/i);
 });
 
+test("malformed hook stdin degrades to empty input instead of crashing the gate", () => {
+  const repo = makeRepo();
+  seedRunningJob(repo, "sess-current");
+
+  const result = run(process.execPath, [STOP_HOOK], {
+    cwd: repo,
+    env: { ...process.env, CODEX_COMPANION_SESSION_ID: "sess-current" },
+    input: "not-json{{{"
+  });
+
+  // Exit 1 here would be a non-blocking hook error: an enabled gate would be
+  // silently bypassed. Malformed stdin must behave exactly like empty stdin.
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Codex task task-live is still running/i);
+});
+
 test("an empty session_id falls back to the env session for the running-task note", () => {
   const repo = makeRepo();
   seedRunningJob(repo, "sess-env");

@@ -41,7 +41,14 @@ function readHookInput(): StopHookInput {
   if (!raw) {
     return {};
   }
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Malformed stdin must degrade like empty stdin. Throwing here would exit
+    // 1 before any gate decision, which Claude Code treats as a non-blocking
+    // error - an enabled review gate would be silently bypassed.
+    return {};
+  }
 }
 
 function emitDecision(payload: unknown): void {

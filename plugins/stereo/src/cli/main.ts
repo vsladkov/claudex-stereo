@@ -62,7 +62,7 @@ async function main(fullArgv: string[]): Promise<void> {
 export function runCli(argv: string[]): Promise<void> {
   return main(argv).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    if (wasJsonRequested()) {
+    if (wasJsonRequested(argv)) {
       // --json consumers parse stdout; give failures the same structured
       // surface as successes (stderr keeps the human-readable text).
       console.log(JSON.stringify({ error: message }));

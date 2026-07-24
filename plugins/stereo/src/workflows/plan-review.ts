@@ -15,7 +15,7 @@ import { serializeRepositoryMap } from "../workspace/repo-map.ts";
 import { nowIso, savePairPlanState } from "../workspace/state.ts";
 import { resolveWorkspaceRoot } from "../workspace/workspace.ts";
 import { renderPlanReviewResult } from "../render/render.ts";
-import { firstMeaningfulLine } from "../cli/io.ts";
+import { firstMeaningfulLine } from "../shared/text.ts";
 import type { CompanionExecution } from "./companion-jobs.ts";
 
 const PLAN_REVIEW_SCHEMA = path.join(SCHEMAS_DIR, "plan-review-output.schema.json");

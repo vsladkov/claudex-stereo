@@ -100,10 +100,13 @@ export async function handleTask(argv: string[]): Promise<void> {
     resumeLast
   });
 
-  if (options.background) {
-    ensureCodexAvailable(cwd);
-    requireTaskRequest(prompt, resumeLast || Boolean(threadId));
+  // Validate before any job record exists: a foreground invocation with no
+  // prompt/resume target must fast-fail like the background path instead of
+  // leaving a spurious running->failed job in /stereo:status.
+  ensureCodexAvailable(cwd);
+  requireTaskRequest(prompt, resumeLast || Boolean(threadId));
 
+  if (options.background) {
     const job = buildTaskJob(workspaceRoot, taskMetadata, write);
     const request = buildTaskRequest({
       cwd,

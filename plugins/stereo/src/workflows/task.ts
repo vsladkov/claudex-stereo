@@ -18,7 +18,7 @@ import { listJobs } from "../workspace/state.ts";
 import type { JobRecord } from "../workspace/state.ts";
 import { resolveWorkspaceRoot } from "../workspace/workspace.ts";
 import { renderTaskResult } from "../render/render.ts";
-import { firstMeaningfulLine, shorten, sleep } from "../cli/io.ts";
+import { firstMeaningfulLine, shorten, sleep } from "../shared/text.ts";
 import type { CompanionExecution } from "./companion-jobs.ts";
 
 const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000;

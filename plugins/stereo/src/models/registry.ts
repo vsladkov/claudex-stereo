@@ -34,7 +34,22 @@ const MODEL_ALIASES = new Map<string, string>(
   Object.entries(MODEL_REGISTRY).map(([alias, entry]) => [alias, entry.model])
 );
 
+const ENTRIES_BY_MODEL = new Map<string, ModelFamilyEntry>(
+  Object.values(MODEL_REGISTRY).map((entry) => [entry.model, entry])
+);
+
+export function registryEntryForModel(resolvedModel: string): ModelFamilyEntry | null {
+  return ENTRIES_BY_MODEL.get(resolvedModel) ?? null;
+}
+
 export function defaultPairEffort(resolvedModel: string): ReasoningEffort {
+  // Registry rows are authoritative: adding a provider model (kimi, qwen,
+  // deepseek, glm, ...) with its own default effort is a one-row change.
+  const entry = registryEntryForModel(resolvedModel);
+  if (entry) {
+    return entry.defaultPairEffort;
+  }
+  // Raw model strings outside the registry fall back to the family rule.
   const inMaxFamily =
     resolvedModel === PAIR_MAX_EFFORT_MODEL_FAMILY ||
     resolvedModel.startsWith(`${PAIR_MAX_EFFORT_MODEL_FAMILY}-`);
