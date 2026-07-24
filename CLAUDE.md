@@ -14,7 +14,7 @@ development is dogfooded — the plugin under development is also the tool in us
     and the command markdown. Paths and filenames are load-bearing.
   - `src/` — layered, imports point strictly downward:
     `shared → platform → protocol/broker/workspace → transport →
-    runtime/jobs/models → render/workflows → cli/hooks`.
+runtime/jobs/models → render/workflows → cli/hooks`.
     `models/registry.ts` is the expansion point for new provider models
     (one row per model). `protocol/` bridges the codegen types.
   - `commands/ skills/ agents/ prompts/ schemas/ hooks/` — the plugin surface
@@ -35,6 +35,11 @@ development is dogfooded — the plugin under development is also the tool in us
   this; `tests/module-graph.test.ts` does, by importing every `src` module.
 - `shared/is-main.ts`'s realpath entry guard is correct only because there is
   no emit (the executed file IS the source file). Keep it that way.
+- Formatting is Prettier's (config in package.json, maestro baseline: single
+  quotes, width 100); lint is ESLint 9 flat config at the non-type-checked
+  recommended tier (tsc strict owns type-level enforcement). `npm run format`
+  / `format:check` / `lint`; a husky pre-commit runs prettier on staged files;
+  CI enforces both checks.
 
 ## Dev loop (dogfood)
 
@@ -42,8 +47,8 @@ development is dogfooded — the plugin under development is also the tool in us
   `gitCommitSha` is a label, not the content source. Commit first; refresh
   only from a clean tree.
 - Refresh: `claude plugin marketplace update claudex-stereo &&
-  claude plugin uninstall stereo@claudex-stereo &&
-  claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
+claude plugin uninstall stereo@claudex-stereo &&
+claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   live session.
 - Bump the version (`npm run bump-version X.Y.Z`) for every meaningful
   release — `claude plugin update` no-ops on an unchanged version. CI runs

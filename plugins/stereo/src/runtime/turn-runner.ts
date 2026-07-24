@@ -1,12 +1,18 @@
-import { WriteEscalationRetryError } from "../shared/errors.ts";
-import type { ReviewDelivery, ReviewTarget, ThreadStartParams, Turn, TurnStartParams } from "../protocol/app-server.ts";
-import { modelProviderFor } from "../models/registry.ts";
-import { BROKER_ENDPOINT_ENV, CodexAppServerClient } from "../transport/app-server-client.ts";
-import { loadBrokerSession } from "../broker/lifecycle.ts";
-import { getCodexAvailability } from "./availability.ts";
-import { acquireThreadReservation, releaseThreadReservation } from "./reservations.ts";
-import type { ThreadReservation } from "./reservations.ts";
-import { buildResultStatus } from "./structured-output.ts";
+import { WriteEscalationRetryError } from '../shared/errors.ts';
+import type {
+  ReviewDelivery,
+  ReviewTarget,
+  ThreadStartParams,
+  Turn,
+  TurnStartParams,
+} from '../protocol/app-server.ts';
+import { modelProviderFor } from '../models/registry.ts';
+import { BROKER_ENDPOINT_ENV, CodexAppServerClient } from '../transport/app-server-client.ts';
+import { loadBrokerSession } from '../broker/lifecycle.ts';
+import { getCodexAvailability } from './availability.ts';
+import { acquireThreadReservation, releaseThreadReservation } from './reservations.ts';
+import type { ThreadReservation } from './reservations.ts';
+import { buildResultStatus } from './structured-output.ts';
 import {
   buildTurnInput,
   drainMismatchingBroker,
@@ -14,18 +20,21 @@ import {
   resumeThread,
   startThread,
   withAppServer,
-  withDirectAppServer
-} from "./threads.ts";
-import type { AppServerClient, BrokerMismatch } from "./threads.ts";
-import { captureTurn, emitProgress } from "./turn-capture.ts";
-import type { CommandExecutionItem, FileChangeItem, ProgressReporter } from "./turn-capture.ts";
+  withDirectAppServer,
+} from './threads.ts';
+import type { AppServerClient, BrokerMismatch } from './threads.ts';
+import { captureTurn, emitProgress } from './turn-capture.ts';
+import type { CommandExecutionItem, FileChangeItem, ProgressReporter } from './turn-capture.ts';
 
 export function cleanCodexStderr(stderr: string): string {
   return stderr
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
-    .filter((line) => line && !line.startsWith("WARNING: proceeding, even though we could not update PATH:"))
-    .join("\n");
+    .filter(
+      (line) =>
+        line && !line.startsWith('WARNING: proceeding, even though we could not update PATH:'),
+    )
+    .join('\n');
 }
 
 function collectTouchedFiles(fileChanges: FileChangeItem[]): string[] {
@@ -42,7 +51,7 @@ function collectTouchedFiles(fileChanges: FileChangeItem[]): string[] {
 
 function writeEscalationRefusedError(threadId: string): Error {
   return new Error(
-    `Codex resumed thread ${threadId} read-only despite the workspace-write request. The write run was not started.`
+    `Codex resumed thread ${threadId} read-only despite the workspace-write request. The write run was not started.`,
   );
 }
 
@@ -58,13 +67,16 @@ export interface InterruptTurnResult {
   detail: string;
 }
 
-export async function interruptAppServerTurn(cwd: string, { threadId, turnId }: InterruptTurnTarget): Promise<InterruptTurnResult> {
+export async function interruptAppServerTurn(
+  cwd: string,
+  { threadId, turnId }: InterruptTurnTarget,
+): Promise<InterruptTurnResult> {
   if (!threadId || !turnId) {
     return {
       attempted: false,
       interrupted: false,
       transport: null,
-      detail: "missing threadId or turnId"
+      detail: 'missing threadId or turnId',
     };
   }
 
@@ -74,11 +86,12 @@ export async function interruptAppServerTurn(cwd: string, { threadId, turnId }: 
       attempted: false,
       interrupted: false,
       transport: null,
-      detail: availability.detail
+      detail: availability.detail,
     };
   }
 
-  const brokerEndpoint = process.env[BROKER_ENDPOINT_ENV] ?? loadBrokerSession(cwd)?.endpoint ?? null;
+  const brokerEndpoint =
+    process.env[BROKER_ENDPOINT_ENV] ?? loadBrokerSession(cwd)?.endpoint ?? null;
   if (!brokerEndpoint) {
     // With no shared runtime there is nothing that could still be executing
     // this turn for us to reach; spawning a fresh app-server here would pay
@@ -87,26 +100,26 @@ export async function interruptAppServerTurn(cwd: string, { threadId, turnId }: 
       attempted: false,
       interrupted: false,
       transport: null,
-      detail: "no shared Codex runtime to interrupt"
+      detail: 'no shared Codex runtime to interrupt',
     };
   }
 
   let client: AppServerClient | null = null;
   try {
     client = await CodexAppServerClient.connect(cwd, { reuseExistingBroker: true });
-    await client.request("turn/interrupt", { threadId, turnId });
+    await client.request('turn/interrupt', { threadId, turnId });
     return {
       attempted: true,
       interrupted: true,
       transport: client.transport,
-      detail: `Interrupted ${turnId} on ${threadId}.`
+      detail: `Interrupted ${turnId} on ${threadId}.`,
     };
   } catch (error) {
     return {
       attempted: true,
       interrupted: false,
       transport: client?.transport ?? null,
-      detail: error instanceof Error ? error.message : String(error)
+      detail: error instanceof Error ? error.message : String(error),
     };
   } finally {
     await client?.close().catch(() => {});
@@ -133,48 +146,53 @@ export interface AppServerReviewResult {
   stderr: string;
 }
 
-export async function runAppServerReview(cwd: string, options: RunAppServerReviewOptions = {}): Promise<AppServerReviewResult> {
+export async function runAppServerReview(
+  cwd: string,
+  options: RunAppServerReviewOptions = {},
+): Promise<AppServerReviewResult> {
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
-    throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.");
+    throw new Error(
+      'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
+    );
   }
   const modelProvider = options.model ? modelProviderFor(options.model) : null;
 
   return withAppServer(cwd, async (client) => {
-    emitProgress(options.onProgress, "Starting Codex review thread.", "starting");
+    emitProgress(options.onProgress, 'Starting Codex review thread.', 'starting');
     const thread = await startThread(client, cwd, {
       model: options.model,
       modelProvider,
-      sandbox: "read-only",
+      sandbox: 'read-only',
       ephemeral: true,
-      threadName: options.threadName
+      threadName: options.threadName,
     });
     const sourceThreadId = thread.thread.id;
-    emitProgress(options.onProgress, `Thread ready (${sourceThreadId}).`, "starting", {
-      threadId: sourceThreadId
+    emitProgress(options.onProgress, `Thread ready (${sourceThreadId}).`, 'starting', {
+      threadId: sourceThreadId,
     });
-    const delivery = options.delivery ?? "inline";
+    const delivery = options.delivery ?? 'inline';
 
     const turnState = await captureTurn(
       client,
       sourceThreadId,
       () =>
-        client.request("review/start", {
+        client.request('review/start', {
           threadId: sourceThreadId,
           delivery,
-          target: options.target as ReviewTarget
+          target: options.target as ReviewTarget,
         }),
       {
         onProgress: options.onProgress,
         onResponse(response, state) {
           if (response.reviewThreadId) {
             state.threadIds.add(response.reviewThreadId);
-            if (delivery === "detached") {
+            if (delivery === 'detached') {
               state.threadId = response.reviewThreadId;
             }
           }
-        }
-      }
+        },
+      },
     );
 
     return {
@@ -186,7 +204,7 @@ export async function runAppServerReview(cwd: string, options: RunAppServerRevie
       reasoningSummary: turnState.reasoningSummary,
       turn: turnState.finalTurn,
       error: turnState.error,
-      stderr: cleanCodexStderr(client.stderr)
+      stderr: cleanCodexStderr(client.stderr),
     };
   });
 }
@@ -194,7 +212,7 @@ export async function runAppServerReview(cwd: string, options: RunAppServerRevie
 export interface RunAppServerTurnOptions {
   model?: string | null;
   effort?: string | null;
-  sandbox?: ThreadStartParams["sandbox"];
+  sandbox?: ThreadStartParams['sandbox'];
   prompt?: string | null;
   defaultPrompt?: string | null;
   resumeThreadId?: string | null;
@@ -220,54 +238,68 @@ export interface AppServerTurnResult {
   commandExecutions: CommandExecutionItem[];
 }
 
-export async function runAppServerTurn(cwd: string, options: RunAppServerTurnOptions = {}): Promise<AppServerTurnResult> {
+export async function runAppServerTurn(
+  cwd: string,
+  options: RunAppServerTurnOptions = {},
+): Promise<AppServerTurnResult> {
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
-    throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.");
+    throw new Error(
+      'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
+    );
   }
   const modelProvider = options.model ? modelProviderFor(options.model) : null;
 
   const reservationMeta = {
     jobId: options.jobId ?? null,
-    pid: Number.isFinite(options.jobPid) ? (options.jobPid as number) : process.pid
+    pid: Number.isFinite(options.jobPid) ? (options.jobPid as number) : process.pid,
   };
   let reservation: ThreadReservation | null = null;
   let mismatch: BrokerMismatch | null = null;
 
-  const attempt = async (connectOptions: { disableBroker?: boolean } = {}): Promise<AppServerTurnResult> => {
+  const attempt = async (
+    connectOptions: { disableBroker?: boolean } = {},
+  ): Promise<AppServerTurnResult> => {
     const runWithClient = async (client: AppServerClient): Promise<AppServerTurnResult> => {
       let acquiredInThisCallback = false;
       try {
         let threadId: string;
 
         if (options.resumeThreadId) {
-          emitProgress(options.onProgress, `Resuming thread ${options.resumeThreadId}.`, "starting");
+          emitProgress(
+            options.onProgress,
+            `Resuming thread ${options.resumeThreadId}.`,
+            'starting',
+          );
           const response = await resumeThread(client, options.resumeThreadId, cwd, {
             model: options.model,
             modelProvider,
             sandbox: options.sandbox,
-            ephemeral: false
+            ephemeral: false,
           });
           threadId = response.thread.id;
 
-          if (options.sandbox === "workspace-write" && !resumeSatisfiesWriteRequest(response.sandbox)) {
-            if (client.transport === "direct") {
+          if (
+            options.sandbox === 'workspace-write' &&
+            !resumeSatisfiesWriteRequest(response.sandbox)
+          ) {
+            if (client.transport === 'direct') {
               throw writeEscalationRefusedError(options.resumeThreadId);
             }
             const endpoint = (client as { endpoint?: string | null }).endpoint ?? null;
             mismatch = {
               endpoint,
-              ownedEndpoint: endpoint ? loadBrokerSession(cwd)?.endpoint ?? null : null
+              ownedEndpoint: endpoint ? (loadBrokerSession(cwd)?.endpoint ?? null) : null,
             };
             emitProgress(
               options.onProgress,
-              "Codex resumed the thread read-only; retrying the write run on a private runtime.",
-              "starting"
+              'Codex resumed the thread read-only; retrying the write run on a private runtime.',
+              'starting',
             );
             throw new WriteEscalationRetryError();
           }
         } else {
-          emitProgress(options.onProgress, "Starting Codex task thread.", "starting");
+          emitProgress(options.onProgress, 'Starting Codex task thread.', 'starting');
           const response = await startThread(client, cwd, {
             model: options.model,
             modelProvider,
@@ -280,32 +312,32 @@ export async function runAppServerTurn(cwd: string, options: RunAppServerTurnOpt
               }
               reservation = acquireThreadReservation(started.thread.id, reservationMeta);
               acquiredInThisCallback = true;
-            }
+            },
           });
           threadId = response.thread.id;
         }
 
-        emitProgress(options.onProgress, `Thread ready (${threadId}).`, "starting", {
-          threadId
+        emitProgress(options.onProgress, `Thread ready (${threadId}).`, 'starting', {
+          threadId,
         });
 
-        const prompt = options.prompt?.trim() || options.defaultPrompt || "";
+        const prompt = options.prompt?.trim() || options.defaultPrompt || '';
         if (!prompt) {
-          throw new Error("A prompt is required for this Codex run.");
+          throw new Error('A prompt is required for this Codex run.');
         }
 
         const turnState = await captureTurn(
           client,
           threadId,
           () =>
-            client.request("turn/start", {
+            client.request('turn/start', {
               threadId,
               input: buildTurnInput(prompt),
               model: options.model ?? null,
               effort: options.effort ?? null,
-              outputSchema: (options.outputSchema ?? null) as TurnStartParams["outputSchema"]
+              outputSchema: (options.outputSchema ?? null) as TurnStartParams['outputSchema'],
             }),
-          { onProgress: options.onProgress }
+          { onProgress: options.onProgress },
         );
 
         return {
@@ -319,7 +351,7 @@ export async function runAppServerTurn(cwd: string, options: RunAppServerTurnOpt
           stderr: cleanCodexStderr(client.stderr),
           fileChanges: turnState.fileChanges,
           touchedFiles: collectTouchedFiles(turnState.fileChanges),
-          commandExecutions: turnState.commandExecutions
+          commandExecutions: turnState.commandExecutions,
         };
       } catch (error) {
         if (acquiredInThisCallback && reservation) {

@@ -1,11 +1,11 @@
-import fs from "node:fs";
-import path from "node:path";
+import fs from 'node:fs';
+import path from 'node:path';
 
 export type TemplateVariables = Readonly<Record<string, string>>;
 
 export function loadPromptTemplate(rootDir: string, name: string): string {
-  const promptPath = path.join(rootDir, "prompts", `${name}.md`);
-  return fs.readFileSync(promptPath, "utf8");
+  const promptPath = path.join(rootDir, 'prompts', `${name}.md`);
+  return fs.readFileSync(promptPath, 'utf8');
 }
 
 export function interpolateTemplate(template: string, variables: TemplateVariables): string {

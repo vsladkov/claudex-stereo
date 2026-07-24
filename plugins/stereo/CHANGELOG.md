@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- Adopt the Prettier + ESLint toolchain (repo-wide reformat, husky pre-commit on staged files, CI format and lint gates); no behavior changes
+
 ## 1.3.1
 
 - Show the active and configured model providers in setup, including whether each declared provider environment key is set

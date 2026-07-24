@@ -1,15 +1,15 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import process from "node:process";
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import process from 'node:process';
 
 import {
   BROKER_SESSION_DIR_PREFIX,
   loadBrokerSession,
   sendBrokerShutdown,
-  teardownBrokerSession
-} from "../plugins/stereo/src/broker/lifecycle.ts";
-import { terminateProcessTree } from "../plugins/stereo/src/platform/process.ts";
+  teardownBrokerSession,
+} from '../plugins/stereo/src/broker/lifecycle.ts';
+import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 
 // The companion CLI auto-starts a detached, session-leader broker per
 // workspace; production tears it down via the SessionEnd hook, but a test
@@ -71,14 +71,14 @@ export async function reapWorkspaceBroker(cwd: string): Promise<boolean> {
     logFile: session.logFile,
     sessionDir: session.sessionDir,
     pid: Number.isFinite(pid) ? pid : null,
-    killProcess: (target: number) => terminateProcessTree(target)
+    killProcess: (target: number) => terminateProcessTree(target),
   });
   return true;
 }
 
 function readCommandLine(pid: number): string | null {
   try {
-    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
+    return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replaceAll('\0', ' ');
   } catch {
     return null;
   }
@@ -98,7 +98,7 @@ export interface LeakSweepResult {
  */
 export function reapLeakedTestBrokers(): LeakSweepResult {
   const result: LeakSweepResult = { reaped: 0, details: [] };
-  if (process.platform !== "linux") {
+  if (process.platform !== 'linux') {
     return result;
   }
 
@@ -117,7 +117,7 @@ export function reapLeakedTestBrokers(): LeakSweepResult {
     const sessionDir = path.join(tmp, entry.name);
     let pid = NaN;
     try {
-      pid = Number(fs.readFileSync(path.join(sessionDir, "broker.pid"), "utf8").trim());
+      pid = Number(fs.readFileSync(path.join(sessionDir, 'broker.pid'), 'utf8').trim());
     } catch {
       continue;
     }
@@ -129,7 +129,7 @@ export function reapLeakedTestBrokers(): LeakSweepResult {
     if (!cmdline) {
       continue;
     }
-    if (!cmdline.includes("app-server-broker") || !cmdline.includes(" serve ")) {
+    if (!cmdline.includes('app-server-broker') || !cmdline.includes(' serve ')) {
       continue;
     }
     const cwdMatch = / --cwd (\S+)/.exec(cmdline);

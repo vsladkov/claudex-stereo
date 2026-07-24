@@ -1,34 +1,38 @@
-import { normalizeReasoningEffort, normalizeRequestedModel } from "../../models/registry.ts";
-import { filterJobsForCurrentSession, readStoredJob, sortJobsNewestFirst } from "../../jobs/job-control.ts";
-import { runTrackedJob } from "../../jobs/tracked-jobs.ts";
-import { listJobs, nowIso, upsertJob, writeJobFile } from "../../workspace/state.ts";
-import type { JobRecord } from "../../workspace/state.ts";
+import { normalizeReasoningEffort, normalizeRequestedModel } from '../../models/registry.ts';
+import {
+  filterJobsForCurrentSession,
+  readStoredJob,
+  sortJobsNewestFirst,
+} from '../../jobs/job-control.ts';
+import { runTrackedJob } from '../../jobs/tracked-jobs.ts';
+import { listJobs, nowIso, upsertJob, writeJobFile } from '../../workspace/state.ts';
+import type { JobRecord } from '../../workspace/state.ts';
 import {
   createCompanionJob,
   createTrackedProgress,
   ensureCodexAvailable,
   enqueueBackgroundTask,
   renderQueuedTaskLaunch,
-  runForegroundCommand
-} from "../../workflows/companion-jobs.ts";
-import type { CompanionJob } from "../../workflows/companion-jobs.ts";
-import { executePlanReviewRun } from "../../workflows/plan-review.ts";
-import type { PlanReviewRunRequest } from "../../workflows/plan-review.ts";
+  runForegroundCommand,
+} from '../../workflows/companion-jobs.ts';
+import type { CompanionJob } from '../../workflows/companion-jobs.ts';
+import { executePlanReviewRun } from '../../workflows/plan-review.ts';
+import type { PlanReviewRunRequest } from '../../workflows/plan-review.ts';
 import {
   buildTaskRunMetadata,
   executeTaskRun,
   findLatestResumableTaskJob,
   getCurrentClaudeSessionId,
-  requireTaskRequest
-} from "../../workflows/task.ts";
-import type { TaskRunMetadata, TaskRunRequest } from "../../workflows/task.ts";
+  requireTaskRequest,
+} from '../../workflows/task.ts';
+import type { TaskRunMetadata, TaskRunRequest } from '../../workflows/task.ts';
 import {
   outputCommandResult,
   parseCommandInput,
   readTaskPrompt,
   resolveCommandCwd,
-  resolveCommandWorkspace
-} from "../io.ts";
+  resolveCommandWorkspace,
+} from '../io.ts';
 
 // The request payload persisted for the detached task worker: a task or a
 // plan-review request distinguished by its optional kind marker.
@@ -38,17 +42,17 @@ function buildTaskJob(
   workspaceRoot: string,
   taskMetadata: TaskRunMetadata,
   model: string | null,
-  write: boolean
+  write: boolean,
 ): CompanionJob {
   return createCompanionJob({
-    prefix: "task",
-    kind: "task",
+    prefix: 'task',
+    kind: 'task',
     title: taskMetadata.title,
     workspaceRoot,
-    jobClass: "task",
+    jobClass: 'task',
     summary: taskMetadata.summary,
     model,
-    write
+    write,
   });
 }
 
@@ -63,7 +67,16 @@ interface BuildTaskRequestInput extends TaskRunRequest {
   jobId: string;
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, threadId, jobId }: BuildTaskRequestInput): TaskRunRequest {
+function buildTaskRequest({
+  cwd,
+  model,
+  effort,
+  prompt,
+  write,
+  resumeLast,
+  threadId,
+  jobId,
+}: BuildTaskRequestInput): TaskRunRequest {
   return {
     cwd,
     model,
@@ -72,17 +85,17 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, threa
     write,
     resumeLast,
     threadId,
-    jobId
+    jobId,
   };
 }
 
 export async function handleTask(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file", "thread"],
-    booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background"],
+    valueOptions: ['model', 'effort', 'cwd', 'prompt-file', 'thread'],
+    booleanOptions: ['json', 'write', 'resume-last', 'resume', 'fresh', 'background'],
     aliasMap: {
-      m: "model"
-    }
+      m: 'model',
+    },
   });
 
   const cwd = resolveCommandCwd(options);
@@ -91,19 +104,20 @@ export async function handleTask(argv: string[]): Promise<void> {
   const effort = normalizeReasoningEffort(options.effort);
   const prompt = readTaskPrompt(cwd, options, positionals);
 
-  const resumeLast = Boolean(options["resume-last"] || options.resume);
+  const resumeLast = Boolean(options['resume-last'] || options.resume);
   const fresh = Boolean(options.fresh);
-  const threadId = typeof options.thread === "string" && options.thread.trim() ? options.thread.trim() : null;
+  const threadId =
+    typeof options.thread === 'string' && options.thread.trim() ? options.thread.trim() : null;
   if (resumeLast && fresh) {
-    throw new Error("Choose either --resume/--resume-last or --fresh.");
+    throw new Error('Choose either --resume/--resume-last or --fresh.');
   }
   if (threadId && (resumeLast || fresh)) {
-    throw new Error("Choose either --thread <id> or --resume/--resume-last/--fresh.");
+    throw new Error('Choose either --thread <id> or --resume/--resume-last/--fresh.');
   }
   const write = Boolean(options.write);
   const taskMetadata = buildTaskRunMetadata({
     prompt,
-    resumeLast
+    resumeLast,
   });
 
   // Validate before any job record exists: a foreground invocation with no
@@ -122,7 +136,7 @@ export async function handleTask(argv: string[]): Promise<void> {
       write,
       resumeLast,
       threadId,
-      jobId: job.id
+      jobId: job.id,
     });
     const { payload } = enqueueBackgroundTask(cwd, job, request);
     outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
@@ -142,24 +156,23 @@ export async function handleTask(argv: string[]): Promise<void> {
         resumeLast,
         threadId,
         jobId: job.id,
-        onProgress: progress
+        onProgress: progress,
       }),
-    { json: options.json }
+    { json: options.json },
   );
 }
 
 export async function handleTaskWorker(argv: string[]): Promise<void> {
   const { options } = parseCommandInput(argv, {
-    valueOptions: ["cwd", "job-id"]
+    valueOptions: ['cwd', 'job-id'],
   });
 
-  if (!options["job-id"]) {
-    throw new Error("Missing required --job-id for task-worker.");
+  if (!options['job-id']) {
+    throw new Error('Missing required --job-id for task-worker.');
   }
 
-  const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
-  const jobId = options["job-id"] as string;
+  const jobId = options['job-id'] as string;
   let storedJob: JobRecord | null = null;
   let request: PersistedWorkerRequest | null = null;
   try {
@@ -168,7 +181,7 @@ export async function handleTaskWorker(argv: string[]): Promise<void> {
       throw new Error(`No stored job found for ${jobId}.`);
     }
     request = storedJob.request as PersistedWorkerRequest | null;
-    if (!request || typeof request !== "object") {
+    if (!request || typeof request !== 'object') {
       throw new Error(`Stored job ${jobId} is missing its task request payload.`);
     }
   } catch (error) {
@@ -180,17 +193,24 @@ export async function handleTaskWorker(argv: string[]): Promise<void> {
       writeJobFile(workspaceRoot, jobId, {
         ...(storedJob ?? { id: jobId }),
         id: jobId,
-        status: "failed",
-        phase: "failed",
+        status: 'failed',
+        phase: 'failed',
         errorMessage,
         pid: null,
-        completedAt
+        completedAt,
       });
     } catch {
       // Best effort; the index update below is the important half.
     }
     try {
-      upsertJob(workspaceRoot, { id: jobId, status: "failed", phase: "failed", errorMessage, pid: null, completedAt });
+      upsertJob(workspaceRoot, {
+        id: jobId,
+        status: 'failed',
+        phase: 'failed',
+        errorMessage,
+        pid: null,
+        completedAt,
+      });
     } catch {
       // Nothing else to do from a detached worker.
     }
@@ -204,35 +224,34 @@ export async function handleTaskWorker(argv: string[]): Promise<void> {
   const { logFile, progress } = createTrackedProgress(
     {
       ...workerJob,
-      workspaceRoot
+      workspaceRoot,
     },
     {
-      logFile: workerJob.logFile ?? null
-    }
+      logFile: workerJob.logFile ?? null,
+    },
   );
-  const runner = workerRequest.kind === "plan-review" ? executePlanReviewRun : executeTaskRun;
+  const runner = workerRequest.kind === 'plan-review' ? executePlanReviewRun : executeTaskRun;
   await runTrackedJob(
     {
       ...workerJob,
       workspaceRoot,
-      logFile
+      logFile,
     },
     () =>
       runner({
         ...workerRequest,
-        onProgress: progress
+        onProgress: progress,
       }),
-    { logFile }
+    { logFile },
   );
 }
 
 export function handleTaskResumeCandidate(argv: string[]): void {
   const { options } = parseCommandInput(argv, {
-    valueOptions: ["cwd"],
-    booleanOptions: ["json"]
+    valueOptions: ['cwd'],
+    booleanOptions: ['json'],
   });
 
-  const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
   const sessionId = getCurrentClaudeSessionId();
   const jobs = filterJobsForCurrentSession(sortJobsNewestFirst(listJobs(workspaceRoot)));
@@ -251,12 +270,12 @@ export function handleTaskResumeCandidate(argv: string[]): void {
             summary: candidate.summary ?? null,
             threadId: candidate.threadId,
             completedAt: candidate.completedAt ?? null,
-            updatedAt: candidate.updatedAt ?? null
-          }
+            updatedAt: candidate.updatedAt ?? null,
+          },
   };
 
   const rendered = candidate
     ? `Resumable task found: ${candidate.id} (${candidate.status}).\n`
-    : "No resumable task found for this session.\n";
+    : 'No resumable task found for this session.\n';
   outputCommandResult(payload, rendered, options.json);
 }

@@ -13,10 +13,7 @@
   "properties": {
     "verdict": {
       "type": "string",
-      "enum": [
-        "approve",
-        "needs-revision"
-      ]
+      "enum": ["approve", "needs-revision"]
     },
     "summary": {
       "type": "string",
@@ -27,23 +24,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "severity",
-          "title",
-          "body",
-          "section",
-          "confidence",
-          "recommendation"
-        ],
+        "required": ["severity", "title", "body", "section", "confidence", "recommendation"],
         "properties": {
           "severity": {
             "type": "string",
-            "enum": [
-              "critical",
-              "high",
-              "medium",
-              "low"
-            ]
+            "enum": ["critical", "high", "medium", "low"]
           },
           "title": {
             "type": "string",

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import fs from "node:fs";
-import path from "node:path";
-import process from "node:process";
+import fs from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
 
-const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const VERSION_PATTERN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 type JsonObject = Record<string, unknown>;
 
@@ -20,26 +21,26 @@ interface VersionTarget {
 
 const TARGETS: VersionTarget[] = [
   {
-    file: "package.json",
+    file: 'package.json',
     values: [
       {
-        label: "version",
+        label: 'version',
         get: (json) => json.version,
         set: (json, version) => {
           json.version = version;
-        }
-      }
-    ]
+        },
+      },
+    ],
   },
   {
-    file: "package-lock.json",
+    file: 'package-lock.json',
     values: [
       {
-        label: "version",
+        label: 'version',
         get: (json) => json.version,
         set: (json, version) => {
           json.version = version;
-        }
+        },
       },
       {
         label: 'packages[""].version',
@@ -48,42 +49,42 @@ const TARGETS: VersionTarget[] = [
           const entry = rootPackageEntry(json);
           requireObject(entry, 'package-lock.json packages[""]');
           entry.version = version;
-        }
-      }
-    ]
+        },
+      },
+    ],
   },
   {
-    file: "plugins/stereo/.claude-plugin/plugin.json",
+    file: 'plugins/stereo/.claude-plugin/plugin.json',
     values: [
       {
-        label: "version",
+        label: 'version',
         get: (json) => json.version,
         set: (json, version) => {
           json.version = version;
-        }
-      }
-    ]
+        },
+      },
+    ],
   },
   {
-    file: ".claude-plugin/marketplace.json",
+    file: '.claude-plugin/marketplace.json',
     values: [
       {
-        label: "metadata.version",
+        label: 'metadata.version',
         get: (json) => (json.metadata as JsonObject | undefined)?.version,
         set: (json, version) => {
-          requireObject(json.metadata, ".claude-plugin/marketplace.json metadata");
+          requireObject(json.metadata, '.claude-plugin/marketplace.json metadata');
           (json.metadata as JsonObject).version = version;
-        }
+        },
       },
       {
-        label: "plugins[stereo].version",
+        label: 'plugins[stereo].version',
         get: (json) => findMarketplacePlugin(json).version,
         set: (json, version) => {
           findMarketplacePlugin(json).version = version;
-        }
-      }
-    ]
-  }
+        },
+      },
+    ],
+  },
 ];
 
 interface CliOptions {
@@ -95,22 +96,22 @@ interface CliOptions {
 
 function usage(): string {
   return [
-    "Usage:",
-    "  node scripts/bump-version.ts <version>",
-    "  node scripts/bump-version.ts --check [version]",
-    "",
-    "Options:",
-    "  --check       Verify manifest versions. Uses package.json when version is omitted.",
-    "  --root <dir>  Run against a different repository root.",
-    "  --help       Print this help."
-  ].join("\n");
+    'Usage:',
+    '  node scripts/bump-version.ts <version>',
+    '  node scripts/bump-version.ts --check [version]',
+    '',
+    'Options:',
+    '  --check       Verify manifest versions. Uses package.json when version is omitted.',
+    '  --root <dir>  Run against a different repository root.',
+    '  --help       Print this help.',
+  ].join('\n');
 }
 
 function parseArgs(argv: readonly string[]): CliOptions {
   const options: CliOptions = {
     check: false,
     root: process.cwd(),
-    version: null
+    version: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -119,18 +120,18 @@ function parseArgs(argv: readonly string[]): CliOptions {
       continue;
     }
 
-    if (arg === "--check") {
+    if (arg === '--check') {
       options.check = true;
-    } else if (arg === "--root") {
+    } else if (arg === '--root') {
       const root = argv[i + 1];
       if (!root) {
-        throw new Error("--root requires a directory.");
+        throw new Error('--root requires a directory.');
       }
       options.root = root;
       i += 1;
-    } else if (arg === "--help" || arg === "-h") {
+    } else if (arg === '--help' || arg === '-h') {
       options.help = true;
-    } else if (arg.startsWith("-")) {
+    } else if (arg.startsWith('-')) {
       throw new Error(`Unknown option: ${arg}`);
     } else if (options.version) {
       throw new Error(`Unexpected extra argument: ${arg}`);
@@ -150,32 +151,34 @@ function validateVersion(version: string): void {
 }
 
 function requireObject(value: unknown, label: string): asserts value is JsonObject {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`Expected ${label} to be an object.`);
   }
 }
 
 function rootPackageEntry(json: JsonObject): JsonObject | undefined {
   const packages = json.packages;
-  if (!packages || typeof packages !== "object" || Array.isArray(packages)) {
+  if (!packages || typeof packages !== 'object' || Array.isArray(packages)) {
     return undefined;
   }
-  const entry = (packages as JsonObject)[""];
-  return entry && typeof entry === "object" && !Array.isArray(entry) ? (entry as JsonObject) : undefined;
+  const entry = (packages as JsonObject)[''];
+  return entry && typeof entry === 'object' && !Array.isArray(entry)
+    ? (entry as JsonObject)
+    : undefined;
 }
 
 function findMarketplacePlugin(json: JsonObject): JsonObject {
   const plugins = Array.isArray(json.plugins) ? (json.plugins as unknown[]) : [];
   const plugin = plugins.find(
-    (entry) => entry && typeof entry === "object" && (entry as JsonObject).name === "stereo"
+    (entry) => entry && typeof entry === 'object' && (entry as JsonObject).name === 'stereo',
   );
-  requireObject(plugin, ".claude-plugin/marketplace.json plugins[stereo]");
+  requireObject(plugin, '.claude-plugin/marketplace.json plugins[stereo]');
   return plugin;
 }
 
 function readJson(root: string, file: string): JsonObject {
   const filePath = path.join(root, file);
-  return JSON.parse(fs.readFileSync(filePath, "utf8")) as JsonObject;
+  return JSON.parse(fs.readFileSync(filePath, 'utf8')) as JsonObject;
 }
 
 function writeJson(root: string, file: string, json: JsonObject): void {
@@ -184,9 +187,9 @@ function writeJson(root: string, file: string, json: JsonObject): void {
 }
 
 function readPackageVersion(root: string): string {
-  const packageJson = readJson(root, "package.json");
-  if (typeof packageJson.version !== "string") {
-    throw new Error("package.json version must be a string.");
+  const packageJson = readJson(root, 'package.json');
+  if (typeof packageJson.version !== 'string') {
+    throw new Error('package.json version must be a string.');
   }
   validateVersion(packageJson.version);
   return packageJson.version;
@@ -200,7 +203,9 @@ function checkVersions(root: string, expectedVersion: string): string[] {
     for (const value of target.values) {
       const actual = value.get(json);
       if (actual !== expectedVersion) {
-        mismatches.push(`${target.file} ${value.label}: expected ${expectedVersion}, found ${actual ?? "<missing>"}`);
+        mismatches.push(
+          `${target.file} ${value.label}: expected ${expectedVersion}, found ${actual ?? '<missing>'}`,
+        );
       }
     }
   }
@@ -244,14 +249,14 @@ function main(): void {
   if (options.check) {
     const mismatches = checkVersions(options.root, version);
     if (mismatches.length > 0) {
-      throw new Error(`Version metadata is out of sync:\n${mismatches.join("\n")}`);
+      throw new Error(`Version metadata is out of sync:\n${mismatches.join('\n')}`);
     }
     console.log(`All version metadata matches ${version}.`);
     return;
   }
 
   const changedFiles = bumpVersion(options.root, version);
-  const touched = changedFiles.length > 0 ? changedFiles.join(", ") : "no files changed";
+  const touched = changedFiles.length > 0 ? changedFiles.join(', ') : 'no files changed';
   console.log(`Set version metadata to ${version}: ${touched}.`);
 }
 

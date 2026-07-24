@@ -362,12 +362,12 @@ wire_api = "responses"
 
 Use the provider id from the table below in place of `example`. The URLs in the last column document the model ids and API keys; they are not claims that the provider's native endpoint implements the Responses API.
 
-| Alias | Model id | Provider table | Conventional key | Provider documentation |
-| --- | --- | --- | --- | --- |
-| `kimi` | `kimi-k3` | `[model_providers.moonshot]` | `MOONSHOT_API_KEY` | [Kimi API](https://platform.kimi.ai/docs/overview) |
-| `qwen` | `qwen3.7-plus` | `[model_providers.dashscope]` | `DASHSCOPE_API_KEY` | [Alibaba Cloud Model Studio](https://help.aliyun.com/en/model-studio/text-generation-model/) |
-| `deepseek` | `deepseek-v4-pro` | `[model_providers.deepseek]` | `DEEPSEEK_API_KEY` | [DeepSeek API](https://api-docs.deepseek.com/quick_start/pricing/) |
-| `glm` | `glm-5.1` | `[model_providers.zhipu]` | `ZAI_API_KEY` | [Z.AI API](https://docs.z.ai/guides/overview/migrate-to-glm-new) |
+| Alias      | Model id          | Provider table                | Conventional key    | Provider documentation                                                                       |
+| ---------- | ----------------- | ----------------------------- | ------------------- | -------------------------------------------------------------------------------------------- |
+| `kimi`     | `kimi-k3`         | `[model_providers.moonshot]`  | `MOONSHOT_API_KEY`  | [Kimi API](https://platform.kimi.ai/docs/overview)                                           |
+| `qwen`     | `qwen3.7-plus`    | `[model_providers.dashscope]` | `DASHSCOPE_API_KEY` | [Alibaba Cloud Model Studio](https://help.aliyun.com/en/model-studio/text-generation-model/) |
+| `deepseek` | `deepseek-v4-pro` | `[model_providers.deepseek]`  | `DEEPSEEK_API_KEY`  | [DeepSeek API](https://api-docs.deepseek.com/quick_start/pricing/)                           |
+| `glm`      | `glm-5.1`         | `[model_providers.zhipu]`     | `ZAI_API_KEY`       | [Z.AI API](https://docs.z.ai/guides/overview/migrate-to-glm-new)                             |
 
 Aliases and their exact registered model ids select the listed provider per thread. For example, both `--model kimi` and `--model kimi-k3` route to `model_providers.moonshot`. An unregistered raw model id is passed through unchanged with no provider override, so it uses your config's default `model_provider`.
 

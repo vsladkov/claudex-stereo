@@ -1,57 +1,57 @@
-import process from "node:process";
+import process from 'node:process';
 
-import { wasJsonRequested } from "./io.ts";
-import { printUsage } from "./usage.ts";
-import { handleSetup } from "./commands/setup.ts";
-import { handleAdversarialReview, handleReview } from "./commands/review.ts";
-import { handleTask, handleTaskResumeCandidate, handleTaskWorker } from "./commands/task.ts";
-import { handlePlanReview, handlePlanState } from "./commands/plan.ts";
-import { handleTransfer } from "./commands/transfer.ts";
-import { handleResult, handleStatus } from "./commands/status.ts";
-import { handleCancel } from "./commands/cancel.ts";
+import { wasJsonRequested } from './io.ts';
+import { printUsage } from './usage.ts';
+import { handleSetup } from './commands/setup.ts';
+import { handleAdversarialReview, handleReview } from './commands/review.ts';
+import { handleTask, handleTaskResumeCandidate, handleTaskWorker } from './commands/task.ts';
+import { handlePlanReview, handlePlanState } from './commands/plan.ts';
+import { handleTransfer } from './commands/transfer.ts';
+import { handleResult, handleStatus } from './commands/status.ts';
+import { handleCancel } from './commands/cancel.ts';
 
 async function main(fullArgv: string[]): Promise<void> {
   const [subcommand, ...argv] = fullArgv;
-  if (!subcommand || subcommand === "help" || subcommand === "--help") {
+  if (!subcommand || subcommand === 'help' || subcommand === '--help') {
     printUsage();
     return;
   }
 
   switch (subcommand) {
-    case "setup":
+    case 'setup':
       await handleSetup(argv);
       break;
-    case "review":
+    case 'review':
       await handleReview(argv);
       break;
-    case "adversarial-review":
+    case 'adversarial-review':
       await handleAdversarialReview(argv);
       break;
-    case "task":
+    case 'task':
       await handleTask(argv);
       break;
-    case "plan-review":
+    case 'plan-review':
       await handlePlanReview(argv);
       break;
-    case "plan-state":
+    case 'plan-state':
       handlePlanState(argv);
       break;
-    case "transfer":
+    case 'transfer':
       await handleTransfer(argv);
       break;
-    case "task-worker":
+    case 'task-worker':
       await handleTaskWorker(argv);
       break;
-    case "status":
+    case 'status':
       await handleStatus(argv);
       break;
-    case "result":
+    case 'result':
       handleResult(argv);
       break;
-    case "task-resume-candidate":
+    case 'task-resume-candidate':
       handleTaskResumeCandidate(argv);
       break;
-    case "cancel":
+    case 'cancel':
       await handleCancel(argv);
       break;
     default:

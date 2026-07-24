@@ -6,9 +6,11 @@ export function sleep(ms: number): Promise<void> {
 }
 
 export function shorten(text: unknown, limit = 96): string {
-  const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
+  const normalized = String(text ?? '')
+    .trim()
+    .replace(/\s+/g, ' ');
   if (!normalized) {
-    return "";
+    return '';
   }
   if (normalized.length <= limit) {
     return normalized;
@@ -17,7 +19,7 @@ export function shorten(text: unknown, limit = 96): string {
 }
 
 export function firstMeaningfulLine(text: unknown, fallback: string): string {
-  const line = String(text ?? "")
+  const line = String(text ?? '')
     .split(/\r?\n/)
     .map((value) => value.trim())
     .find(Boolean);

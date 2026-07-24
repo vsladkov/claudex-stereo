@@ -1,12 +1,12 @@
-import { spawnSync } from "node:child_process";
-import process from "node:process";
+import { spawnSync } from 'node:child_process';
+import process from 'node:process';
 
 export interface RunCommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   input?: string;
   maxBuffer?: number;
-  stdio?: "pipe" | "ignore" | "inherit";
+  stdio?: 'pipe' | 'ignore' | 'inherit';
   shell?: boolean | string;
 }
 
@@ -20,7 +20,11 @@ export interface CommandResult {
   error: NodeJS.ErrnoException | null;
 }
 
-export type RunCommandFn = (command: string, args?: readonly string[], options?: RunCommandOptions) => CommandResult;
+export type RunCommandFn = (
+  command: string,
+  args?: readonly string[],
+  options?: RunCommandOptions,
+) => CommandResult;
 
 export type KillFn = (pid: number, signal?: NodeJS.Signals | number) => unknown;
 
@@ -29,7 +33,7 @@ export interface BinaryAvailability {
   detail: string;
 }
 
-export type TerminationMethod = "taskkill" | "kill" | "process-group" | "process" | null;
+export type TerminationMethod = 'taskkill' | 'kill' | 'process-group' | 'process' | null;
 
 export interface TerminationOutcome {
   attempted: boolean;
@@ -46,16 +50,20 @@ export interface TerminateProcessTreeOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-export function runCommand(command: string, args: readonly string[] = [], options: RunCommandOptions = {}): CommandResult {
+export function runCommand(
+  command: string,
+  args: readonly string[] = [],
+  options: RunCommandOptions = {},
+): CommandResult {
   const result = spawnSync(command, [...args], {
     cwd: options.cwd,
     env: options.env,
-    encoding: "utf8",
+    encoding: 'utf8',
     input: options.input,
     maxBuffer: options.maxBuffer,
-    stdio: options.stdio ?? "pipe",
-    shell: options.shell ?? (process.platform === "win32" ? process.env.SHELL || true : false),
-    windowsHide: true
+    stdio: options.stdio ?? 'pipe',
+    shell: options.shell ?? (process.platform === 'win32' ? process.env.SHELL || true : false),
+    windowsHide: true,
   });
 
   return {
@@ -63,13 +71,17 @@ export function runCommand(command: string, args: readonly string[] = [], option
     args,
     status: result.status ?? 0,
     signal: result.signal ?? null,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    error: (result.error as NodeJS.ErrnoException | undefined) ?? null
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    error: (result.error as NodeJS.ErrnoException | undefined) ?? null,
   };
 }
 
-export function runCommandChecked(command: string, args: readonly string[] = [], options: RunCommandOptions = {}): CommandResult {
+export function runCommandChecked(
+  command: string,
+  args: readonly string[] = [],
+  options: RunCommandOptions = {},
+): CommandResult {
   const result = runCommand(command, args, options);
   if (result.error) {
     throw result.error;
@@ -82,12 +94,12 @@ export function runCommandChecked(command: string, args: readonly string[] = [],
 
 export function binaryAvailable(
   command: string,
-  versionArgs: readonly string[] = ["--version"],
-  options: RunCommandOptions = {}
+  versionArgs: readonly string[] = ['--version'],
+  options: RunCommandOptions = {},
 ): BinaryAvailability {
   const result = runCommand(command, versionArgs, options);
-  if (result.error && result.error.code === "ENOENT") {
-    return { available: false, detail: "not found" };
+  if (result.error && result.error.code === 'ENOENT') {
+    return { available: false, detail: 'not found' };
   }
   if (result.error) {
     return { available: false, detail: result.error.message };
@@ -96,7 +108,7 @@ export function binaryAvailable(
     const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.status}`;
     return { available: false, detail };
   }
-  return { available: true, detail: result.stdout.trim() || result.stderr.trim() || "ok" };
+  return { available: true, detail: result.stdout.trim() || result.stderr.trim() || 'ok' };
 }
 
 function looksLikeMissingProcessMessage(text: string): boolean {
@@ -104,10 +116,15 @@ function looksLikeMissingProcessMessage(text: string): boolean {
 }
 
 function errorCode(error: unknown): string | undefined {
-  return error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : undefined;
+  return error && typeof error === 'object' && 'code' in error
+    ? String((error as { code: unknown }).code)
+    : undefined;
 }
 
-export function terminateProcessTree(pid: number, options: TerminateProcessTreeOptions = {}): TerminationOutcome {
+export function terminateProcessTree(
+  pid: number,
+  options: TerminateProcessTreeOptions = {},
+): TerminationOutcome {
   if (!Number.isFinite(pid)) {
     return { attempted: false, delivered: false, method: null };
   }
@@ -116,28 +133,28 @@ export function terminateProcessTree(pid: number, options: TerminateProcessTreeO
   const runCommandImpl = options.runCommandImpl ?? runCommand;
   const killImpl = options.killImpl ?? (process.kill.bind(process) as KillFn);
 
-  if (platform === "win32") {
-    const result = runCommandImpl("taskkill", ["/PID", String(pid), "/T", "/F"], {
+  if (platform === 'win32') {
+    const result = runCommandImpl('taskkill', ['/PID', String(pid), '/T', '/F'], {
       cwd: options.cwd,
-      env: options.env
+      env: options.env,
     });
 
     if (!result.error && result.status === 0) {
-      return { attempted: true, delivered: true, method: "taskkill", result };
+      return { attempted: true, delivered: true, method: 'taskkill', result };
     }
 
     const combinedOutput = `${result.stderr}\n${result.stdout}`.trim();
     if (!result.error && looksLikeMissingProcessMessage(combinedOutput)) {
-      return { attempted: true, delivered: false, method: "taskkill", result };
+      return { attempted: true, delivered: false, method: 'taskkill', result };
     }
 
-    if (result.error?.code === "ENOENT") {
+    if (result.error?.code === 'ENOENT') {
       try {
         killImpl(pid);
-        return { attempted: true, delivered: true, method: "kill" };
+        return { attempted: true, delivered: true, method: 'kill' };
       } catch (error) {
-        if (errorCode(error) === "ESRCH") {
-          return { attempted: true, delivered: false, method: "kill" };
+        if (errorCode(error) === 'ESRCH') {
+          return { attempted: true, delivered: false, method: 'kill' };
         }
         throw error;
       }
@@ -151,38 +168,38 @@ export function terminateProcessTree(pid: number, options: TerminateProcessTreeO
   }
 
   try {
-    killImpl(-pid, "SIGTERM");
-    return { attempted: true, delivered: true, method: "process-group" };
+    killImpl(-pid, 'SIGTERM');
+    return { attempted: true, delivered: true, method: 'process-group' };
   } catch (error) {
-    if (errorCode(error) !== "ESRCH") {
+    if (errorCode(error) !== 'ESRCH') {
       try {
-        killImpl(pid, "SIGTERM");
-        return { attempted: true, delivered: true, method: "process" };
+        killImpl(pid, 'SIGTERM');
+        return { attempted: true, delivered: true, method: 'process' };
       } catch (innerError) {
-        if (errorCode(innerError) === "ESRCH") {
-          return { attempted: true, delivered: false, method: "process" };
+        if (errorCode(innerError) === 'ESRCH') {
+          return { attempted: true, delivered: false, method: 'process' };
         }
         throw innerError;
       }
     }
 
-    return { attempted: true, delivered: false, method: "process-group" };
+    return { attempted: true, delivered: false, method: 'process-group' };
   }
 }
 
 export function formatCommandFailure(result: CommandResult): string {
-  const parts = [`${result.command} ${result.args.join(" ")}`.trim()];
+  const parts = [`${result.command} ${result.args.join(' ')}`.trim()];
   if (result.signal) {
     parts.push(`signal=${result.signal}`);
   } else {
     parts.push(`exit=${result.status}`);
   }
-  const stderr = (result.stderr || "").trim();
-  const stdout = (result.stdout || "").trim();
+  const stderr = (result.stderr || '').trim();
+  const stdout = (result.stdout || '').trim();
   if (stderr) {
     parts.push(stderr);
   } else if (stdout) {
     parts.push(stdout);
   }
-  return parts.join(": ");
+  return parts.join(': ');
 }

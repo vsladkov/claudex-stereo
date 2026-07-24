@@ -1,4 +1,4 @@
-import { ensureGitRepository } from "../platform/git.ts";
+import { ensureGitRepository } from '../platform/git.ts';
 
 export function resolveWorkspaceRoot(cwd: string): string {
   try {

@@ -1,15 +1,15 @@
-import { createHash } from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-import { resolveWorkspaceRoot } from "./workspace.ts";
+import { resolveWorkspaceRoot } from './workspace.ts';
 
 const STATE_VERSION = 1;
-export const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-const FALLBACK_STATE_ROOT_DIR = path.join(os.tmpdir(), "codex-companion");
-const STATE_FILE_NAME = "state.json";
-const JOBS_DIR_NAME = "jobs";
+export const PLUGIN_DATA_ENV = 'CLAUDE_PLUGIN_DATA';
+const FALLBACK_STATE_ROOT_DIR = path.join(os.tmpdir(), 'codex-companion');
+const STATE_FILE_NAME = 'state.json';
+const JOBS_DIR_NAME = 'jobs';
 const MAX_JOBS = 50;
 
 export interface StereoConfig {
@@ -66,9 +66,9 @@ function defaultState(): StereoState {
   return {
     version: STATE_VERSION,
     config: {
-      stopReviewGate: false
+      stopReviewGate: false,
     },
-    jobs: []
+    jobs: [],
   };
 }
 
@@ -88,11 +88,11 @@ export function resolveStateDir(cwd: string): string {
     canonicalWorkspaceRoot = workspaceRoot;
   }
 
-  const slugSource = path.basename(workspaceRoot) || "workspace";
-  const slug = slugSource.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "workspace";
-  const hash = createHash("sha256").update(canonicalWorkspaceRoot).digest("hex").slice(0, 16);
+  const slugSource = path.basename(workspaceRoot) || 'workspace';
+  const slug = slugSource.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
+  const hash = createHash('sha256').update(canonicalWorkspaceRoot).digest('hex').slice(0, 16);
   const pluginDataDir = process.env[PLUGIN_DATA_ENV];
-  const stateRoot = pluginDataDir ? path.join(pluginDataDir, "state") : FALLBACK_STATE_ROOT_DIR;
+  const stateRoot = pluginDataDir ? path.join(pluginDataDir, 'state') : FALLBACK_STATE_ROOT_DIR;
   return path.join(stateRoot, `${slug}-${hash}`);
 }
 
@@ -115,15 +115,15 @@ export function loadState(cwd: string): StereoState {
   }
 
   try {
-    const parsed = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     return {
       ...defaultState(),
       ...parsed,
       config: {
         ...defaultState().config,
-        ...(parsed.config ?? {})
+        ...(parsed.config ?? {}),
       },
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs.map(stripIndexOnlyFields) : []
+      jobs: Array.isArray(parsed.jobs) ? parsed.jobs.map(stripIndexOnlyFields) : [],
     };
   } catch {
     return defaultState();
@@ -132,7 +132,9 @@ export function loadState(cwd: string): StereoState {
 
 function pruneJobs(jobs: JobRecord[]): JobRecord[] {
   return [...jobs]
-    .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")))
+    .sort((left, right) =>
+      String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')),
+    )
     .slice(0, MAX_JOBS);
 }
 
@@ -142,14 +144,14 @@ function removeFileIfExists(filePath: string | null | undefined): void {
   }
 }
 
-const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 function readJobFileFresh(jobFile: string): { missing: boolean; record: JobRecord | null } {
   if (!fs.existsSync(jobFile)) {
     return { missing: true, record: null };
   }
   try {
-    return { missing: false, record: JSON.parse(fs.readFileSync(jobFile, "utf8")) };
+    return { missing: false, record: JSON.parse(fs.readFileSync(jobFile, 'utf8')) };
   } catch {
     return { missing: false, record: null };
   }
@@ -189,12 +191,12 @@ export function saveState(cwd: string, state: StereoStateInput): StereoState {
     version: STATE_VERSION,
     config: {
       ...defaultState().config,
-      ...(state.config ?? {})
+      ...(state.config ?? {}),
     },
-    jobs: nextJobs
+    jobs: nextJobs,
   };
 
-  fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+  fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, 'utf8');
   return nextState;
 }
 
@@ -204,7 +206,7 @@ export function updateState(cwd: string, mutate: (state: StereoState) => void): 
   return saveState(cwd, state);
 }
 
-export function generateJobId(prefix = "job"): string {
+export function generateJobId(prefix = 'job'): string {
   const random = Math.random().toString(36).slice(2, 8);
   return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
@@ -217,14 +219,14 @@ export function upsertJob(cwd: string, jobPatch: JobPatch): StereoState {
       state.jobs.unshift({
         createdAt: timestamp,
         updatedAt: timestamp,
-        ...jobPatch
+        ...jobPatch,
       } as JobRecord);
       return;
     }
     state.jobs[existingIndex] = {
       ...state.jobs[existingIndex],
       ...jobPatch,
-      updatedAt: timestamp
+      updatedAt: timestamp,
     } as JobRecord;
   });
 }
@@ -237,7 +239,7 @@ export function setConfig(cwd: string, key: string, value: unknown): StereoState
   return updateState(cwd, (state) => {
     state.config = {
       ...state.config,
-      [key]: value
+      [key]: value,
     };
   });
 }
@@ -249,12 +251,12 @@ export function getConfig(cwd: string): StereoConfig {
 export function writeJobFile(cwd: string, jobId: string, payload: unknown): string {
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
-  fs.writeFileSync(jobFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  fs.writeFileSync(jobFile, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
   return jobFile;
 }
 
 export function readJobFile(jobFile: string): JobRecord {
-  return JSON.parse(fs.readFileSync(jobFile, "utf8"));
+  return JSON.parse(fs.readFileSync(jobFile, 'utf8'));
 }
 
 function removeJobFile(jobFile: string): void {
@@ -273,7 +275,7 @@ export function resolveJobFile(cwd: string, jobId: string): string {
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
 }
 
-const PAIR_PLAN_FILE_NAME = "pair-plan.json";
+const PAIR_PLAN_FILE_NAME = 'pair-plan.json';
 
 export function resolvePairPlanFile(cwd: string): string {
   return path.join(resolveStateDir(cwd), PAIR_PLAN_FILE_NAME);
@@ -281,7 +283,7 @@ export function resolvePairPlanFile(cwd: string): string {
 
 export function savePairPlanState<T>(cwd: string, record: T): T {
   ensureStateDir(cwd);
-  fs.writeFileSync(resolvePairPlanFile(cwd), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  fs.writeFileSync(resolvePairPlanFile(cwd), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
   return record;
 }
 
@@ -291,7 +293,7 @@ export function loadPairPlanState(cwd: string): unknown {
     return null;
   }
   try {
-    return JSON.parse(fs.readFileSync(pairPlanFile, "utf8"));
+    return JSON.parse(fs.readFileSync(pairPlanFile, 'utf8'));
   } catch {
     return null;
   }

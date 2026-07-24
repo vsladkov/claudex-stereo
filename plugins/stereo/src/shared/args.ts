@@ -30,22 +30,22 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
       continue;
     }
 
-    if (token === "--") {
+    if (token === '--') {
       passthrough = true;
       continue;
     }
 
-    if (!token.startsWith("-") || token === "-") {
+    if (!token.startsWith('-') || token === '-') {
       positionals.push(token);
       continue;
     }
 
-    if (token.startsWith("--")) {
-      const [rawKey = "", inlineValue] = token.slice(2).split("=", 2);
+    if (token.startsWith('--')) {
+      const [rawKey = '', inlineValue] = token.slice(2).split('=', 2);
       const key = aliasMap[rawKey] ?? rawKey;
 
       if (booleanOptions.has(key)) {
-        options[key] = inlineValue === undefined ? true : inlineValue !== "false";
+        options[key] = inlineValue === undefined ? true : inlineValue !== 'false';
         continue;
       }
 
@@ -91,7 +91,7 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
 
 export function splitRawArgumentString(raw: string): string[] {
   const tokens: string[] = [];
-  let current = "";
+  let current = '';
   let quote: string | null = null;
   let escaping = false;
 
@@ -102,7 +102,7 @@ export function splitRawArgumentString(raw: string): string[] {
       continue;
     }
 
-    if (character === "\\") {
+    if (character === '\\') {
       escaping = true;
       continue;
     }
@@ -124,7 +124,7 @@ export function splitRawArgumentString(raw: string): string[] {
     if (/\s/.test(character)) {
       if (current) {
         tokens.push(current);
-        current = "";
+        current = '';
       }
       continue;
     }
@@ -133,7 +133,7 @@ export function splitRawArgumentString(raw: string): string[] {
   }
 
   if (escaping) {
-    current += "\\";
+    current += '\\';
   }
 
   if (current) {

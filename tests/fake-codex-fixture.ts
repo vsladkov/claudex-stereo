@@ -1,12 +1,12 @@
-import fs from "node:fs";
-import path from "node:path";
-import process from "node:process";
+import fs from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
 
-import { writeExecutable } from "./helpers.ts";
+import { writeExecutable } from './helpers.ts';
 
-export function installFakeCodex(binDir: string, behavior = "review-ok"): void {
-  const statePath = path.join(binDir, "fake-codex-state.json");
-  const scriptPath = path.join(binDir, "codex");
+export function installFakeCodex(binDir: string, behavior = 'review-ok'): void {
+  const statePath = path.join(binDir, 'fake-codex-state.json');
+  const scriptPath = path.join(binDir, 'codex');
   const source = `#!/usr/bin/env node
 const fs = require("node:fs");
 const crypto = require("node:crypto");
@@ -835,19 +835,19 @@ rl.on("line", (line) => {
 
   // On Windows, npm global binaries are invoked via .cmd wrappers.
   // Create a codex.cmd so the fake binary is discoverable by spawn with shell: true.
-  if (process.platform === "win32") {
+  if (process.platform === 'win32') {
     const cmdWrapper = `@echo off\r\nnode "%~dp0codex" %*\r\n`;
-    fs.writeFileSync(path.join(binDir, "codex.cmd"), cmdWrapper, { encoding: "utf8" });
+    fs.writeFileSync(path.join(binDir, 'codex.cmd'), cmdWrapper, { encoding: 'utf8' });
   }
 }
 
 export type FakeCodexEnv = NodeJS.ProcessEnv & { PATH: string; CODEX_HOME: string };
 
 export function buildEnv(binDir: string): FakeCodexEnv {
-  const sep = process.platform === "win32" ? ";" : ":";
+  const sep = process.platform === 'win32' ? ';' : ':';
   return {
     ...process.env,
     PATH: `${binDir}${sep}${process.env.PATH}`,
-    CODEX_HOME: path.join(binDir, "codex-home")
+    CODEX_HOME: path.join(binDir, 'codex-home'),
   };
 }

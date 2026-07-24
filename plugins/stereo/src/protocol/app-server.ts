@@ -3,8 +3,8 @@ import type {
   InitializeCapabilities,
   InitializeParams,
   InitializeResponse,
-  ServerNotification
-} from "../../../../.generated/app-server-types/index.js";
+  ServerNotification,
+} from '../../../../.generated/app-server-types/index.js';
 import type {
   ConfigReadParams,
   ConfigReadResponse,
@@ -33,8 +33,8 @@ import type {
   TurnInterruptResponse,
   TurnStartParams,
   TurnStartResponse,
-  UserInput
-} from "../../../../.generated/app-server-types/v2/index.js";
+  UserInput,
+} from '../../../../.generated/app-server-types/v2/index.js';
 
 export type {
   ClientInfo,
@@ -59,11 +59,11 @@ export type {
   TurnInterruptParams,
   TurnStartParams,
   TurnStartResponse,
-  UserInput
+  UserInput,
 };
 
-export type ThreadStartParams = Omit<RawThreadStartParams, "persistExtendedHistory">;
-export type ThreadResumeParams = Omit<RawThreadResumeParams, "persistExtendedHistory">;
+export type ThreadStartParams = Omit<RawThreadStartParams, 'persistExtendedHistory'>;
+export type ThreadResumeParams = Omit<RawThreadResumeParams, 'persistExtendedHistory'>;
 
 export interface CodexAppServerClientOptions {
   env?: NodeJS.ProcessEnv;
@@ -76,20 +76,23 @@ export interface CodexAppServerClientOptions {
 
 export interface AppServerMethodMap {
   initialize: { params: InitializeParams; result: InitializeResponse };
-  "account/read": { params: GetAccountParams; result: GetAccountResponse };
-  "config/read": { params: ConfigReadParams; result: ConfigReadResponse };
-  "externalAgentConfig/import": { params: ExternalAgentConfigImportParams; result: ExternalAgentConfigImportResponse };
-  "thread/start": { params: ThreadStartParams; result: ThreadStartResponse };
-  "thread/resume": { params: ThreadResumeParams; result: ThreadResumeResponse };
-  "thread/name/set": { params: ThreadSetNameParams; result: ThreadSetNameResponse };
-  "thread/list": { params: ThreadListParams; result: ThreadListResponse };
-  "review/start": { params: ReviewStartParams; result: ReviewStartResponse };
-  "turn/start": { params: TurnStartParams; result: TurnStartResponse };
-  "turn/interrupt": { params: TurnInterruptParams; result: TurnInterruptResponse };
+  'account/read': { params: GetAccountParams; result: GetAccountResponse };
+  'config/read': { params: ConfigReadParams; result: ConfigReadResponse };
+  'externalAgentConfig/import': {
+    params: ExternalAgentConfigImportParams;
+    result: ExternalAgentConfigImportResponse;
+  };
+  'thread/start': { params: ThreadStartParams; result: ThreadStartResponse };
+  'thread/resume': { params: ThreadResumeParams; result: ThreadResumeResponse };
+  'thread/name/set': { params: ThreadSetNameParams; result: ThreadSetNameResponse };
+  'thread/list': { params: ThreadListParams; result: ThreadListResponse };
+  'review/start': { params: ReviewStartParams; result: ReviewStartResponse };
+  'turn/start': { params: TurnStartParams; result: TurnStartResponse };
+  'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse };
 }
 
 export type AppServerMethod = keyof AppServerMethodMap;
-export type AppServerRequestParams<M extends AppServerMethod> = AppServerMethodMap[M]["params"];
-export type AppServerResponse<M extends AppServerMethod> = AppServerMethodMap[M]["result"];
+export type AppServerRequestParams<M extends AppServerMethod> = AppServerMethodMap[M]['params'];
+export type AppServerResponse<M extends AppServerMethod> = AppServerMethodMap[M]['result'];
 export type AppServerNotification = ServerNotification;
 export type AppServerNotificationHandler = (message: AppServerNotification) => void;

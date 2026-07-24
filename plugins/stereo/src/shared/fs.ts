@@ -1,25 +1,25 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 export function ensureAbsolutePath(cwd: string, maybePath: string): string {
   return path.isAbsolute(maybePath) ? maybePath : path.resolve(cwd, maybePath);
 }
 
-export function createTempDir(prefix = "codex-plugin-"): string {
+export function createTempDir(prefix = 'codex-plugin-'): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
 export function readJsonFile(filePath: string): unknown {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
 export function writeJsonFile(filePath: string, value: unknown): void {
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
 export function safeReadFile(filePath: string): string {
-  return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
 
 export function isProbablyText(buffer: Buffer): boolean {
@@ -34,7 +34,7 @@ export function isProbablyText(buffer: Buffer): boolean {
 
 export function readStdinIfPiped(): string {
   if (process.stdin.isTTY) {
-    return "";
+    return '';
   }
-  return fs.readFileSync(0, "utf8");
+  return fs.readFileSync(0, 'utf8');
 }

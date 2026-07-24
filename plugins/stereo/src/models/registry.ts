@@ -1,4 +1,4 @@
-export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface ModelEntry {
   model: string;
@@ -7,39 +7,39 @@ export interface ModelEntry {
 }
 
 export const VALID_REASONING_EFFORTS: ReadonlySet<string> = new Set([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max"
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
 ]);
 
-export const PAIR_DEFAULT_MODEL = "sol";
-export const PAIR_DEFAULT_EFFORT: ReasoningEffort = "max"; // gpt-5.6-family models
-export const PAIR_MODEL_OVERRIDE_EFFORT: ReasoningEffort = "xhigh"; // other gpt-* models
-export const PAIR_MAX_EFFORT_MODEL_FAMILY = "gpt-5.6";
+export const PAIR_DEFAULT_MODEL = 'sol';
+export const PAIR_DEFAULT_EFFORT: ReasoningEffort = 'max'; // gpt-5.6-family models
+export const PAIR_MODEL_OVERRIDE_EFFORT: ReasoningEffort = 'xhigh'; // other gpt-* models
+export const PAIR_MAX_EFFORT_MODEL_FAMILY = 'gpt-5.6';
 
 export const MODEL_REGISTRY = {
-  spark: { model: "gpt-5.3-codex-spark", defaultPairEffort: PAIR_MODEL_OVERRIDE_EFFORT },
-  sol: { model: "gpt-5.6-sol", defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  terra: { model: "gpt-5.6-terra", defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  luna: { model: "gpt-5.6-luna", defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  kimi: { model: "kimi-k3", modelProvider: "moonshot", defaultPairEffort: null },
-  qwen: { model: "qwen3.7-plus", modelProvider: "dashscope", defaultPairEffort: null },
-  deepseek: { model: "deepseek-v4-pro", modelProvider: "deepseek", defaultPairEffort: null },
-  glm: { model: "glm-5.1", modelProvider: "zhipu", defaultPairEffort: null }
+  spark: { model: 'gpt-5.3-codex-spark', defaultPairEffort: PAIR_MODEL_OVERRIDE_EFFORT },
+  sol: { model: 'gpt-5.6-sol', defaultPairEffort: PAIR_DEFAULT_EFFORT },
+  terra: { model: 'gpt-5.6-terra', defaultPairEffort: PAIR_DEFAULT_EFFORT },
+  luna: { model: 'gpt-5.6-luna', defaultPairEffort: PAIR_DEFAULT_EFFORT },
+  kimi: { model: 'kimi-k3', modelProvider: 'moonshot', defaultPairEffort: null },
+  qwen: { model: 'qwen3.7-plus', modelProvider: 'dashscope', defaultPairEffort: null },
+  deepseek: { model: 'deepseek-v4-pro', modelProvider: 'deepseek', defaultPairEffort: null },
+  glm: { model: 'glm-5.1', modelProvider: 'zhipu', defaultPairEffort: null },
 } satisfies Record<string, ModelEntry>;
 
 // Alias lookup stays a Map keyed by the lowercased alias so exotic inputs
 // (e.g. "constructor") can never hit Object.prototype members.
 const MODEL_ALIASES = new Map<string, string>(
-  Object.entries(MODEL_REGISTRY).map(([alias, entry]) => [alias, entry.model])
+  Object.entries(MODEL_REGISTRY).map(([alias, entry]) => [alias, entry.model]),
 );
 
 const ENTRIES_BY_MODEL = new Map<string, ModelEntry>(
-  Object.values(MODEL_REGISTRY).map((entry) => [entry.model, entry])
+  Object.values(MODEL_REGISTRY).map((entry) => [entry.model, entry]),
 );
 
 export function registryEntryForModel(resolvedModel: string): ModelEntry | null {
@@ -61,7 +61,7 @@ export function defaultPairEffort(resolvedModel: string): ReasoningEffort | null
   if (inMaxFamily) {
     return PAIR_DEFAULT_EFFORT;
   }
-  return resolvedModel.startsWith("gpt-") ? PAIR_MODEL_OVERRIDE_EFFORT : null;
+  return resolvedModel.startsWith('gpt-') ? PAIR_MODEL_OVERRIDE_EFFORT : null;
 }
 
 export function modelProviderFor(resolvedModel: string): string | null {
@@ -89,7 +89,7 @@ export function normalizeReasoningEffort(effort: unknown): ReasoningEffort | nul
   }
   if (!VALID_REASONING_EFFORTS.has(normalized)) {
     throw new Error(
-      `Unsupported reasoning effort "${effort}". Use one of: none, minimal, low, medium, high, xhigh, max.`
+      `Unsupported reasoning effort "${effort}". Use one of: none, minimal, low, medium, high, xhigh, max.`,
     );
   }
   return normalized as ReasoningEffort;

@@ -1,6 +1,6 @@
-import { describeStrandedReservation } from "../runtime/reservations.ts";
-import type { StrandedReservationEntry } from "../runtime/reservations.ts";
-import { formatJobModel, resolveJobModel } from "../jobs/job-control.ts";
+import { describeStrandedReservation } from '../runtime/reservations.ts';
+import type { StrandedReservationEntry } from '../runtime/reservations.ts';
+import { formatJobModel, resolveJobModel } from '../jobs/job-control.ts';
 
 // Renderer inputs are typed from usage: jobs and stored payloads come from
 // state files written across plugin versions, so every field beyond the id is
@@ -182,11 +182,11 @@ interface PlanReviewResultShape {
 
 function severityRank(severity: string): number {
   switch (severity) {
-    case "critical":
+    case 'critical':
       return 0;
-    case "high":
+    case 'high':
       return 1;
-    case "medium":
+    case 'medium':
       return 2;
     default:
       return 3;
@@ -195,7 +195,7 @@ function severityRank(severity: string): number {
 
 function formatLineRange(finding: NormalizedReviewFinding): string {
   if (!finding.line_start) {
-    return "";
+    return '';
   }
   if (!finding.line_end || finding.line_end === finding.line_start) {
     return `:${finding.line_start}`;
@@ -204,42 +204,60 @@ function formatLineRange(finding: NormalizedReviewFinding): string {
 }
 
 function validateReviewResultShape(data: unknown): string | null {
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return "Expected a top-level JSON object.";
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return 'Expected a top-level JSON object.';
   }
   const shape = data as Record<string, unknown>;
-  if (typeof shape.verdict !== "string" || !shape.verdict.trim()) {
-    return "Missing string `verdict`.";
+  if (typeof shape.verdict !== 'string' || !shape.verdict.trim()) {
+    return 'Missing string `verdict`.';
   }
-  if (typeof shape.summary !== "string" || !shape.summary.trim()) {
-    return "Missing string `summary`.";
+  if (typeof shape.summary !== 'string' || !shape.summary.trim()) {
+    return 'Missing string `summary`.';
   }
   if (!Array.isArray(shape.findings)) {
-    return "Missing array `findings`.";
+    return 'Missing array `findings`.';
   }
   if (!Array.isArray(shape.next_steps)) {
-    return "Missing array `next_steps`.";
+    return 'Missing array `next_steps`.';
   }
   return null;
 }
 
 function normalizeReviewFinding(finding: unknown, index: number): NormalizedReviewFinding {
-  const source = (finding && typeof finding === "object" && !Array.isArray(finding) ? finding : {}) as Record<string, unknown>;
-  const lineStart = Number.isInteger(source.line_start) && (source.line_start as number) > 0 ? (source.line_start as number) : null;
+  const source = (
+    finding && typeof finding === 'object' && !Array.isArray(finding) ? finding : {}
+  ) as Record<string, unknown>;
+  const lineStart =
+    Number.isInteger(source.line_start) && (source.line_start as number) > 0
+      ? (source.line_start as number)
+      : null;
   const lineEnd =
-    Number.isInteger(source.line_end) && (source.line_end as number) > 0 && (!lineStart || (source.line_end as number) >= lineStart)
+    Number.isInteger(source.line_end) &&
+    (source.line_end as number) > 0 &&
+    (!lineStart || (source.line_end as number) >= lineStart)
       ? (source.line_end as number)
       : lineStart;
 
   return {
-    severity: typeof source.severity === "string" && source.severity.trim() ? source.severity.trim() : "low",
-    title: typeof source.title === "string" && source.title.trim() ? source.title.trim() : `Finding ${index + 1}`,
-    body: typeof source.body === "string" && source.body.trim() ? source.body.trim() : "No details provided.",
-    file: typeof source.file === "string" && source.file.trim() ? source.file.trim() : "unknown",
+    severity:
+      typeof source.severity === 'string' && source.severity.trim()
+        ? source.severity.trim()
+        : 'low',
+    title:
+      typeof source.title === 'string' && source.title.trim()
+        ? source.title.trim()
+        : `Finding ${index + 1}`,
+    body:
+      typeof source.body === 'string' && source.body.trim()
+        ? source.body.trim()
+        : 'No details provided.',
+    file: typeof source.file === 'string' && source.file.trim() ? source.file.trim() : 'unknown',
     line_start: lineStart,
     line_end: lineEnd,
-    confidence: Number.isFinite(source.confidence) ? Math.min(1, Math.max(0, source.confidence as number)) : null,
-    recommendation: typeof source.recommendation === "string" ? source.recommendation.trim() : ""
+    confidence: Number.isFinite(source.confidence)
+      ? Math.min(1, Math.max(0, source.confidence as number))
+      : null,
+    recommendation: typeof source.recommendation === 'string' ? source.recommendation.trim() : '',
   };
 }
 
@@ -254,8 +272,8 @@ function normalizeReviewResultData(data: ReviewResultShape): {
     summary: data.summary.trim(),
     findings: data.findings.map((finding, index) => normalizeReviewFinding(finding, index)),
     next_steps: data.next_steps
-      .filter((step): step is string => typeof step === "string" && Boolean(step.trim()))
-      .map((step) => step.trim())
+      .filter((step): step is string => typeof step === 'string' && Boolean(step.trim()))
+      .map((step) => step.trim()),
   };
 }
 
@@ -263,37 +281,53 @@ function normalizeReviewResultData(data: ReviewResultShape): {
 // as required (so the model always emits it), but this validator deliberately
 // does not — stored results from before the field existed must keep rendering.
 function validatePlanReviewResultShape(data: unknown): string | null {
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return "Expected a top-level JSON object.";
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return 'Expected a top-level JSON object.';
   }
   const shape = data as Record<string, unknown>;
-  if (typeof shape.verdict !== "string" || !shape.verdict.trim()) {
-    return "Missing string `verdict`.";
+  if (typeof shape.verdict !== 'string' || !shape.verdict.trim()) {
+    return 'Missing string `verdict`.';
   }
-  if (typeof shape.summary !== "string" || !shape.summary.trim()) {
-    return "Missing string `summary`.";
+  if (typeof shape.summary !== 'string' || !shape.summary.trim()) {
+    return 'Missing string `summary`.';
   }
   if (!Array.isArray(shape.findings)) {
-    return "Missing array `findings`.";
+    return 'Missing array `findings`.';
   }
   if (!Array.isArray(shape.revision_instructions)) {
-    return "Missing array `revision_instructions`.";
+    return 'Missing array `revision_instructions`.';
   }
   if (!Array.isArray(shape.open_questions)) {
-    return "Missing array `open_questions`.";
+    return 'Missing array `open_questions`.';
   }
   return null;
 }
 
 function normalizePlanReviewFinding(finding: unknown, index: number): NormalizedPlanReviewFinding {
-  const source = (finding && typeof finding === "object" && !Array.isArray(finding) ? finding : {}) as Record<string, unknown>;
+  const source = (
+    finding && typeof finding === 'object' && !Array.isArray(finding) ? finding : {}
+  ) as Record<string, unknown>;
   return {
-    severity: typeof source.severity === "string" && source.severity.trim() ? source.severity.trim() : "low",
-    title: typeof source.title === "string" && source.title.trim() ? source.title.trim() : `Finding ${index + 1}`,
-    body: typeof source.body === "string" && source.body.trim() ? source.body.trim() : "No details provided.",
-    section: typeof source.section === "string" && source.section.trim() ? source.section.trim() : "general",
-    confidence: Number.isFinite(source.confidence) ? Math.min(1, Math.max(0, source.confidence as number)) : null,
-    recommendation: typeof source.recommendation === "string" ? source.recommendation.trim() : ""
+    severity:
+      typeof source.severity === 'string' && source.severity.trim()
+        ? source.severity.trim()
+        : 'low',
+    title:
+      typeof source.title === 'string' && source.title.trim()
+        ? source.title.trim()
+        : `Finding ${index + 1}`,
+    body:
+      typeof source.body === 'string' && source.body.trim()
+        ? source.body.trim()
+        : 'No details provided.',
+    section:
+      typeof source.section === 'string' && source.section.trim()
+        ? source.section.trim()
+        : 'general',
+    confidence: Number.isFinite(source.confidence)
+      ? Math.min(1, Math.max(0, source.confidence as number))
+      : null,
+    recommendation: typeof source.recommendation === 'string' ? source.recommendation.trim() : '',
   };
 }
 
@@ -310,43 +344,48 @@ function normalizePlanReviewResultData(data: PlanReviewResultShape): {
     summary: data.summary.trim(),
     findings: data.findings.map((finding, index) => normalizePlanReviewFinding(finding, index)),
     revision_instructions: data.revision_instructions
-      .filter((instruction): instruction is string => typeof instruction === "string" && Boolean(instruction.trim()))
+      .filter(
+        (instruction): instruction is string =>
+          typeof instruction === 'string' && Boolean(instruction.trim()),
+      )
       .map((instruction) => instruction.trim()),
     open_questions: data.open_questions
-      .filter((question): question is string => typeof question === "string" && Boolean(question.trim()))
+      .filter(
+        (question): question is string => typeof question === 'string' && Boolean(question.trim()),
+      )
       .map((question) => question.trim()),
     residual_risks: (Array.isArray(data.residual_risks) ? data.residual_risks : [])
-      .filter((risk): risk is string => typeof risk === "string" && Boolean(risk.trim()))
-      .map((risk) => risk.trim())
+      .filter((risk): risk is string => typeof risk === 'string' && Boolean(risk.trim()))
+      .map((risk) => risk.trim()),
   };
 }
 
 function isStructuredReviewStoredResult(storedJob: StoredJobLike | null | undefined): boolean {
   const result = storedJob?.result;
-  if (!result || typeof result !== "object" || Array.isArray(result)) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
     return false;
   }
   return (
-    Object.prototype.hasOwnProperty.call(result, "result") ||
-    Object.prototype.hasOwnProperty.call(result, "parseError")
+    Object.prototype.hasOwnProperty.call(result, 'result') ||
+    Object.prototype.hasOwnProperty.call(result, 'parseError')
   );
 }
 
 function formatJobLine(job: RenderableJob): string {
-  const parts = [job.id, `${job.status || "unknown"}`];
+  const parts = [job.id, `${job.status || 'unknown'}`];
   if (job.kindLabel) {
     parts.push(job.kindLabel);
   }
   if (job.title) {
     parts.push(job.title);
   }
-  return parts.join(" | ");
+  return parts.join(' | ');
 }
 
 function escapeMarkdownCell(value: unknown): string {
-  return String(value ?? "")
-    .replace(/\|/g, "\\|")
-    .replace(/\r?\n/g, " ")
+  return String(value ?? '')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ')
     .trim();
 }
 
@@ -358,23 +397,25 @@ function formatCodexResumeCommand(job: RenderableJob | null | undefined): string
 }
 
 function appendActiveJobsTable(lines: string[], jobs: RenderableJob[]): void {
-  lines.push("Active jobs:");
-  lines.push("| Job | Kind | Model | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push('Active jobs:');
+  lines.push(
+    '| Job | Kind | Model | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |',
+  );
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
   for (const job of jobs) {
     const actions = [`/stereo:status ${job.id}`];
-    if (job.status === "queued" || job.status === "running") {
+    if (job.status === 'queued' || job.status === 'running') {
       actions.push(`/stereo:cancel ${job.id}`);
     }
     lines.push(
-      `| ${escapeMarkdownCell(job.id)} | ${escapeMarkdownCell(job.kindLabel)} | ${escapeMarkdownCell(job.modelDisplay ?? "-")} | ${escapeMarkdownCell(job.status)} | ${escapeMarkdownCell(job.phase ?? "")} | ${escapeMarkdownCell(job.elapsed ?? "")} | ${escapeMarkdownCell(job.threadId ?? "")} | ${escapeMarkdownCell(job.summary ?? "")} | ${actions.map((action) => `\`${action}\``).join("<br>")} |`
+      `| ${escapeMarkdownCell(job.id)} | ${escapeMarkdownCell(job.kindLabel)} | ${escapeMarkdownCell(job.modelDisplay ?? '-')} | ${escapeMarkdownCell(job.status)} | ${escapeMarkdownCell(job.phase ?? '')} | ${escapeMarkdownCell(job.elapsed ?? '')} | ${escapeMarkdownCell(job.threadId ?? '')} | ${escapeMarkdownCell(job.summary ?? '')} | ${actions.map((action) => `\`${action}\``).join('<br>')} |`,
     );
   }
 }
 
 function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailOptions = {}): void {
   lines.push(`- ${formatJobLine(job)}`);
-  lines.push(`  Model: ${job.modelDisplay ?? "-"}`);
+  lines.push(`  Model: ${job.modelDisplay ?? '-'}`);
   if (job.summary) {
     lines.push(`  Summary: ${job.summary}`);
   }
@@ -388,13 +429,13 @@ function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailO
     lines.push(`  Duration: ${job.duration}`);
   }
   if (options.showTimestamps) {
-    if (typeof job.createdAt === "string" && job.createdAt) {
+    if (typeof job.createdAt === 'string' && job.createdAt) {
       lines.push(`  Created: ${job.createdAt}`);
     }
-    if (typeof job.startedAt === "string" && job.startedAt) {
+    if (typeof job.startedAt === 'string' && job.startedAt) {
       lines.push(`  Started: ${job.startedAt}`);
     }
-    if (typeof job.completedAt === "string" && job.completedAt) {
+    if (typeof job.completedAt === 'string' && job.completedAt) {
       lines.push(`  Completed: ${job.completedAt}`);
     }
   }
@@ -408,47 +449,59 @@ function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailO
   if (job.logFile && options.showLog) {
     lines.push(`  Log: ${job.logFile}`);
   }
-  if ((job.status === "queued" || job.status === "running") && options.showCancelHint) {
+  if ((job.status === 'queued' || job.status === 'running') && options.showCancelHint) {
     lines.push(`  Cancel: /stereo:cancel ${job.id}`);
   }
-  if (job.status !== "queued" && job.status !== "running" && options.showResultHint) {
+  if (job.status !== 'queued' && job.status !== 'running' && options.showResultHint) {
     lines.push(`  Result: /stereo:result ${job.id}`);
   }
-  if (job.status !== "queued" && job.status !== "running" && job.jobClass === "task" && job.write && options.showReviewHint) {
-    lines.push("  Review changes: /stereo:review --wait");
-    lines.push("  Stricter review: /stereo:adversarial-review --wait");
+  if (
+    job.status !== 'queued' &&
+    job.status !== 'running' &&
+    job.jobClass === 'task' &&
+    job.write &&
+    options.showReviewHint
+  ) {
+    lines.push('  Review changes: /stereo:review --wait');
+    lines.push('  Stricter review: /stereo:adversarial-review --wait');
   }
   if ((options.showProgress ?? true) && job.progressPreview?.length) {
-    lines.push("  Progress:");
+    lines.push('  Progress:');
     for (const line of job.progressPreview) {
       lines.push(`    ${line}`);
     }
   }
 }
 
-function appendReasoningSection(lines: string[], reasoningSummary: string[] | null | undefined): void {
+function appendReasoningSection(
+  lines: string[],
+  reasoningSummary: string[] | null | undefined,
+): void {
   if (!Array.isArray(reasoningSummary) || reasoningSummary.length === 0) {
     return;
   }
 
-  lines.push("", "Reasoning:");
+  lines.push('', 'Reasoning:');
   for (const section of reasoningSummary) {
     lines.push(`- ${section}`);
   }
 }
 
-function appendStrandedReservationWarnings(lines: string[], entries: StrandedReservationEntry[] | null | undefined): void {
+function appendStrandedReservationWarnings(
+  lines: string[],
+  entries: StrandedReservationEntry[] | null | undefined,
+): void {
   if (!Array.isArray(entries) || entries.length === 0) {
     return;
   }
-  if (lines.at(-1) !== "") {
-    lines.push("");
+  if (lines.at(-1) !== '') {
+    lines.push('');
   }
-  lines.push("Warnings:");
+  lines.push('Warnings:');
   for (const entry of entries) {
     lines.push(`- ${describeStrandedReservation(entry)}`);
   }
-  lines.push("");
+  lines.push('');
 }
 
 export function renderSetupReport(report: SetupRenderReport): string {
@@ -456,18 +509,18 @@ export function renderSetupReport(report: SetupRenderReport): string {
     const aliases = report.providers.aliases
       .filter((entry) => entry.providerId === provider.id)
       .map((entry) => `${entry.alias} → ${entry.model}`);
-    const aliasSuffix = aliases.length > 0 ? ` (${aliases.join(", ")})` : "";
+    const aliasSuffix = aliases.length > 0 ? ` (${aliases.join(', ')})` : '';
     const keyStatus = provider.envKey
-      ? `${provider.envKey} ${provider.keySet ? "set" : "missing"}`
-      : "no env_key declared";
+      ? `${provider.envKey} ${provider.keySet ? 'set' : 'missing'}`
+      : 'no env_key declared';
     return `- Custom provider ${provider.id}${aliasSuffix}: ${keyStatus}`;
   });
   const lines = [
-    "# Codex Setup",
-    "",
-    `Status: ${report.ready ? "ready" : "needs attention"}`,
-    "",
-    "Checks:",
+    '# Codex Setup',
+    '',
+    `Status: ${report.ready ? 'ready' : 'needs attention'}`,
+    '',
+    'Checks:',
     `- node: ${report.node.detail}`,
     `- npm: ${report.npm.detail}`,
     `- codex: ${report.codex.detail}`,
@@ -475,104 +528,108 @@ export function renderSetupReport(report: SetupRenderReport): string {
       ? [
           `- write sandbox: ${
             report.writeSandbox.available === true
-              ? "ok"
+              ? 'ok'
               : report.writeSandbox.available === false
                 ? `blocked (${report.writeSandbox.detail})`
                 : report.writeSandbox.detail
-          }`
+          }`,
         ]
       : []),
     `- auth: ${report.auth.detail}`,
-    `- Model provider: ${report.providers.active ?? "unknown"} (default)`,
+    `- Model provider: ${report.providers.active ?? 'unknown'} (default)`,
     ...configuredProviderLines,
     `- session runtime: ${report.sessionRuntime.label}`,
     `- thread reservations: ${
       Array.isArray(report.strandedReservations) && report.strandedReservations.length > 0
         ? `${report.strandedReservations.length} stranded (see next steps)`
-        : "none stranded"
+        : 'none stranded'
     }`,
-    `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
-    ""
+    `- review gate: ${report.reviewGateEnabled ? 'enabled' : 'disabled'}`,
+    '',
   ];
 
   if (report.actionsTaken.length > 0) {
-    lines.push("Actions taken:");
+    lines.push('Actions taken:');
     for (const action of report.actionsTaken) {
       lines.push(`- ${action}`);
     }
-    lines.push("");
+    lines.push('');
   }
 
   if (report.nextSteps.length > 0) {
-    lines.push("Next steps:");
+    lines.push('Next steps:');
     for (const step of report.nextSteps) {
       lines.push(`- ${step}`);
     }
   }
 
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
 export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewRenderMeta): string {
   if (!parsedResult.parsed) {
     const lines = [
       `# Codex ${meta.reviewLabel}`,
-      "",
+      '',
       `Target: ${meta.targetLabel}`,
-      "Codex did not return valid structured JSON.",
-      "",
-      `- Parse error: ${parsedResult.parseError}`
+      'Codex did not return valid structured JSON.',
+      '',
+      `- Parse error: ${parsedResult.parseError}`,
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", ...fencedBlock(parsedResult.rawOutput));
+      lines.push('', 'Raw final message:', '', ...fencedBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
 
-    return `${lines.join("\n").trimEnd()}\n`;
+    return `${lines.join('\n').trimEnd()}\n`;
   }
 
   const validationError = validateReviewResultShape(parsedResult.parsed);
   if (validationError) {
     const lines = [
       `# Codex ${meta.reviewLabel}`,
-      "",
+      '',
       `Target: ${meta.targetLabel}`,
-      "Codex returned JSON with an unexpected review shape.",
-      "",
-      `- Validation error: ${validationError}`
+      'Codex returned JSON with an unexpected review shape.',
+      '',
+      `- Validation error: ${validationError}`,
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", ...fencedBlock(parsedResult.rawOutput));
+      lines.push('', 'Raw final message:', '', ...fencedBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
 
-    return `${lines.join("\n").trimEnd()}\n`;
+    return `${lines.join('\n').trimEnd()}\n`;
   }
 
   const data = normalizeReviewResultData(parsedResult.parsed as ReviewResultShape);
-  const findings = [...data.findings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
+  const findings = [...data.findings].sort(
+    (left, right) => severityRank(left.severity) - severityRank(right.severity),
+  );
   const lines = [
     `# Codex ${meta.reviewLabel}`,
-    "",
+    '',
     `Target: ${meta.targetLabel}`,
     `Verdict: ${data.verdict}`,
-    "",
+    '',
     data.summary,
-    ""
+    '',
   ];
 
   if (findings.length === 0) {
-    lines.push("No material findings.");
+    lines.push('No material findings.');
   } else {
-    lines.push("Findings:");
+    lines.push('Findings:');
     for (const finding of findings) {
       const lineSuffix = formatLineRange(finding);
       const severityLabel =
-        finding.confidence != null ? `${finding.severity}, confidence ${finding.confidence}` : finding.severity;
+        finding.confidence != null
+          ? `${finding.severity}, confidence ${finding.confidence}`
+          : finding.severity;
       lines.push(`- [${severityLabel}] ${finding.title} (${finding.file}${lineSuffix})`);
       lines.push(`  ${finding.body}`);
       if (finding.recommendation) {
@@ -582,7 +639,7 @@ export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewR
   }
 
   if (data.next_steps.length > 0) {
-    lines.push("", "Next steps:");
+    lines.push('', 'Next steps:');
     for (const step of data.next_steps) {
       lines.push(`- ${step}`);
     }
@@ -590,66 +647,69 @@ export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewR
 
   appendReasoningSection(lines, meta.reasoningSummary);
 
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
-export function renderPlanReviewResult(parsedResult: ParsedResultLike, meta: PlanReviewRenderMeta = {}): string {
-  const heading = (meta.round as number) > 1 ? `# Codex Plan Review (round ${meta.round})` : "# Codex Plan Review";
+export function renderPlanReviewResult(
+  parsedResult: ParsedResultLike,
+  meta: PlanReviewRenderMeta = {},
+): string {
+  const heading =
+    (meta.round as number) > 1
+      ? `# Codex Plan Review (round ${meta.round})`
+      : '# Codex Plan Review';
   if (!parsedResult.parsed) {
     const lines = [
       heading,
-      "",
-      "Codex did not return valid structured JSON.",
-      "",
-      `- Parse error: ${parsedResult.parseError}`
+      '',
+      'Codex did not return valid structured JSON.',
+      '',
+      `- Parse error: ${parsedResult.parseError}`,
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", ...fencedBlock(parsedResult.rawOutput));
+      lines.push('', 'Raw final message:', '', ...fencedBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
 
-    return `${lines.join("\n").trimEnd()}\n`;
+    return `${lines.join('\n').trimEnd()}\n`;
   }
 
   const validationError = validatePlanReviewResultShape(parsedResult.parsed);
   if (validationError) {
     const lines = [
       heading,
-      "",
-      "Codex returned JSON with an unexpected plan-review shape.",
-      "",
-      `- Validation error: ${validationError}`
+      '',
+      'Codex returned JSON with an unexpected plan-review shape.',
+      '',
+      `- Validation error: ${validationError}`,
     ];
 
     if (parsedResult.rawOutput) {
-      lines.push("", "Raw final message:", "", ...fencedBlock(parsedResult.rawOutput));
+      lines.push('', 'Raw final message:', '', ...fencedBlock(parsedResult.rawOutput));
     }
 
     appendReasoningSection(lines, meta.reasoningSummary ?? parsedResult.reasoningSummary);
 
-    return `${lines.join("\n").trimEnd()}\n`;
+    return `${lines.join('\n').trimEnd()}\n`;
   }
 
   const data = normalizePlanReviewResultData(parsedResult.parsed as PlanReviewResultShape);
-  const findings = [...data.findings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
-  const lines = [
-    heading,
-    "",
-    `Verdict: ${data.verdict}`,
-    "",
-    data.summary,
-    ""
-  ];
+  const findings = [...data.findings].sort(
+    (left, right) => severityRank(left.severity) - severityRank(right.severity),
+  );
+  const lines = [heading, '', `Verdict: ${data.verdict}`, '', data.summary, ''];
 
   if (findings.length === 0) {
-    lines.push("No material findings.");
+    lines.push('No material findings.');
   } else {
-    lines.push("Findings:");
+    lines.push('Findings:');
     for (const finding of findings) {
       const severityLabel =
-        finding.confidence != null ? `${finding.severity}, confidence ${finding.confidence}` : finding.severity;
+        finding.confidence != null
+          ? `${finding.severity}, confidence ${finding.confidence}`
+          : finding.severity;
       lines.push(`- [${severityLabel}] ${finding.title} (${finding.section})`);
       lines.push(`  ${finding.body}`);
       if (finding.recommendation) {
@@ -659,21 +719,21 @@ export function renderPlanReviewResult(parsedResult: ParsedResultLike, meta: Pla
   }
 
   if (data.revision_instructions.length > 0) {
-    lines.push("", "Revision instructions:");
+    lines.push('', 'Revision instructions:');
     data.revision_instructions.forEach((instruction, index) => {
       lines.push(`${index + 1}. ${instruction}`);
     });
   }
 
   if (data.open_questions.length > 0) {
-    lines.push("", "Open questions:");
+    lines.push('', 'Open questions:');
     for (const question of data.open_questions) {
       lines.push(`- ${question}`);
     }
   }
 
   if (data.residual_risks.length > 0) {
-    lines.push("", "Residual risks (non-blocking):");
+    lines.push('', 'Residual risks (non-blocking):');
     for (const risk of data.residual_risks) {
       lines.push(`- ${risk}`);
     }
@@ -681,169 +741,191 @@ export function renderPlanReviewResult(parsedResult: ParsedResultLike, meta: Pla
 
   appendReasoningSection(lines, meta.reasoningSummary);
 
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
-export function renderNativeReviewResult(result: NativeReviewRenderResult, meta: ReviewRenderMeta): string {
+export function renderNativeReviewResult(
+  result: NativeReviewRenderResult,
+  meta: ReviewRenderMeta,
+): string {
   const stdout = result.stdout.trim();
   const stderr = result.stderr.trim();
-  const lines = [
-    `# Codex ${meta.reviewLabel}`,
-    "",
-    `Target: ${meta.targetLabel}`,
-    ""
-  ];
+  const lines = [`# Codex ${meta.reviewLabel}`, '', `Target: ${meta.targetLabel}`, ''];
 
   if (stdout) {
     lines.push(stdout);
   } else if (result.status === 0) {
-    lines.push("Codex review completed without any stdout output.");
+    lines.push('Codex review completed without any stdout output.');
   } else {
-    lines.push("Codex review failed.");
+    lines.push('Codex review failed.');
   }
 
   if (stderr) {
-    lines.push("", "stderr:", "", ...fencedBlock(stderr));
+    lines.push('', 'stderr:', '', ...fencedBlock(stderr));
   }
 
   appendReasoningSection(lines, meta.reasoningSummary);
 
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
 export function renderTaskResult(
-  parsedResult: { rawOutput?: unknown; failureMessage?: unknown; reasoningSummary?: string[] | null } | null | undefined,
-  meta: TaskRenderMeta | null | undefined
+  parsedResult:
+    | { rawOutput?: unknown; failureMessage?: unknown; reasoningSummary?: string[] | null }
+    | null
+    | undefined,
+  meta: TaskRenderMeta | null | undefined,
 ): string {
-  const rawOutput = typeof parsedResult?.rawOutput === "string" ? parsedResult.rawOutput : "";
+  const rawOutput = typeof parsedResult?.rawOutput === 'string' ? parsedResult.rawOutput : '';
   if (rawOutput) {
-    const output = rawOutput.endsWith("\n") ? rawOutput : `${rawOutput}\n`;
+    const output = rawOutput.endsWith('\n') ? rawOutput : `${rawOutput}\n`;
     if (meta?.write && Array.isArray(meta.touchedFiles) && meta.touchedFiles.length === 0) {
       return `${output}\nNote: this write-capable run reported no file changes.\n`;
     }
     return output;
   }
 
-  const message = String(parsedResult?.failureMessage ?? "").trim() || "Codex did not return a final message.";
+  const message =
+    String(parsedResult?.failureMessage ?? '').trim() || 'Codex did not return a final message.';
   return `${message}\n`;
 }
 
-export function renderStatusReport(report: StatusRenderReport, options: StatusRenderOptions = {}): string {
+export function renderStatusReport(
+  report: StatusRenderReport,
+  options: StatusRenderOptions = {},
+): string {
   const lines = [
-    "# Codex Status",
-    "",
+    '# Codex Status',
+    '',
     `Session runtime: ${report.sessionRuntime.label}`,
-    `Review gate: ${report.config.stopReviewGate ? "enabled" : "disabled"}`,
-    ""
+    `Review gate: ${report.config.stopReviewGate ? 'enabled' : 'disabled'}`,
+    '',
   ];
 
   appendStrandedReservationWarnings(lines, report.strandedReservations);
 
   if (report.running.length > 0) {
     appendActiveJobsTable(lines, report.running);
-    lines.push("");
+    lines.push('');
     if (options.verbose) {
-      lines.push("Live details:");
+      lines.push('Live details:');
       for (const job of report.running) {
         pushJobDetails(lines, job, {
           showElapsed: true,
           showLog: true,
-          showTimestamps: true
+          showTimestamps: true,
         });
       }
-      lines.push("");
+      lines.push('');
     }
   }
 
   if (report.latestFinished) {
-    lines.push("Latest finished:");
+    lines.push('Latest finished:');
     pushJobDetails(lines, report.latestFinished, {
       showDuration: true,
-      showLog: options.verbose || report.latestFinished.status === "failed",
+      showLog: options.verbose || report.latestFinished.status === 'failed',
       showProgress: Boolean(options.verbose),
-      ...(options.verbose ? { showTimestamps: true } : {})
+      ...(options.verbose ? { showTimestamps: true } : {}),
     });
-    lines.push("");
+    lines.push('');
   }
 
   if (report.recent.length > 0) {
-    lines.push("Recent jobs:");
+    lines.push('Recent jobs:');
     for (const job of report.recent) {
       pushJobDetails(lines, job, {
         showDuration: true,
-        showLog: options.verbose || job.status === "failed",
+        showLog: options.verbose || job.status === 'failed',
         showProgress: Boolean(options.verbose),
-        ...(options.verbose ? { showTimestamps: true } : {})
+        ...(options.verbose ? { showTimestamps: true } : {}),
       });
     }
-    lines.push("");
+    lines.push('');
   } else if (report.running.length === 0 && !report.latestFinished) {
-    lines.push("No jobs recorded yet.", "");
+    lines.push('No jobs recorded yet.', '');
   }
 
   if (report.needsReview) {
-    lines.push("The stop-time review gate is enabled.");
-    lines.push("Ending the session will trigger a fresh Codex adversarial review and block if it finds issues.");
+    lines.push('The stop-time review gate is enabled.');
+    lines.push(
+      'Ending the session will trigger a fresh Codex adversarial review and block if it finds issues.',
+    );
   }
 
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
-export function renderJobStatusReport(job: RenderableJob, options: JobStatusRenderOptions = {}): string {
-  const lines = ["# Codex Job Status", ""];
+export function renderJobStatusReport(
+  job: RenderableJob,
+  options: JobStatusRenderOptions = {},
+): string {
+  const lines = ['# Codex Job Status', ''];
   pushJobDetails(lines, job, {
-    showElapsed: job.status === "queued" || job.status === "running",
-    showDuration: job.status !== "queued" && job.status !== "running",
+    showElapsed: job.status === 'queued' || job.status === 'running',
+    showDuration: job.status !== 'queued' && job.status !== 'running',
     showLog: true,
     ...(options.verbose ? { showTimestamps: true } : {}),
     showCancelHint: true,
     showResultHint: true,
-    showReviewHint: true
+    showReviewHint: true,
   });
   if (options.waitTimedOut) {
-    lines.push("", `Wait timed out after ${options.timeoutMs ?? "the configured"} ms; the job is still ${job.status}.`);
+    lines.push(
+      '',
+      `Wait timed out after ${options.timeoutMs ?? 'the configured'} ms; the job is still ${job.status}.`,
+    );
   }
   appendStrandedReservationWarnings(lines, options.strandedReservations);
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
-function fencedBlock(text: string, lang = "text"): string[] {
+function fencedBlock(text: string, lang = 'text'): string[] {
   // Untrusted output can contain backtick runs (```diff blocks in Codex
   // prose); size the fence one longer than the longest internal run so the
   // payload can never close the fence and inject live markdown.
-  const longestRun = [...String(text ?? "").matchAll(/`+/g)].reduce((max, match) => Math.max(max, match[0].length), 0);
-  const fence = "`".repeat(Math.max(3, longestRun + 1));
-  return [`${fence}${lang}`, String(text ?? ""), fence];
+  const longestRun = [...String(text ?? '').matchAll(/`+/g)].reduce(
+    (max, match) => Math.max(max, match[0].length),
+    0,
+  );
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  return [`${fence}${lang}`, String(text ?? ''), fence];
 }
 
 function withResultFooter(text: string, threadId: string | null, modelDisplay: string): string {
-  const output = text.endsWith("\n") ? text : `${text}\n`;
+  const output = text.endsWith('\n') ? text : `${text}\n`;
   const footer = [`Model: ${modelDisplay}`];
   if (threadId) {
     footer.push(`Codex session ID: ${threadId}`);
     footer.push(`Resume in Codex: codex resume ${threadId}`);
   }
-  return `${output}\n${footer.join("\n")}\n`;
+  return `${output}\n${footer.join('\n')}\n`;
 }
 
-export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLike | null | undefined): string {
+export function renderStoredJobResult(
+  job: RenderableJob,
+  storedJob: StoredJobLike | null | undefined,
+): string {
   const threadId = storedJob?.threadId ?? job.threadId ?? null;
   const modelDisplay = job.modelDisplay ?? formatJobModel(resolveJobModel(job, storedJob));
   const taskClass = storedJob?.jobClass ?? job.jobClass ?? null;
-  if (taskClass === "task" && storedJob?.rendered) {
+  if (taskClass === 'task' && storedJob?.rendered) {
     return withResultFooter(storedJob.rendered, threadId, modelDisplay);
   }
   // Review-class jobs always prefer the stored rendering: native reviews
   // carry no result/parseError keys, so keying only on the structured shape
   // dropped their heading/Target/reasoning in favor of raw stdout.
-  if ((taskClass === "review" || isStructuredReviewStoredResult(storedJob)) && storedJob?.rendered) {
+  if (
+    (taskClass === 'review' || isStructuredReviewStoredResult(storedJob)) &&
+    storedJob?.rendered
+  ) {
     return withResultFooter(storedJob.rendered, threadId, modelDisplay);
   }
 
   const rawOutput =
-    (typeof storedJob?.result?.rawOutput === "string" && storedJob.result.rawOutput) ||
-    (typeof storedJob?.result?.codex?.stdout === "string" && storedJob.result.codex.stdout) ||
-    "";
+    (typeof storedJob?.result?.rawOutput === 'string' && storedJob.result.rawOutput) ||
+    (typeof storedJob?.result?.codex?.stdout === 'string' && storedJob.result.codex.stdout) ||
+    '';
   if (rawOutput) {
     return withResultFooter(rawOutput, threadId, modelDisplay);
   }
@@ -852,35 +934,25 @@ export function renderStoredJobResult(job: RenderableJob, storedJob: StoredJobLi
     return withResultFooter(storedJob.rendered, threadId, modelDisplay);
   }
 
-  const lines = [
-    `# ${job.title ?? "Codex Result"}`,
-    "",
-    `Job: ${job.id}`,
-    `Status: ${job.status}`
-  ];
+  const lines = [`# ${job.title ?? 'Codex Result'}`, '', `Job: ${job.id}`, `Status: ${job.status}`];
 
   if (job.summary) {
     lines.push(`Summary: ${job.summary}`);
   }
 
   if (job.errorMessage) {
-    lines.push("", job.errorMessage);
+    lines.push('', job.errorMessage);
   } else if (storedJob?.errorMessage) {
-    lines.push("", storedJob.errorMessage);
+    lines.push('', storedJob.errorMessage);
   } else {
-    lines.push("", "No captured result payload was stored for this job.");
+    lines.push('', 'No captured result payload was stored for this job.');
   }
 
-  return withResultFooter(`${lines.join("\n").trimEnd()}\n`, threadId, modelDisplay);
+  return withResultFooter(`${lines.join('\n').trimEnd()}\n`, threadId, modelDisplay);
 }
 
 export function renderCancelReport(job: RenderableJob): string {
-  const lines = [
-    "# Codex Cancel",
-    "",
-    `Cancelled ${job.id}.`,
-    ""
-  ];
+  const lines = ['# Codex Cancel', '', `Cancelled ${job.id}.`, ''];
 
   if (job.title) {
     lines.push(`- Title: ${job.title}`);
@@ -888,7 +960,7 @@ export function renderCancelReport(job: RenderableJob): string {
   if (job.summary) {
     lines.push(`- Summary: ${job.summary}`);
   }
-  lines.push("- Check `/stereo:status` for the updated queue.");
+  lines.push('- Check `/stereo:status` for the updated queue.');
 
-  return `${lines.join("\n").trimEnd()}\n`;
+  return `${lines.join('\n').trimEnd()}\n`;
 }

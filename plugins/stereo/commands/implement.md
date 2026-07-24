@@ -12,11 +12,13 @@ Raw slash-command arguments:
 `$ARGUMENTS`
 
 Scope of the result-handling rules:
+
 - This command is a deliberate, user-invoked iterative workflow.
 - Within it, the `codex-result-handling` rule to STOP after presenting findings applies only at the user-decision points defined below.
 - Inside the fix loop, act on your own review findings and send fix rounds to Codex without asking the user.
 
 Phase 0 - Preflight:
+
 - Load the stored plan:
 
 ```bash
@@ -31,6 +33,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 - If the stop-time review gate is enabled, mention that finishing this command triggers one extra Codex review and that `/stereo:setup --disable-review-gate` avoids it during long pair sessions.
 
 Phase 1 - Codex implements:
+
 - Send the implementation run to the stored pair thread with write access. Never run it in the foreground: long `max` runs can exceed the Bash timeout.
 - Embed the full stored plan text verbatim from `plan-state`, and use the stored `model`/`effort` unless the user overrode them.
 
@@ -67,6 +70,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --
 - If the run fails on resume, or `touchedFiles` is empty and `git status` shows no delta against the baseline even though Codex claims changes, retry once as a fresh run with `task --background --json --write --fresh`, the same prompt, and a note that earlier thread context is unavailable. If there is still no change, surface it to the user.
 
 Phase 2 - Claude reviews and iterates:
+
 - Inspect the delta yourself: `git status --short --untracked-files=all`, `git diff`, read the changed and untracked files, and ignore paths that were already dirty in the baseline.
 - Run the project's test suite or build where one is identifiable (this may prompt for permission).
 - Check the implementation against every plan step and every earlier review finding.
@@ -93,10 +97,12 @@ CODEX_PAIR_FIX
 - Always send fix rounds to the thread id from the latest implementation payload - after a `--fresh` fallback that is the new thread, not the one stored with the plan.
 
 Stall safeguards (these are safeguards, not caps):
+
 - When the fix-round cap is reached (`--max-fix-rounds <n>`, defaulting to 4 when absent - healthy loops finish in 0-2 fix rounds), stop and present the remaining issues with `AskUserQuestion`: `Send one more Codex round`, `Let Claude fix the rest directly`, `Stop and report as-is`.
 - If the same issue survives three fix rounds, pause and ask the same question instead of looping forever.
 
 Final report:
+
 - Summarize: fix rounds used, the files Codex touched, the tests you ran with their results, and any unresolved `openQuestions` and `residualRisks` stored with the plan (the residuals are documented non-blocking hazards with suggested follow-up plans - list them so the user can schedule them).
 - Include `Codex session ID: <threadId>` and `Resume in Codex: codex resume <threadId>`.
 - State plainly that nothing was committed, and how to roll back relative to the recorded baseline (`git restore` for modified paths, `git clean` guidance for new ones).

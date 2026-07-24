@@ -1,19 +1,22 @@
-import fs from "node:fs";
-import net from "node:net";
-import path from "node:path";
-import process from "node:process";
-import test, { afterEach } from "node:test";
-import type { TestContext } from "node:test";
-import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import process from 'node:process';
+import test, { afterEach } from 'node:test';
+import type { TestContext } from 'node:test';
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 
-import { buildEnv, installFakeCodex } from "./fake-codex-fixture.ts";
-import { makeTempDir } from "./helpers.ts";
-import { drainCreatedTempDirs } from "./helpers.ts";
-import { reapWorkspaceBroker } from "./broker-reaper.ts";
-import { terminateProcessTree } from "../plugins/stereo/src/platform/process.ts";
-import { createBrokerEndpoint, parseBrokerEndpoint } from "../plugins/stereo/src/broker/endpoint.ts";
-import { BROKER_BUSY_RPC_CODE } from "../plugins/stereo/src/transport/app-server-client.ts";
+import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
+import { makeTempDir } from './helpers.ts';
+import { drainCreatedTempDirs } from './helpers.ts';
+import { reapWorkspaceBroker } from './broker-reaper.ts';
+import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
+import {
+  createBrokerEndpoint,
+  parseBrokerEndpoint,
+} from '../plugins/stereo/src/broker/endpoint.ts';
+import { BROKER_BUSY_RPC_CODE } from '../plugins/stereo/src/transport/app-server-client.ts';
 import {
   ensureBrokerSession,
   loadBrokerSession,
@@ -21,10 +24,10 @@ import {
   sendBrokerShutdown,
   sendBrokerShutdownIfIdle,
   spawnBrokerProcess,
-  waitForBrokerEndpoint
-} from "../plugins/stereo/src/broker/lifecycle.ts";
+  waitForBrokerEndpoint,
+} from '../plugins/stereo/src/broker/lifecycle.ts';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Every workspace this file created gets its broker reaped after each test:
 // the companion CLI auto-starts a detached broker per workspace, and without
@@ -35,7 +38,7 @@ afterEach(async () => {
     await reapWorkspaceBroker(dir);
   }
 });
-const BROKER_SCRIPT = path.join(ROOT, "plugins", "stereo", "scripts", "app-server-broker.ts");
+const BROKER_SCRIPT = path.join(ROOT, 'plugins', 'stereo', 'scripts', 'app-server-broker.ts');
 
 // Minimal shape of the JSONL frames the broker exchanges; payloads stay loose
 // on purpose so assertions read exactly like the pre-migration test.
@@ -77,13 +80,13 @@ function processIsAlive(pid: number | undefined): boolean {
     process.kill(pid!, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException | null)?.code !== "ESRCH";
+    return (error as NodeJS.ErrnoException | null)?.code !== 'ESRCH';
   }
 }
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
-  { timeoutMs = 5000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {}
+  { timeoutMs = 5000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<boolean> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -93,15 +96,15 @@ async function waitFor(
     }
     await delay(intervalMs);
   }
-  throw new Error("Timed out waiting for broker test condition.");
+  throw new Error('Timed out waiting for broker test condition.');
 }
 
 function createJsonlClient(endpoint: string) {
   const target = parseBrokerEndpoint(endpoint);
   const socket = net.createConnection({ path: target.path });
-  socket.setEncoding("utf8");
+  socket.setEncoding('utf8');
   let nextId = 1;
-  let buffer = "";
+  let buffer = '';
   let connected = false;
   let closed = false;
   const pending = new Map<number, PendingWaiter>();
@@ -109,14 +112,14 @@ function createJsonlClient(endpoint: string) {
   const notificationWaiters: NotificationWaiter[] = [];
 
   const ready = new Promise<void>((resolve, reject) => {
-    socket.once("connect", () => {
+    socket.once('connect', () => {
       connected = true;
       resolve();
     });
-    socket.once("error", reject);
+    socket.once('error', reject);
   });
   const closedPromise = new Promise<void>((resolve) => {
-    socket.once("close", () => {
+    socket.once('close', () => {
       closed = true;
       resolve();
     });
@@ -142,27 +145,31 @@ function createJsonlClient(endpoint: string) {
     }
   }
 
-  socket.on("data", (chunk) => {
+  socket.on('data', (chunk) => {
     buffer += chunk;
-    let newlineIndex = buffer.indexOf("\n");
+    let newlineIndex = buffer.indexOf('\n');
     while (newlineIndex !== -1) {
       const line = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
       if (line.trim()) {
         dispatch(JSON.parse(line));
       }
-      newlineIndex = buffer.indexOf("\n");
+      newlineIndex = buffer.indexOf('\n');
     }
   });
-  socket.on("close", () => {
+  socket.on('close', () => {
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timeout);
-      waiter.reject(new Error("Broker socket closed before the response arrived."));
+      waiter.reject(new Error('Broker socket closed before the response arrived.'));
     }
     pending.clear();
   });
 
-  async function request(method: string, params: Record<string, unknown> = {}, timeoutMs = 4000): Promise<BrokerMessage> {
+  async function request(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = 4000,
+  ): Promise<BrokerMessage> {
     await ready;
     const id = nextId;
     nextId += 1;
@@ -177,7 +184,10 @@ function createJsonlClient(endpoint: string) {
     return response;
   }
 
-  function waitForNotification(predicate: (message: BrokerMessage) => boolean, timeoutMs = 4000): Promise<BrokerMessage> {
+  function waitForNotification(
+    predicate: (message: BrokerMessage) => boolean,
+    timeoutMs = 4000,
+  ): Promise<BrokerMessage> {
     const existing = notifications.find(predicate);
     if (existing) {
       return Promise.resolve(existing);
@@ -191,8 +201,8 @@ function createJsonlClient(endpoint: string) {
           if (index !== -1) {
             notificationWaiters.splice(index, 1);
           }
-          reject(new Error("Timed out waiting for broker notification."));
-        }, timeoutMs)
+          reject(new Error('Timed out waiting for broker notification.'));
+        }, timeoutMs),
       };
       notificationWaiters.push(waiter);
     });
@@ -215,32 +225,32 @@ function createJsonlClient(endpoint: string) {
     waitForNotification,
     close() {
       socket.end();
-    }
+    },
   };
 }
 
 type JsonlClient = ReturnType<typeof createJsonlClient>;
 
 async function initializeClient(client: JsonlClient): Promise<void> {
-  const response = await client.request("initialize", {
-    clientInfo: { name: "broker-test", version: "1" },
-    capabilities: { experimentalApi: true }
+  const response = await client.request('initialize', {
+    clientInfo: { name: 'broker-test', version: '1' },
+    capabilities: { experimentalApi: true },
   });
   assert.equal(response.error, undefined);
-  client.socket.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
+  client.socket.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
 }
 
 async function startBroker(
   t: TestContext,
-  behavior = "review-ok",
-  options: { cwd?: string; binDir?: string; saveState?: boolean } = {}
+  behavior = 'review-ok',
+  options: { cwd?: string; binDir?: string; saveState?: boolean } = {},
 ) {
-  const cwd = options.cwd ?? makeTempDir("broker-workspace-");
-  const binDir = options.binDir ?? makeTempDir("broker-bin-");
-  const sessionDir = makeTempDir("broker-session-");
+  const cwd = options.cwd ?? makeTempDir('broker-workspace-');
+  const binDir = options.binDir ?? makeTempDir('broker-bin-');
+  const sessionDir = makeTempDir('broker-session-');
   const endpoint = createBrokerEndpoint(sessionDir);
-  const pidFile = path.join(sessionDir, "broker.pid");
-  const logFile = path.join(sessionDir, "broker.log");
+  const pidFile = path.join(sessionDir, 'broker.pid');
+  const logFile = path.join(sessionDir, 'broker.log');
   installFakeCodex(binDir, behavior);
   const env = buildEnv(binDir);
   const child = spawnBrokerProcess({
@@ -249,7 +259,7 @@ async function startBroker(
     endpoint,
     pidFile,
     logFile,
-    env
+    env,
   });
   assert.equal(await waitForBrokerEndpoint(endpoint, 4000), true);
   await delay(25);
@@ -259,7 +269,7 @@ async function startBroker(
     pid: child.pid!,
     pidFile,
     logFile,
-    sessionDir
+    sessionDir,
   };
   if (options.saveState) {
     saveBrokerSession(cwd, session);
@@ -282,29 +292,29 @@ async function startBroker(
     binDir,
     env,
     child,
-    ...session
+    ...session,
   };
 }
 
-test("a client that vanishes mid-turn gets its turn interrupted and the broker recovers", async (t) => {
-  const broker = await startBroker(t, "slow-turn");
+test('a client that vanishes mid-turn gets its turn interrupted and the broker recovers', async (t) => {
+  const broker = await startBroker(t, 'slow-turn');
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
   await initializeClient(owner);
 
-  const started = await owner.request("thread/start", {
+  const started = await owner.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const turn = await owner.request("turn/start", {
+  const turn = await owner.request('turn/start', {
     threadId,
-    input: [{ type: "text", text: "abandon this stream", text_elements: [] }]
+    input: [{ type: 'text', text: 'abandon this stream', text_elements: [] }],
   });
   assert.equal(turn.error, undefined);
   await owner.waitForNotification(
-    (message) => message.method === "turn/started" && message.params?.threadId === threadId
+    (message) => message.method === 'turn/started' && message.params?.threadId === threadId,
   );
 
   // The owner dies mid-turn (crashed CLI, killed worker, stop-gate timeout).
@@ -312,11 +322,11 @@ test("a client that vanishes mid-turn gets its turn interrupted and the broker r
 
   // The broker must interrupt the abandoned turn on codex's side...
   await waitFor(() => {
-    const stateFile = path.join(broker.binDir, "fake-codex-state.json");
+    const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
     if (!fs.existsSync(stateFile)) {
       return false;
     }
-    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     return state.lastInterrupt?.threadId === threadId;
   });
 
@@ -324,40 +334,43 @@ test("a client that vanishes mid-turn gets its turn interrupted and the broker r
   const successor = createJsonlClient(broker.endpoint);
   t.after(() => successor.close());
   await initializeClient(successor);
-  await waitFor(async () => {
-    const restarted = await successor.request("thread/start", {
-      cwd: broker.cwd,
-      sandbox: "read-only",
-      ephemeral: false
-    });
-    if (restarted.error) {
-      // Still inside the abandoned-turn grace window for streaming work.
-      return false;
-    }
-    const retry = await successor.request("turn/start", {
-      threadId: restarted.result.thread.id,
-      input: [{ type: "text", text: "fresh turn after recovery", text_elements: [] }]
-    });
-    return retry.error === undefined;
-  }, { timeoutMs: 8000, intervalMs: 200 });
+  await waitFor(
+    async () => {
+      const restarted = await successor.request('thread/start', {
+        cwd: broker.cwd,
+        sandbox: 'read-only',
+        ephemeral: false,
+      });
+      if (restarted.error) {
+        // Still inside the abandoned-turn grace window for streaming work.
+        return false;
+      }
+      const retry = await successor.request('turn/start', {
+        threadId: restarted.result.thread.id,
+        input: [{ type: 'text', text: 'fresh turn after recovery', text_elements: [] }],
+      });
+      return retry.error === undefined;
+    },
+    { timeoutMs: 8000, intervalMs: 200 },
+  );
   assert.equal(processIsAlive(broker.child.pid), true);
 });
 
-test("an owner dying before turn/started still gets its turn interrupted", async (t) => {
-  const broker = await startBroker(t, "slow-turn");
+test('an owner dying before turn/started still gets its turn interrupted', async (t) => {
+  const broker = await startBroker(t, 'slow-turn');
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
   await initializeClient(owner);
 
-  const started = await owner.request("thread/start", {
+  const started = await owner.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const turn = await owner.request("turn/start", {
+  const turn = await owner.request('turn/start', {
     threadId,
-    input: [{ type: "text", text: "die before turn/started lands", text_elements: [] }]
+    input: [{ type: 'text', text: 'die before turn/started lands', text_elements: [] }],
   });
   assert.equal(turn.error, undefined);
 
@@ -367,35 +380,35 @@ test("an owner dying before turn/started still gets its turn interrupted", async
   owner.socket.destroy();
 
   await waitFor(() => {
-    const stateFile = path.join(broker.binDir, "fake-codex-state.json");
+    const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
     if (!fs.existsSync(stateFile)) {
       return false;
     }
-    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     return state.lastInterrupt?.threadId === threadId;
   });
   assert.equal(processIsAlive(broker.child.pid), true);
 });
 
 test("an orphaned turn's completion is not forwarded to an unrelated client", async (t) => {
-  const broker = await startBroker(t, "slow-turn");
+  const broker = await startBroker(t, 'slow-turn');
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
   await initializeClient(owner);
 
-  const started = await owner.request("thread/start", {
+  const started = await owner.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const turn = await owner.request("turn/start", {
+  const turn = await owner.request('turn/start', {
     threadId,
-    input: [{ type: "text", text: "abandon and leak nothing", text_elements: [] }]
+    input: [{ type: 'text', text: 'abandon and leak nothing', text_elements: [] }],
   });
   assert.equal(turn.error, undefined);
   await owner.waitForNotification(
-    (message) => message.method === "turn/started" && message.params?.threadId === threadId
+    (message) => message.method === 'turn/started' && message.params?.threadId === threadId,
   );
 
   owner.socket.destroy();
@@ -405,46 +418,49 @@ test("an orphaned turn's completion is not forwarded to an unrelated client", as
   const bystander = createJsonlClient(broker.endpoint);
   t.after(() => bystander.close());
   await initializeClient(bystander);
-  await waitFor(async () => {
-    const probe = await bystander.request("thread/start", {
-      cwd: broker.cwd,
-      sandbox: "read-only",
-      ephemeral: true
-    });
-    if (probe.error) {
-      return false;
-    }
-    // The orphan resolves once its interrupt-induced completion lands; keep
-    // probing until the fixture records it.
-    const stateFile = path.join(broker.binDir, "fake-codex-state.json");
-    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    return state.lastInterrupt?.threadId === threadId;
-  }, { timeoutMs: 8000, intervalMs: 100 });
+  await waitFor(
+    async () => {
+      const probe = await bystander.request('thread/start', {
+        cwd: broker.cwd,
+        sandbox: 'read-only',
+        ephemeral: true,
+      });
+      if (probe.error) {
+        return false;
+      }
+      // The orphan resolves once its interrupt-induced completion lands; keep
+      // probing until the fixture records it.
+      const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      return state.lastInterrupt?.threadId === threadId;
+    },
+    { timeoutMs: 8000, intervalMs: 100 },
+  );
 
   // Give any wrongly-forwarded notification time to arrive, then assert the
   // bystander never saw the foreign thread's lifecycle.
   await delay(200);
   const foreign = bystander.notifications.filter(
-    (message) => message.method === "turn/completed" && message.params?.threadId === threadId
+    (message) => message.method === 'turn/completed' && message.params?.threadId === threadId,
   );
   assert.deepEqual(foreign, []);
 });
 
-test("guarded broker shutdown refuses while another client owns an active stream", async (t) => {
-  const broker = await startBroker(t, "slow-turn");
+test('guarded broker shutdown refuses while another client owns an active stream', async (t) => {
+  const broker = await startBroker(t, 'slow-turn');
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
   await initializeClient(owner);
 
-  const started = await owner.request("thread/start", {
+  const started = await owner.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const turn = await owner.request("turn/start", {
+  const turn = await owner.request('turn/start', {
     threadId,
-    input: [{ type: "text", text: "hold the stream", text_elements: [] }]
+    input: [{ type: 'text', text: 'hold the stream', text_elements: [] }],
   });
   assert.equal(turn.error, undefined);
 
@@ -452,27 +468,27 @@ test("guarded broker shutdown refuses while another client owns an active stream
   assert.equal(outcome.accepted, false);
   assert.equal(outcome.busy, true);
   await owner.waitForNotification(
-    (message) => message.method === "turn/completed" && message.params?.threadId === threadId
+    (message) => message.method === 'turn/completed' && message.params?.threadId === threadId,
   );
   assert.equal(processIsAlive(broker.child.pid), true);
 });
 
-test("guarded broker shutdown refuses in the inter-RPC resume window", async (t) => {
+test('guarded broker shutdown refuses in the inter-RPC resume window', async (t) => {
   const broker = await startBroker(t);
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
   await initializeClient(owner);
 
-  const started = await owner.request("thread/start", {
+  const started = await owner.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const resumed = await owner.request("thread/resume", {
+  const resumed = await owner.request('thread/resume', {
     threadId,
     cwd: broker.cwd,
-    sandbox: "read-only"
+    sandbox: 'read-only',
   });
   assert.equal(resumed.error, undefined);
 
@@ -482,7 +498,7 @@ test("guarded broker shutdown refuses in the inter-RPC resume window", async (t)
   assert.equal(processIsAlive(broker.child.pid), true);
 });
 
-test("guarded idle shutdown returns only after broker teardown is complete", async (t) => {
+test('guarded idle shutdown returns only after broker teardown is complete', async (t) => {
   const broker = await startBroker(t);
   const target = parseBrokerEndpoint(broker.endpoint);
   const outcome: ShutdownOutcomeShape = await sendBrokerShutdownIfIdle(broker.endpoint);
@@ -492,13 +508,13 @@ test("guarded idle shutdown returns only after broker teardown is complete", asy
   assert.equal(processIsAlive(broker.child.pid), false);
   assert.equal(await waitForBrokerEndpoint(broker.endpoint, 150), false);
   assert.equal(fs.existsSync(broker.pidFile), false);
-  if (target.kind === "unix") {
+  if (target.kind === 'unix') {
     assert.equal(fs.existsSync(target.path), false);
   }
 });
 
-test("guarded idle shutdown waits for a slow child exit before stale-session recovery", async (t) => {
-  const broker = await startBroker(t, "slow-exit", { saveState: true });
+test('guarded idle shutdown waits for a slow child exit before stale-session recovery', async (t) => {
+  const broker = await startBroker(t, 'slow-exit', { saveState: true });
   const startedAt = Date.now();
   const outcome = await sendBrokerShutdownIfIdle(broker.endpoint, { timeoutMs: 5000 });
 
@@ -509,41 +525,41 @@ test("guarded idle shutdown waits for a slow child exit before stale-session rec
   const replacement = await ensureBrokerSession(broker.cwd, {
     env: broker.env,
     scriptPath: BROKER_SCRIPT,
-    timeoutMs: 4000
+    timeoutMs: 4000,
   });
   assert.notEqual(replacement!.endpoint, broker.endpoint);
   assert.equal(await waitForBrokerEndpoint(replacement!.endpoint, 1000), true);
   await sendBrokerShutdown(replacement!.endpoint);
 });
 
-test("broker propagates an unexpected child app-server death to front clients", async (t) => {
-  const broker = await startBroker(t, "die-mid-turn");
+test('broker propagates an unexpected child app-server death to front clients', async (t) => {
+  const broker = await startBroker(t, 'die-mid-turn');
   const client = createJsonlClient(broker.endpoint);
   t.after(() => client.close());
   await initializeClient(client);
-  const started = await client.request("thread/start", {
+  const started = await client.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const turn = await client.request("turn/start", {
+  const turn = await client.request('turn/start', {
     threadId,
-    input: [{ type: "text", text: "die during this turn", text_elements: [] }]
+    input: [{ type: 'text', text: 'die during this turn', text_elements: [] }],
   });
   assert.equal(turn.error, undefined);
 
   await Promise.race([
     client.closed,
     delay(4000).then(() => {
-      throw new Error("Front client stayed connected after child app-server death.");
-    })
+      throw new Error('Front client stayed connected after child app-server death.');
+    }),
   ]);
   await waitFor(() => !processIsAlive(broker.child.pid), { timeoutMs: 4000 });
   assert.equal(client.isClosed, true);
 });
 
-test("parameterless broker shutdown remains unconditional with another client connected", async (t) => {
+test('parameterless broker shutdown remains unconditional with another client connected', async (t) => {
   const broker = await startBroker(t);
   const owner = createJsonlClient(broker.endpoint);
   const shutdownClient = createJsonlClient(broker.endpoint);
@@ -552,14 +568,14 @@ test("parameterless broker shutdown remains unconditional with another client co
   await initializeClient(owner);
   await initializeClient(shutdownClient);
 
-  const response = await shutdownClient.request("broker/shutdown", {});
+  const response = await shutdownClient.request('broker/shutdown', {});
   assert.deepEqual(response.result, {});
   await waitFor(() => !processIsAlive(broker.child.pid));
   await owner.closed;
 });
 
-test("busy guarded drain leaves the companion broker state untouched", async (t) => {
-  const broker = await startBroker(t, "review-ok", { saveState: true });
+test('busy guarded drain leaves the companion broker state untouched', async (t) => {
+  const broker = await startBroker(t, 'review-ok', { saveState: true });
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
   await initializeClient(owner);
@@ -572,21 +588,21 @@ test("busy guarded drain leaves the companion broker state untouched", async (t)
   assert.equal(processIsAlive(broker.child.pid), true);
 });
 
-test("a busy broker rejects rival RPCs but passes their turn/interrupt through", async (t) => {
-  const broker = await startBroker(t, "slow-turn");
+test('a busy broker rejects rival RPCs but passes their turn/interrupt through', async (t) => {
+  const broker = await startBroker(t, 'slow-turn');
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
   await initializeClient(owner);
 
-  const started = await owner.request("thread/start", {
+  const started = await owner.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const turn = await owner.request("turn/start", {
+  const turn = await owner.request('turn/start', {
     threadId,
-    input: [{ type: "text", text: "hold the stream", text_elements: [] }]
+    input: [{ type: 'text', text: 'hold the stream', text_elements: [] }],
   });
   assert.equal(turn.error, undefined);
   const turnId = turn.result.turn.id;
@@ -595,45 +611,45 @@ test("a busy broker rejects rival RPCs but passes their turn/interrupt through",
   t.after(() => rival.close());
   await initializeClient(rival);
 
-  const rejected = await rival.request("thread/start", {
+  const rejected = await rival.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   assert.equal(rejected.error?.code, BROKER_BUSY_RPC_CODE);
 
-  const interrupt = await rival.request("turn/interrupt", { threadId, turnId });
+  const interrupt = await rival.request('turn/interrupt', { threadId, turnId });
   assert.equal(interrupt.error, undefined);
   await owner.waitForNotification(
-    (message) => message.method === "turn/completed" && message.params?.threadId === threadId
+    (message) => message.method === 'turn/completed' && message.params?.threadId === threadId,
   );
 });
 
-test("garbage input gets a -32700 reply and cannot crash the shared broker", async (t) => {
+test('garbage input gets a -32700 reply and cannot crash the shared broker', async (t) => {
   const broker = await startBroker(t);
   const target = parseBrokerEndpoint(broker.endpoint);
 
   const lines: BrokerMessage[] = [];
   const raw = net.createConnection({ path: target.path });
-  raw.setEncoding("utf8");
-  let rawBuffer = "";
-  raw.on("data", (chunk) => {
+  raw.setEncoding('utf8');
+  let rawBuffer = '';
+  raw.on('data', (chunk) => {
     rawBuffer += chunk;
-    let index = rawBuffer.indexOf("\n");
+    let index = rawBuffer.indexOf('\n');
     while (index !== -1) {
       const line = rawBuffer.slice(0, index);
       rawBuffer = rawBuffer.slice(index + 1);
       if (line.trim()) {
         lines.push(JSON.parse(line));
       }
-      index = rawBuffer.indexOf("\n");
+      index = rawBuffer.indexOf('\n');
     }
   });
   await new Promise((resolve, reject) => {
-    raw.once("connect", resolve);
-    raw.once("error", reject);
+    raw.once('connect', resolve);
+    raw.once('error', reject);
   });
-  raw.write("this is not json\n");
+  raw.write('this is not json\n');
   await waitFor(() => lines.length > 0);
   assert.equal(lines[0]!.id, null);
   assert.equal(lines[0]!.error.code, -32700);
@@ -641,56 +657,56 @@ test("garbage input gets a -32700 reply and cannot crash the shared broker", asy
 
   // Half-close immediately after another garbage line; the broker's reply
   // write must not become an unhandled rejection that kills the process.
-  raw.write("more garbage\n");
+  raw.write('more garbage\n');
   raw.destroy();
 
   const survivor = createJsonlClient(broker.endpoint);
   t.after(() => survivor.close());
   await initializeClient(survivor);
-  const started = await survivor.request("thread/start", {
+  const started = await survivor.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   assert.equal(started.error, undefined);
   assert.equal(processIsAlive(broker.child.pid), true);
 });
 
-test("a turn that completes inside its start response does not wedge the broker busy", async (t) => {
-  const broker = await startBroker(t, "fast-turn");
+test('a turn that completes inside its start response does not wedge the broker busy', async (t) => {
+  const broker = await startBroker(t, 'fast-turn');
   const first = createJsonlClient(broker.endpoint);
   t.after(() => first.close());
   await initializeClient(first);
 
-  const started = await first.request("thread/start", {
+  const started = await first.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const turn = await first.request("turn/start", {
+  const turn = await first.request('turn/start', {
     threadId,
-    input: [{ type: "text", text: "finish instantly", text_elements: [] }]
+    input: [{ type: 'text', text: 'finish instantly', text_elements: [] }],
   });
   assert.equal(turn.error, undefined);
   await first.waitForNotification(
-    (message) => message.method === "turn/completed" && message.params?.threadId === threadId
+    (message) => message.method === 'turn/completed' && message.params?.threadId === threadId,
   );
 
   const second = createJsonlClient(broker.endpoint);
   t.after(() => second.close());
   await initializeClient(second);
-  const rivalStart = await second.request("thread/start", {
+  const rivalStart = await second.request('thread/start', {
     cwd: broker.cwd,
-    sandbox: "read-only",
-    ephemeral: false
+    sandbox: 'read-only',
+    ephemeral: false,
   });
   assert.equal(rivalStart.error, undefined);
 });
 
-test("the broker unix socket is owner-only", { skip: process.platform === "win32" }, async (t) => {
+test('the broker unix socket is owner-only', { skip: process.platform === 'win32' }, async (t) => {
   const broker = await startBroker(t);
   const target = parseBrokerEndpoint(broker.endpoint);
-  assert.equal(target.kind, "unix");
+  assert.equal(target.kind, 'unix');
   assert.equal(fs.statSync(target.path).mode & 0o777, 0o600);
 });

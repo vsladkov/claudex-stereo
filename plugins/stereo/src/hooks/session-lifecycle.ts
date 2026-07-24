@@ -1,10 +1,10 @@
-import fs from "node:fs";
-import process from "node:process";
+import fs from 'node:fs';
+import process from 'node:process';
 
-import { readStdinIfPiped } from "../shared/fs.ts";
-import { terminateProcessTree } from "../platform/process.ts";
-import { BROKER_ENDPOINT_ENV } from "../transport/app-server-client.ts";
-import { releaseThreadReservationForCancelledJob } from "../runtime/index.ts";
+import { readStdinIfPiped } from '../shared/fs.ts';
+import { terminateProcessTree } from '../platform/process.ts';
+import { BROKER_ENDPOINT_ENV } from '../transport/app-server-client.ts';
+import { releaseThreadReservationForCancelledJob } from '../runtime/index.ts';
 import {
   clearBrokerSession,
   LOG_FILE_ENV,
@@ -12,18 +12,25 @@ import {
   PID_FILE_ENV,
   processHasExited,
   sendBrokerShutdownIfIdle,
-  teardownBrokerSession
-} from "../broker/lifecycle.ts";
-import type { ShutdownOutcome } from "../broker/lifecycle.ts";
-import { PLUGIN_DATA_ENV, loadState, nowIso, readJobFile, resolveJobFile, resolveStateFile, saveState, writeJobFile } from "../workspace/state.ts";
-import { SESSION_ID_ENV } from "../jobs/tracked-jobs.ts";
+  teardownBrokerSession,
+} from '../broker/lifecycle.ts';
+import type { ShutdownOutcome } from '../broker/lifecycle.ts';
+import {
+  PLUGIN_DATA_ENV,
+  loadState,
+  nowIso,
+  readJobFile,
+  resolveJobFile,
+  resolveStateFile,
+  saveState,
+  writeJobFile,
+} from '../workspace/state.ts';
+import { SESSION_ID_ENV } from '../jobs/tracked-jobs.ts';
 
 export { SESSION_ID_ENV };
-import type { JobRecord } from "../workspace/state.ts";
-import { TRANSCRIPT_PATH_ENV } from "../workspace/claude-session-transfer.ts";
-import { resolveWorkspaceRoot } from "../workspace/workspace.ts";
-
-
+import type { JobRecord } from '../workspace/state.ts';
+import { TRANSCRIPT_PATH_ENV } from '../workspace/claude-session-transfer.ts';
+import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 
 interface SessionHookInput {
   session_id?: string;
@@ -52,14 +59,17 @@ function readHookInput(): SessionHookInput {
 }
 
 function shellEscape(value: unknown): string {
+  // Byte-exact single-quote escaping, round-trip verified; the escapes are
+  // redundant to the parser but deliberately untouched.
+  // eslint-disable-next-line no-useless-escape
   return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 }
 
 function appendEnvVar(name: string, value: string | null | undefined): void {
-  if (!process.env.CLAUDE_ENV_FILE || value == null || value === "") {
+  if (!process.env.CLAUDE_ENV_FILE || value == null || value === '') {
     return;
   }
-  fs.appendFileSync(process.env.CLAUDE_ENV_FILE, `export ${name}=${shellEscape(value)}\n`, "utf8");
+  fs.appendFileSync(process.env.CLAUDE_ENV_FILE, `export ${name}=${shellEscape(value)}\n`, 'utf8');
 }
 
 async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): Promise<number> {
@@ -78,14 +88,14 @@ async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): P
   // their records and logs so /stereo:result works after the session ends
   // (they age out through the normal job-index pruning).
   const removedJobs = state.jobs.filter(
-    (job) => job.sessionId === sessionId && (job.status === "queued" || job.status === "running")
+    (job) => job.sessionId === sessionId && (job.status === 'queued' || job.status === 'running'),
   );
   if (removedJobs.length === 0) {
     return 0;
   }
 
   for (const job of removedJobs) {
-    const stillRunning = job.status === "queued" || job.status === "running";
+    const stillRunning = job.status === 'queued' || job.status === 'running';
     if (!stillRunning) {
       continue;
     }
@@ -107,9 +117,10 @@ async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): P
     try {
       await releaseThreadReservationForCancelledJob({
         threadId: storedJob?.threadId ?? job.threadId ?? null,
-        requestThreadId: (storedJob?.request as { threadId?: string | null } | null | undefined)?.threadId ?? null,
+        requestThreadId:
+          (storedJob?.request as { threadId?: string | null } | null | undefined)?.threadId ?? null,
         jobId: job.id,
-        pid
+        pid,
       });
     } catch {
       // Reservation cleanup is best effort during session shutdown.
@@ -120,11 +131,11 @@ async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): P
       // index removal below clean up the files.
       writeJobFile(workspaceRoot, job.id, {
         ...(storedJob ?? job),
-        status: "cancelled",
-        phase: "cancelled",
+        status: 'cancelled',
+        phase: 'cancelled',
         pid: null,
         completedAt: nowIso(),
-        errorMessage: "Cancelled at session end."
+        errorMessage: 'Cancelled at session end.',
       });
     } catch {
       // Best effort; a failed write leaves the job to the scanner's remedies.
@@ -134,7 +145,7 @@ async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): P
   const removedIds = new Set(removedJobs.map((job) => job.id));
   saveState(workspaceRoot, {
     ...state,
-    jobs: state.jobs.filter((job) => !removedIds.has(job.id))
+    jobs: state.jobs.filter((job) => !removedIds.has(job.id)),
   });
   return removedJobs.length;
 }
@@ -153,7 +164,7 @@ async function handleSessionEnd(input: SessionHookInput): Promise<void> {
       ? {
           endpoint: process.env[BROKER_ENDPOINT_ENV],
           pidFile: process.env[PID_FILE_ENV] ?? null,
-          logFile: process.env[LOG_FILE_ENV] ?? null
+          logFile: process.env[LOG_FILE_ENV] ?? null,
         }
       : null);
   const brokerEndpoint = brokerSession?.endpoint ?? null;
@@ -197,28 +208,29 @@ async function handleSessionEnd(input: SessionHookInput): Promise<void> {
   // A gracefully-exited broker's pid may already belong to an unrelated
   // process; kill only when the broker is provably still alive (wedged or
   // unresponsive endpoint).
-  const brokerStillAlive = typeof pid === "number" && Number.isFinite(pid) && !processHasExited(pid);
+  const brokerStillAlive =
+    typeof pid === 'number' && Number.isFinite(pid) && !processHasExited(pid);
   teardownBrokerSession({
     endpoint: brokerEndpoint,
     pidFile,
     logFile,
     sessionDir,
     pid,
-    killProcess: brokerStillAlive ? terminateProcessTree : null
+    killProcess: brokerStillAlive ? terminateProcessTree : null,
   });
   clearBrokerSession(cwd);
 }
 
 export async function runSessionLifecycleHook(): Promise<void> {
   const input = readHookInput();
-  const eventName = process.argv[2] ?? input.hook_event_name ?? "";
+  const eventName = process.argv[2] ?? input.hook_event_name ?? '';
 
-  if (eventName === "SessionStart") {
+  if (eventName === 'SessionStart') {
     handleSessionStart(input);
     return;
   }
 
-  if (eventName === "SessionEnd") {
+  if (eventName === 'SessionEnd') {
     await handleSessionEnd(input);
   }
 }

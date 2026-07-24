@@ -13,16 +13,19 @@ Raw slash-command arguments:
 `$ARGUMENTS`
 
 Scope of the result-handling rules:
+
 - This command is a deliberate, user-invoked iterative workflow.
 - Within it, the `codex-result-handling` rule to STOP after presenting findings applies only at the user-decision points defined below.
 - Inside the plan-review loop, act on Codex's findings and revise the plan without asking the user.
 
 Argument handling:
+
 - `--model` and `--effort` are runtime-selection flags. Forward them verbatim to every `plan-review` call. If unset, the companion defaults to `sol` (mapped to `gpt-5.6-sol`) at `max` effort; gpt-5.6-family model overrides also default to `max`, other `gpt-*` models default to `xhigh`, and non-OpenAI models omit the effort override.
 - `--max-plan-rounds <n>` caps the review loop. If absent, the cap defaults to 6 — healthy loops approve in 2-5 rounds; a plan that cannot converge by then has a scope problem, not a detail problem.
 - All remaining text is the task description. If it is empty, ask the user what to plan before doing anything else.
 
 Phase 1 - Draft the plan:
+
 - Explore the repository first with Read, Glob, and Grep until you can name exact files, symbols, and integration points.
 - Write a self-contained plan document with exactly these sections: `## Goal`, `## Approach`, `## Files to change`, `## Step-by-step changes`, `## Testing and verification`, `## Risks and edge cases`, `## Out of scope`.
 - The plan must stand alone: Codex sees only the plan text plus the repository, never this conversation.
@@ -30,6 +33,7 @@ Phase 1 - Draft the plan:
 - Do not write the plan into the user's repository. Deliver it to the companion via heredoc stdin with a quoted delimiter so the shell never expands its contents.
 
 Phase 2 - Codex review loop:
+
 - Launch round 1 in the background. Never run `plan-review` in the foreground: long `max` reviews can exceed the Bash timeout.
 
 ```bash
@@ -75,12 +79,14 @@ CODEX_PAIR_PLAN
 - After each round, post a one-line progress note with the round number, the verdict, and the finding count.
 
 Stall safeguards (these are safeguards, not caps):
+
 - When the round cap (explicit or the default of 6) is reached without approval, stop the loop and present the latest findings with `AskUserQuestion`: `Split the plan (Recommended)`, `Keep iterating`, `Accept the plan as-is`, `Stop here`.
 - Scope-accretion trigger: if the plan grows past roughly 1.5x its round-1 size, or a new finding targets machinery that earlier review rounds added rather than the original draft, the loop is accreting scope instead of converging - pause and ask the same question even if rounds remain.
 - If Codex re-raises substantially the same finding a third time after two explicit rebuttals with no new evidence, or the plan keeps oscillating between two shapes, pause and ask the same question instead of looping forever.
 - If the user chooses to split: keep the original-scope core as this plan (descoping the accreted machinery with documented residuals), finish its review, and present the carved-out topics as named follow-up plan candidates.
 
 Finish:
+
 - Present the approved plan, the final verdict, the number of rounds used, any `open_questions`, and the accumulated `residual_risks` (documented non-blocking residuals and their suggested follow-up plans).
 - The companion stores the latest reviewed plan, its Codex thread, and the final round's `open_questions` and `residual_risks` automatically; `/stereo:implement` reads all of it from there.
 - Tell the user: run `/stereo:implement` to have Codex implement the approved plan.

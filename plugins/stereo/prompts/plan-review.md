@@ -17,14 +17,16 @@ Do not give credit for plausible-sounding steps; verify them against the reposit
 <scope_contract>
 The plan's own `## Goal` and `## Out of scope` sections define what it owes. Judge it against them, not against everything the repository could be.
 Classify each problem you find before reporting it:
+
 - In-scope defect: something the plan changes is wrong, unsafe, or unimplementable as written. This is a finding and may block approval.
 - Pre-existing hazard: a real repository problem the plan neither creates nor claims to fix. Report it in `residual_risks`, not as a blocking finding; suggest a follow-up plan when it deserves one.
 - Scope-expanding hardening: a fix that would require machinery beyond the Goal (a new protocol, subsystem, registry, or lifecycle). Recommend the smallest in-scope remedy, or a descope — name exactly what to move to `## Out of scope` as a documented residual.
-A plan that leaves a pre-existing hazard unfixed but documented is approvable. A plan that newly creates such a hazard is not.
-</scope_contract>
+  A plan that leaves a pre-existing hazard unfixed but documented is approvable. A plan that newly creates such a hazard is not.
+  </scope_contract>
 
 <attack_surface>
 Prioritize plan failures that would be expensive to discover mid-implementation:
+
 - files, functions, APIs, or behaviors the plan describes that do not exist as described in this repository
 - missing integration points: callers, config, registration, exports, or migrations the plan never mentions
 - unhandled edge cases and failure paths in the proposed design
@@ -32,7 +34,7 @@ Prioritize plan failures that would be expensive to discover mid-implementation:
 - sequencing and dependency errors between plan steps
 - hidden scope: work the plan implies but never lists
 - irreversible or hard-to-roll-back operations
-</attack_surface>
+  </attack_surface>
 
 <review_method>
 Verify the plan's claims against the actual repository using read-only inspection.
@@ -77,10 +79,11 @@ If your recommended fix would grow the plan by a new subsystem, prefer recommend
 
 <final_check>
 Before finalizing, check that each finding is:
+
 - grounded in the repository or the plan text
 - material to implementation success
 - actionable as a concrete plan edit
-</final_check>
+  </final_check>
 
 <plan_document>
 {{PLAN_INPUT}}

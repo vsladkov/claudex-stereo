@@ -1,9 +1,9 @@
-import type { AppServerNotification, ThreadItem, Turn } from "../protocol/app-server.ts";
-import { extractThreadId, extractTurnId, shorten } from "./threads.ts";
-import type { AppServerClient } from "./threads.ts";
+import type { AppServerNotification, ThreadItem, Turn } from '../protocol/app-server.ts';
+import { extractThreadId, extractTurnId, shorten } from './threads.ts';
+import type { AppServerClient } from './threads.ts';
 
-export type FileChangeItem = Extract<ThreadItem, { type: "fileChange" }>;
-export type CommandExecutionItem = Extract<ThreadItem, { type: "commandExecution" }>;
+export type FileChangeItem = Extract<ThreadItem, { type: 'fileChange' }>;
+export type CommandExecutionItem = Extract<ThreadItem, { type: 'commandExecution' }>;
 
 export interface ProgressUpdate {
   message: string;
@@ -65,17 +65,19 @@ export interface TurnCaptureStateOptions {
 const DEFAULT_TIMER: TurnCaptureTimer = {
   setTimeoutImpl: (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimeoutImpl: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-  inferredCompletionDelayMs: 250
+  inferredCompletionDelayMs: 250,
 };
 
 export function looksLikeVerificationCommand(command: string): boolean {
   return /\b(test|tests|lint|build|typecheck|type-check|check|verify|validate|pytest|jest|vitest|cargo test|npm test|pnpm test|yarn test|go test|mvn test|gradle test|tsc|eslint|ruff)\b/i.test(
-    command
+    command,
   );
 }
 
 function normalizeReasoningText(text: unknown): string {
-  return String(text ?? "").replace(/\s+/g, " ").trim();
+  return String(text ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function extractReasoningSections(value: unknown): string[] {
@@ -83,7 +85,7 @@ function extractReasoningSections(value: unknown): string[] {
     return [];
   }
 
-  if (typeof value === "string") {
+  if (typeof value === 'string') {
     const normalized = normalizeReasoningText(value);
     return normalized ? [normalized] : [];
   }
@@ -92,18 +94,23 @@ function extractReasoningSections(value: unknown): string[] {
     return value.flatMap((entry) => extractReasoningSections(entry));
   }
 
-  if (typeof value === "object") {
-    const source = value as { text?: unknown; summary?: unknown; content?: unknown; parts?: unknown };
-    if (typeof source.text === "string") {
+  if (typeof value === 'object') {
+    const source = value as {
+      text?: unknown;
+      summary?: unknown;
+      content?: unknown;
+      parts?: unknown;
+    };
+    if (typeof source.text === 'string') {
       return extractReasoningSections(source.text);
     }
-    if ("summary" in source) {
+    if ('summary' in source) {
       return extractReasoningSections(source.summary);
     }
-    if ("content" in source) {
+    if ('content' in source) {
       return extractReasoningSections(source.content);
     }
-    if ("parts" in source) {
+    if ('parts' in source) {
       return extractReasoningSections(source.parts);
     }
   }
@@ -127,7 +134,7 @@ export function emitProgress(
   onProgress: ProgressReporter | null | undefined,
   message: string | null | undefined,
   phase: string | null = null,
-  extra: { threadId?: string | null; turnId?: string | null } = {}
+  extra: { threadId?: string | null; turnId?: string | null } = {},
 ): void {
   if (!onProgress || !message) {
     return;
@@ -147,21 +154,27 @@ export interface LogEventOptions {
   logBody?: string | null;
 }
 
-export function emitLogEvent(onProgress: ProgressReporter | null | undefined, options: LogEventOptions = {}): void {
+export function emitLogEvent(
+  onProgress: ProgressReporter | null | undefined,
+  options: LogEventOptions = {},
+): void {
   if (!onProgress) {
     return;
   }
 
   onProgress({
-    message: options.message ?? "",
+    message: options.message ?? '',
     phase: options.phase ?? null,
     stderrMessage: options.stderrMessage ?? null,
     logTitle: options.logTitle ?? null,
-    logBody: options.logBody ?? null
+    logBody: options.logBody ?? null,
   });
 }
 
-export function labelForThread(state: TurnCaptureState, threadId: string | null | undefined): string | null {
+export function labelForThread(
+  state: TurnCaptureState,
+  threadId: string | null | undefined,
+): string | null {
   if (!threadId || threadId === state.rootThreadId || threadId === state.threadId) {
     return null;
   }
@@ -178,7 +191,7 @@ export interface RegisterThreadOptions {
 export function registerThread(
   state: TurnCaptureState,
   threadId: string | null | undefined,
-  options: RegisterThreadOptions = {}
+  options: RegisterThreadOptions = {},
 ): void {
   if (!threadId) {
     return;
@@ -204,66 +217,79 @@ interface ItemProgressUpdate {
 
 function describeStartedItem(state: TurnCaptureState, item: ThreadItem): ItemProgressUpdate | null {
   switch (item.type) {
-    case "enteredReviewMode":
-      return { message: `Reviewer started: ${item.review}`, phase: "reviewing" };
-    case "commandExecution":
+    case 'enteredReviewMode':
+      return { message: `Reviewer started: ${item.review}`, phase: 'reviewing' };
+    case 'commandExecution':
       return {
         message: `Running command: ${shorten(item.command, 96)}`,
-        phase: looksLikeVerificationCommand(item.command) ? "verifying" : "running"
+        phase: looksLikeVerificationCommand(item.command) ? 'verifying' : 'running',
       };
-    case "fileChange":
-      return { message: `Applying ${item.changes?.length ?? 0} file change(s).`, phase: "editing" };
-    case "mcpToolCall":
-      return { message: `Calling ${item.server}/${item.tool}.`, phase: "investigating" };
-    case "dynamicToolCall":
-      return { message: `Running tool: ${item.tool}.`, phase: "investigating" };
-    case "collabAgentToolCall": {
-      const subagents = (item.receiverThreadIds ?? []).map((threadId) => labelForThread(state, threadId) ?? threadId);
+    case 'fileChange':
+      return { message: `Applying ${item.changes?.length ?? 0} file change(s).`, phase: 'editing' };
+    case 'mcpToolCall':
+      return { message: `Calling ${item.server}/${item.tool}.`, phase: 'investigating' };
+    case 'dynamicToolCall':
+      return { message: `Running tool: ${item.tool}.`, phase: 'investigating' };
+    case 'collabAgentToolCall': {
+      const subagents = (item.receiverThreadIds ?? []).map(
+        (threadId) => labelForThread(state, threadId) ?? threadId,
+      );
       const summary =
         subagents.length > 0
-          ? `Starting subagent ${subagents.join(", ")} via collaboration tool: ${item.tool}.`
+          ? `Starting subagent ${subagents.join(', ')} via collaboration tool: ${item.tool}.`
           : `Starting collaboration tool: ${item.tool}.`;
-      return { message: summary, phase: "investigating" };
+      return { message: summary, phase: 'investigating' };
     }
-    case "webSearch":
-      return { message: `Searching: ${shorten(item.query, 96)}`, phase: "investigating" };
+    case 'webSearch':
+      return { message: `Searching: ${shorten(item.query, 96)}`, phase: 'investigating' };
     default:
       return null;
   }
 }
 
-function describeCompletedItem(state: TurnCaptureState, item: ThreadItem): ItemProgressUpdate | null {
+function describeCompletedItem(
+  state: TurnCaptureState,
+  item: ThreadItem,
+): ItemProgressUpdate | null {
   switch (item.type) {
-    case "commandExecution": {
-      const exitCode = item.exitCode ?? "?";
-      const statusLabel = item.status === "completed" ? "completed" : item.status;
+    case 'commandExecution': {
+      const exitCode = item.exitCode ?? '?';
+      const statusLabel = item.status === 'completed' ? 'completed' : item.status;
       return {
         message: `Command ${statusLabel}: ${shorten(item.command, 96)} (exit ${exitCode})`,
-        phase: looksLikeVerificationCommand(item.command) ? "verifying" : "running"
+        phase: looksLikeVerificationCommand(item.command) ? 'verifying' : 'running',
       };
     }
-    case "fileChange":
-      return { message: `File changes ${item.status}.`, phase: "editing" };
-    case "mcpToolCall":
-      return { message: `Tool ${item.server}/${item.tool} ${item.status}.`, phase: "investigating" };
-    case "dynamicToolCall":
-      return { message: `Tool ${item.tool} ${item.status}.`, phase: "investigating" };
-    case "collabAgentToolCall": {
-      const subagents = (item.receiverThreadIds ?? []).map((threadId) => labelForThread(state, threadId) ?? threadId);
+    case 'fileChange':
+      return { message: `File changes ${item.status}.`, phase: 'editing' };
+    case 'mcpToolCall':
+      return {
+        message: `Tool ${item.server}/${item.tool} ${item.status}.`,
+        phase: 'investigating',
+      };
+    case 'dynamicToolCall':
+      return { message: `Tool ${item.tool} ${item.status}.`, phase: 'investigating' };
+    case 'collabAgentToolCall': {
+      const subagents = (item.receiverThreadIds ?? []).map(
+        (threadId) => labelForThread(state, threadId) ?? threadId,
+      );
       const summary =
         subagents.length > 0
-          ? `Subagent ${subagents.join(", ")} ${item.status}.`
+          ? `Subagent ${subagents.join(', ')} ${item.status}.`
           : `Collaboration tool ${item.tool} ${item.status}.`;
-      return { message: summary, phase: "investigating" };
+      return { message: summary, phase: 'investigating' };
     }
-    case "exitedReviewMode":
-      return { message: "Reviewer finished.", phase: "finalizing" };
+    case 'exitedReviewMode':
+      return { message: 'Reviewer finished.', phase: 'finalizing' };
     default:
       return null;
   }
 }
 
-export function createTurnCaptureState(threadId: string, options: TurnCaptureStateOptions = {}): TurnCaptureState {
+export function createTurnCaptureState(
+  threadId: string,
+  options: TurnCaptureStateOptions = {},
+): TurnCaptureState {
   let resolveCompletion!: (state: TurnCaptureState) => void;
   let rejectCompletion!: (error: unknown) => void;
   const completion = new Promise<TurnCaptureState>((resolve, reject) => {
@@ -290,14 +316,14 @@ export function createTurnCaptureState(threadId: string, options: TurnCaptureSta
     activeSubagentTurns: new Set(),
     completionTimer: null,
     timer: options.timer ?? DEFAULT_TIMER,
-    lastAgentMessage: "",
-    reviewText: "",
+    lastAgentMessage: '',
+    reviewText: '',
     reasoningSummary: [],
     error: null,
     messages: [],
     fileChanges: [],
     commandExecutions: [],
-    onProgress: options.onProgress ?? null
+    onProgress: options.onProgress ?? null,
   };
 }
 
@@ -308,7 +334,11 @@ export function clearCompletionTimer(state: TurnCaptureState): void {
   }
 }
 
-export function completeTurn(state: TurnCaptureState, turn: Turn | null = null, options: { inferred?: boolean } = {}): void {
+export function completeTurn(
+  state: TurnCaptureState,
+  turn: Turn | null = null,
+  options: { inferred?: boolean } = {},
+): void {
   if (state.completed) {
     return;
   }
@@ -325,19 +355,23 @@ export function completeTurn(state: TurnCaptureState, turn: Turn | null = null, 
     // Complete synthetic (no cast): a consumer reading items/error/timestamps
     // on an inferred completion gets honest empty values, not undefined.
     state.finalTurn = {
-      id: state.turnId ?? "inferred-turn",
-      status: "completed",
+      id: state.turnId ?? 'inferred-turn',
+      status: 'completed',
       items: [],
-      itemsView: "notLoaded",
+      itemsView: 'notLoaded',
       error: null,
       startedAt: null,
       completedAt: null,
-      durationMs: null
+      durationMs: null,
     };
   }
 
   if (options.inferred) {
-    emitProgress(state.onProgress, "Turn completion inferred after the main thread finished and subagent work drained.", "finalizing");
+    emitProgress(
+      state.onProgress,
+      'Turn completion inferred after the main thread finished and subagent work drained.',
+      'finalizing',
+    );
   }
 
   state.resolveCompletion(state);
@@ -377,12 +411,17 @@ export function belongsToTurn(state: TurnCaptureState, message: AppServerNotific
   return trackedTurnId === null || messageTurnId === null || messageTurnId === trackedTurnId;
 }
 
-function recordItem(state: TurnCaptureState, item: ThreadItem, lifecycle: string, threadId: string | null = null): void {
-  if (item.type === "collabAgentToolCall") {
+function recordItem(
+  state: TurnCaptureState,
+  item: ThreadItem,
+  lifecycle: string,
+  threadId: string | null = null,
+): void {
+  if (item.type === 'collabAgentToolCall') {
     if (!threadId || threadId === state.threadId) {
-      if (lifecycle === "started" || item.status === "inProgress") {
+      if (lifecycle === 'started' || item.status === 'inProgress') {
         state.pendingCollaborations.add(item.id);
-      } else if (lifecycle === "completed") {
+      } else if (lifecycle === 'completed') {
         state.pendingCollaborations.delete(item.id);
         scheduleInferredCompletion(state);
       }
@@ -392,51 +431,53 @@ function recordItem(state: TurnCaptureState, item: ThreadItem, lifecycle: string
     }
   }
 
-  if (item.type === "agentMessage") {
+  if (item.type === 'agentMessage') {
     state.messages.push({
       lifecycle,
       phase: item.phase ?? null,
-      text: item.text ?? ""
+      text: item.text ?? '',
     });
     if (item.text) {
       if (!threadId || threadId === state.threadId) {
-        if (lifecycle === "completed") {
+        if (lifecycle === 'completed') {
           state.lastAgentMessage = item.text;
         }
-        if (lifecycle === "completed" && item.phase === "final_answer") {
+        if (lifecycle === 'completed' && item.phase === 'final_answer') {
           state.finalAnswerSeen = true;
           scheduleInferredCompletion(state);
         }
       }
-      if (lifecycle === "completed") {
+      if (lifecycle === 'completed') {
         const sourceLabel = labelForThread(state, threadId);
         emitLogEvent(state.onProgress, {
-          message: sourceLabel ? `Subagent ${sourceLabel}: ${shorten(item.text, 96)}` : `Assistant message captured: ${shorten(item.text, 96)}`,
+          message: sourceLabel
+            ? `Subagent ${sourceLabel}: ${shorten(item.text, 96)}`
+            : `Assistant message captured: ${shorten(item.text, 96)}`,
           stderrMessage: null,
-          phase: item.phase === "final_answer" ? "finalizing" : null,
-          logTitle: sourceLabel ? `Subagent ${sourceLabel} message` : "Assistant message",
-          logBody: item.text
+          phase: item.phase === 'final_answer' ? 'finalizing' : null,
+          logTitle: sourceLabel ? `Subagent ${sourceLabel} message` : 'Assistant message',
+          logBody: item.text,
         });
       }
     }
     return;
   }
 
-  if (item.type === "exitedReviewMode") {
-    state.reviewText = item.review ?? "";
-    if (lifecycle === "completed" && item.review) {
+  if (item.type === 'exitedReviewMode') {
+    state.reviewText = item.review ?? '';
+    if (lifecycle === 'completed' && item.review) {
       emitLogEvent(state.onProgress, {
-        message: "Review output captured.",
+        message: 'Review output captured.',
         stderrMessage: null,
-        phase: "finalizing",
-        logTitle: "Review output",
-        logBody: item.review
+        phase: 'finalizing',
+        logTitle: 'Review output',
+        logBody: item.review,
       });
     }
     return;
   }
 
-  if (item.type === "reasoning" && lifecycle === "completed") {
+  if (item.type === 'reasoning' && lifecycle === 'completed') {
     const nextSections = extractReasoningSections(item.summary);
     state.reasoningSummary = mergeReasoningSections(state.reasoningSummary, nextSections);
     if (nextSections.length > 0) {
@@ -446,39 +487,42 @@ function recordItem(state: TurnCaptureState, item: ThreadItem, lifecycle: string
           ? `Subagent ${sourceLabel} reasoning: ${shorten(nextSections[0], 96)}`
           : `Reasoning summary captured: ${shorten(nextSections[0], 96)}`,
         stderrMessage: null,
-        logTitle: sourceLabel ? `Subagent ${sourceLabel} reasoning summary` : "Reasoning summary",
-        logBody: nextSections.map((section) => `- ${section}`).join("\n")
+        logTitle: sourceLabel ? `Subagent ${sourceLabel} reasoning summary` : 'Reasoning summary',
+        logBody: nextSections.map((section) => `- ${section}`).join('\n'),
       });
     }
     return;
   }
 
-  if (item.type === "fileChange" && lifecycle === "completed") {
+  if (item.type === 'fileChange' && lifecycle === 'completed') {
     state.fileChanges.push(item);
     return;
   }
 
-  if (item.type === "commandExecution" && lifecycle === "completed") {
+  if (item.type === 'commandExecution' && lifecycle === 'completed') {
     state.commandExecutions.push(item);
   }
 }
 
-export function applyTurnNotification(state: TurnCaptureState, message: AppServerNotification): void {
+export function applyTurnNotification(
+  state: TurnCaptureState,
+  message: AppServerNotification,
+): void {
   switch (message.method) {
-    case "thread/started":
+    case 'thread/started':
       registerThread(state, message.params.thread.id, {
         threadName: message.params.thread.name,
         name: message.params.thread.name,
         agentNickname: message.params.thread.agentNickname,
-        agentRole: message.params.thread.agentRole
+        agentRole: message.params.thread.agentRole,
       });
       break;
-    case "thread/name/updated":
+    case 'thread/name/updated':
       registerThread(state, message.params.threadId, {
-        threadName: message.params.threadName ?? null
+        threadName: message.params.threadName ?? null,
       });
       break;
-    case "turn/started":
+    case 'turn/started':
       registerThread(state, message.params.threadId);
       state.threadTurnIds.set(message.params.threadId, message.params.turn.id);
       if ((message.params.threadId ?? null) !== state.threadId) {
@@ -487,34 +531,34 @@ export function applyTurnNotification(state: TurnCaptureState, message: AppServe
       emitProgress(
         state.onProgress,
         `Turn started (${message.params.turn.id}).`,
-        "starting",
+        'starting',
         (message.params.threadId ?? null) === state.threadId
           ? {
               threadId: message.params.threadId ?? null,
-              turnId: message.params.turn.id ?? null
+              turnId: message.params.turn.id ?? null,
             }
-          : {}
+          : {},
       );
       break;
-    case "item/started":
-      recordItem(state, message.params.item, "started", message.params.threadId ?? null);
+    case 'item/started':
+      recordItem(state, message.params.item, 'started', message.params.threadId ?? null);
       {
         const update = describeStartedItem(state, message.params.item);
         emitProgress(state.onProgress, update?.message, update?.phase ?? null);
       }
       break;
-    case "item/completed":
-      recordItem(state, message.params.item, "completed", message.params.threadId ?? null);
+    case 'item/completed':
+      recordItem(state, message.params.item, 'completed', message.params.threadId ?? null);
       {
         const update = describeCompletedItem(state, message.params.item);
         emitProgress(state.onProgress, update?.message, update?.phase ?? null);
       }
       break;
-    case "error":
+    case 'error':
       state.error = message.params.error;
-      emitProgress(state.onProgress, `Codex error: ${message.params.error.message}`, "failed");
+      emitProgress(state.onProgress, `Codex error: ${message.params.error.message}`, 'failed');
       break;
-    case "turn/completed":
+    case 'turn/completed':
       if ((message.params.threadId ?? null) !== state.threadId) {
         state.activeSubagentTurns.delete(message.params.threadId);
         scheduleInferredCompletion(state);
@@ -522,8 +566,8 @@ export function applyTurnNotification(state: TurnCaptureState, message: AppServe
       }
       emitProgress(
         state.onProgress,
-        `Turn ${message.params.turn.status === "completed" ? "completed" : message.params.turn.status}.`,
-        "finalizing"
+        `Turn ${message.params.turn.status === 'completed' ? 'completed' : message.params.turn.status}.`,
+        'finalizing',
       );
       completeTurn(state, message.params.turn);
       break;
@@ -540,7 +584,7 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
   client: AppServerClient,
   threadId: string,
   startRequest: () => Promise<R>,
-  options: CaptureTurnOptions<R> = {}
+  options: CaptureTurnOptions<R> = {},
 ): Promise<TurnCaptureState> {
   const state = createTurnCaptureState(threadId, options);
   const previousHandler = client.notificationHandler;
@@ -549,7 +593,7 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
     // Applied unconditionally for the buffered replay too (deliberate): the
     // broker is single-flight, so a thread/started that is not ours cannot
     // interleave with a captured turn on this client.
-    if (message.method === "thread/started" || message.method === "thread/name/updated") {
+    if (message.method === 'thread/started' || message.method === 'thread/name/updated') {
       applyTurnNotification(state, message);
       return;
     }
@@ -578,7 +622,10 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
       // turn failures and would flip the run's status.
       const detail = error instanceof Error ? error.message : String(error);
       state.notificationErrors.push({ method: message?.method ?? null, message: detail });
-      emitProgress(state.onProgress, `Ignoring malformed ${message?.method ?? "unknown"} notification: ${detail}`);
+      emitProgress(
+        state.onProgress,
+        `Ignoring malformed ${message?.method ?? 'unknown'} notification: ${detail}`,
+      );
     }
   };
   client.setNotificationHandler((message) => {
@@ -591,9 +638,9 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
   });
 
   const buildConnectionClosedError = (): Error => {
-    const detail = client.exitError?.message ? `: ${client.exitError.message}` : "";
+    const detail = client.exitError?.message ? `: ${client.exitError.message}` : '';
     return new Error(`codex app-server connection closed before the turn completed${detail}`, {
-      cause: client.exitError ?? undefined
+      cause: client.exitError ?? undefined,
     });
   };
   const connectionExit: Promise<never> = client.exitPromise.then(() => {
@@ -622,7 +669,7 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
       dispatchNotificationSafely(message);
     }
 
-    if (response.turn?.status && response.turn.status !== "inProgress") {
+    if (response.turn?.status && response.turn.status !== 'inProgress') {
       completeTurn(state, response.turn);
     }
 

@@ -5,27 +5,31 @@ import type {
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
-  UserInput
-} from "../protocol/app-server.ts";
-import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV, CodexAppServerClient } from "../transport/app-server-client.ts";
-import { sendBrokerShutdownIfIdle } from "../broker/lifecycle.ts";
-import { getCodexAvailability } from "./availability.ts";
-import { emitLogEvent } from "./turn-capture.ts";
-import type { ProgressReporter } from "./turn-capture.ts";
+  UserInput,
+} from '../protocol/app-server.ts';
+import {
+  BROKER_BUSY_RPC_CODE,
+  BROKER_ENDPOINT_ENV,
+  CodexAppServerClient,
+} from '../transport/app-server-client.ts';
+import { sendBrokerShutdownIfIdle } from '../broker/lifecycle.ts';
+import { getCodexAvailability } from './availability.ts';
+import { emitLogEvent } from './turn-capture.ts';
+import type { ProgressReporter } from './turn-capture.ts';
 
 export type AppServerClient = Awaited<ReturnType<typeof CodexAppServerClient.connect>>;
 
-const SERVICE_NAME = "claude_code_codex_plugin";
-export const TASK_THREAD_PREFIX = "Codex Companion Task";
-export const PAIR_THREAD_PREFIX = "Codex Companion Pair";
+const SERVICE_NAME = 'claude_code_codex_plugin';
+export const TASK_THREAD_PREFIX = 'Codex Companion Task';
+export const PAIR_THREAD_PREFIX = 'Codex Companion Pair';
 export const DEFAULT_CONTINUE_PROMPT =
-  "Continue from the current thread state. Pick the next highest-value step and follow through until the task is resolved.";
+  'Continue from the current thread state. Pick the next highest-value step and follow through until the task is resolved.';
 
 export interface ThreadSessionOptions {
   model?: string | null;
   modelProvider?: string | null;
-  approvalPolicy?: ThreadStartParams["approvalPolicy"];
-  sandbox?: ThreadStartParams["sandbox"];
+  approvalPolicy?: ThreadStartParams['approvalPolicy'];
+  sandbox?: ThreadStartParams['sandbox'];
   ephemeral?: boolean | null;
 }
 
@@ -34,37 +38,46 @@ export interface StartThreadOptions extends ThreadSessionOptions {
   onThreadStarted?: (response: ThreadStartResponse) => unknown | Promise<unknown>;
 }
 
-export function buildThreadParams(cwd: string, options: ThreadSessionOptions = {}): ThreadStartParams {
+export function buildThreadParams(
+  cwd: string,
+  options: ThreadSessionOptions = {},
+): ThreadStartParams {
   return {
     cwd,
     model: options.model ?? null,
     modelProvider: options.modelProvider ?? null,
-    approvalPolicy: options.approvalPolicy ?? "never",
-    sandbox: options.sandbox ?? "read-only",
+    approvalPolicy: options.approvalPolicy ?? 'never',
+    sandbox: options.sandbox ?? 'read-only',
     serviceName: SERVICE_NAME,
-    ephemeral: options.ephemeral ?? true
+    ephemeral: options.ephemeral ?? true,
   };
 }
 
-export function buildResumeParams(threadId: string, cwd: string, options: ThreadSessionOptions = {}): ThreadResumeParams {
+export function buildResumeParams(
+  threadId: string,
+  cwd: string,
+  options: ThreadSessionOptions = {},
+): ThreadResumeParams {
   return {
     threadId,
     cwd,
     model: options.model ?? null,
     modelProvider: options.modelProvider ?? null,
-    approvalPolicy: options.approvalPolicy ?? "never",
-    sandbox: options.sandbox ?? "read-only"
+    approvalPolicy: options.approvalPolicy ?? 'never',
+    sandbox: options.sandbox ?? 'read-only',
   };
 }
 
 export function buildTurnInput(prompt: string): UserInput[] {
-  return [{ type: "text", text: prompt, text_elements: [] }];
+  return [{ type: 'text', text: prompt, text_elements: [] }];
 }
 
 export function shorten(text: unknown, limit = 72): string {
-  const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
+  const normalized = String(text ?? '')
+    .trim()
+    .replace(/\s+/g, ' ');
   if (!normalized) {
-    return "";
+    return '';
   }
   if (normalized.length <= limit) {
     return normalized;
@@ -115,18 +128,22 @@ export function extractTurnId(message: AppServerNotification | null | undefined)
   return null;
 }
 
-export async function startThread(client: AppServerClient, cwd: string, options: StartThreadOptions = {}): Promise<ThreadStartResponse> {
-  const response = await client.request("thread/start", buildThreadParams(cwd, options));
+export async function startThread(
+  client: AppServerClient,
+  cwd: string,
+  options: StartThreadOptions = {},
+): Promise<ThreadStartResponse> {
+  const response = await client.request('thread/start', buildThreadParams(cwd, options));
   const threadId = response.thread.id;
   await options.onThreadStarted?.(response);
   if (options.threadName) {
     try {
-      await client.request("thread/name/set", { threadId, name: options.threadName });
+      await client.request('thread/name/set', { threadId, name: options.threadName });
     } catch (err) {
       // Only suppress "unknown variant/method" errors from older CLI versions
       // that don't support thread/name/set. Rethrow auth, network, or server errors.
-      const msg = String((err as Error | null | undefined)?.message ?? err ?? "");
-      if (!msg.includes("unknown variant") && !msg.includes("unknown method")) {
+      const msg = String((err as Error | null | undefined)?.message ?? err ?? '');
+      if (!msg.includes('unknown variant') && !msg.includes('unknown method')) {
         throw err;
       }
     }
@@ -138,20 +155,25 @@ export async function resumeThread(
   client: AppServerClient,
   threadId: string,
   cwd: string,
-  options: ThreadSessionOptions = {}
+  options: ThreadSessionOptions = {},
 ): Promise<ThreadResumeResponse> {
-  return client.request("thread/resume", buildResumeParams(threadId, cwd, options));
+  return client.request('thread/resume', buildResumeParams(threadId, cwd, options));
 }
 
-export function resumeSatisfiesWriteRequest(responseSandbox: { type?: string } | null | undefined): boolean {
+export function resumeSatisfiesWriteRequest(
+  responseSandbox: { type?: string } | null | undefined,
+): boolean {
   const type = responseSandbox?.type;
-  if (type === "readOnly" || type === "read-only") {
+  if (type === 'readOnly' || type === 'read-only') {
     return false;
   }
   return true;
 }
 
-export async function withAppServer<T>(cwd: string, fn: (client: AppServerClient) => Promise<T>): Promise<T> {
+export async function withAppServer<T>(
+  cwd: string,
+  fn: (client: AppServerClient) => Promise<T>,
+): Promise<T> {
   let client: AppServerClient | null = null;
   let connectedOk = false;
   try {
@@ -163,14 +185,17 @@ export async function withAppServer<T>(cwd: string, fn: (client: AppServerClient
     await client.close().catch(() => {});
     return result;
   } catch (error) {
-    const brokerRequested = client?.transport === "broker" || Boolean(process.env[BROKER_ENDPOINT_ENV]);
+    const brokerRequested =
+      client?.transport === 'broker' || Boolean(process.env[BROKER_ENDPOINT_ENV]);
     // The dead-endpoint retry is safe only for connect/initialize failures
     // (connect cleans up after itself, and no request was ever sent); an
     // ENOENT/ECONNREFUSED surfacing mid-fn could follow real side effects.
     const failure = error as { rpcCode?: number; code?: string } | null | undefined;
     const shouldRetryDirect =
-      (client?.transport === "broker" && failure?.rpcCode === BROKER_BUSY_RPC_CODE) ||
-      (brokerRequested && !connectedOk && (failure?.code === "ENOENT" || failure?.code === "ECONNREFUSED"));
+      (client?.transport === 'broker' && failure?.rpcCode === BROKER_BUSY_RPC_CODE) ||
+      (brokerRequested &&
+        !connectedOk &&
+        (failure?.code === 'ENOENT' || failure?.code === 'ECONNREFUSED'));
 
     if (client) {
       await client.close().catch(() => {});
@@ -190,7 +215,10 @@ export async function withAppServer<T>(cwd: string, fn: (client: AppServerClient
   }
 }
 
-export async function withDirectAppServer<T>(cwd: string, fn: (client: AppServerClient) => Promise<T>): Promise<T> {
+export async function withDirectAppServer<T>(
+  cwd: string,
+  fn: (client: AppServerClient) => Promise<T>,
+): Promise<T> {
   const client = await CodexAppServerClient.connect(cwd, { disableBroker: true });
   try {
     return await fn(client);
@@ -206,15 +234,16 @@ export interface BrokerMismatch {
 
 export async function drainMismatchingBroker(
   mismatch: BrokerMismatch | null | undefined,
-  onProgress: ProgressReporter | null | undefined
+  onProgress: ProgressReporter | null | undefined,
 ): Promise<void> {
   if (!mismatch?.endpoint) {
     return;
   }
   if (mismatch.endpoint !== mismatch.ownedEndpoint) {
     emitLogEvent(onProgress, {
-      message: "Skipped stale shared-runtime drain because the mismatching endpoint is not plugin-owned.",
-      stderrMessage: ""
+      message:
+        'Skipped stale shared-runtime drain because the mismatching endpoint is not plugin-owned.',
+      stderrMessage: '',
     });
     return;
   }
@@ -223,21 +252,21 @@ export async function drainMismatchingBroker(
     const outcome = await sendBrokerShutdownIfIdle(mismatch.endpoint);
     if (outcome.accepted) {
       emitLogEvent(onProgress, {
-        message: "Drained the stale shared Codex runtime after the private write retry.",
-        stderrMessage: ""
+        message: 'Drained the stale shared Codex runtime after the private write retry.',
+        stderrMessage: '',
       });
       return;
     }
     emitLogEvent(onProgress, {
       message: outcome.busy
-        ? "Skipped stale shared-runtime drain because the broker is busy."
-        : `Skipped stale shared-runtime drain${outcome.detail ? `: ${outcome.detail}` : "."}`,
-      stderrMessage: ""
+        ? 'Skipped stale shared-runtime drain because the broker is busy.'
+        : `Skipped stale shared-runtime drain${outcome.detail ? `: ${outcome.detail}` : '.'}`,
+      stderrMessage: '',
     });
   } catch (error) {
     emitLogEvent(onProgress, {
       message: `Skipped stale shared-runtime drain: ${error instanceof Error ? error.message : String(error)}`,
-      stderrMessage: ""
+      stderrMessage: '',
     });
   }
 }
@@ -245,21 +274,24 @@ export async function drainMismatchingBroker(
 export async function findLatestTaskThread(cwd: string): Promise<Thread | null> {
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
-    throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.");
+    throw new Error(
+      'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
+    );
   }
 
   return withAppServer(cwd, async (client) => {
-    const response = await client.request("thread/list", {
+    const response = await client.request('thread/list', {
       cwd,
       limit: 20,
-      sortKey: "updated_at",
-      sourceKinds: ["appServer"],
-      searchTerm: TASK_THREAD_PREFIX
+      sortKey: 'updated_at',
+      sourceKinds: ['appServer'],
+      searchTerm: TASK_THREAD_PREFIX,
     });
 
     return (
-      response.data.find((thread) => typeof thread.name === "string" && thread.name.startsWith(TASK_THREAD_PREFIX)) ??
-      null
+      response.data.find(
+        (thread) => typeof thread.name === 'string' && thread.name.startsWith(TASK_THREAD_PREFIX),
+      ) ?? null
     );
   });
 }

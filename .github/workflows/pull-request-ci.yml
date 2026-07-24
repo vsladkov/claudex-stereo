@@ -31,6 +31,12 @@ jobs:
       - name: Check version metadata
         run: npm run check-version
 
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
       - name: Run test suite
         run: npm test
 
@@ -62,6 +68,12 @@ jobs:
 
       - name: Check version metadata
         run: npm run check-version
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
 
       - name: Run test suite
         run: npm test

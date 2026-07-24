@@ -1,11 +1,11 @@
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SRC_ROOT = path.join(ROOT, "plugins", "stereo", "src");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SRC_ROOT = path.join(ROOT, 'plugins', 'stereo', 'src');
 
 function listSourceFiles(dir: string): string[] {
   const files: string[] = [];
@@ -13,7 +13,7 @@ function listSourceFiles(dir: string): string[] {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       files.push(...listSourceFiles(full));
-    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+    } else if (entry.isFile() && entry.name.endsWith('.ts')) {
       files.push(full);
     }
   }

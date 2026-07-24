@@ -1,14 +1,18 @@
-import fs from "node:fs";
-import net from "node:net";
-import path from "node:path";
-import process from "node:process";
+import fs from 'node:fs';
+import net from 'node:net';
+import path from 'node:path';
+import process from 'node:process';
 
-import { parseArgs } from "../shared/args.ts";
-import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "../transport/app-server-client.ts";
-import type { AppServerMethod, AppServerNotification, AppServerRequestParams } from "../protocol/app-server.ts";
-import { parseBrokerEndpoint } from "./endpoint.ts";
+import { parseArgs } from '../shared/args.ts';
+import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from '../transport/app-server-client.ts';
+import type {
+  AppServerMethod,
+  AppServerNotification,
+  AppServerRequestParams,
+} from '../protocol/app-server.ts';
+import { parseBrokerEndpoint } from './endpoint.ts';
 
-const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
+const STREAMING_METHODS = new Set(['turn/start', 'review/start', 'thread/compact/start']);
 
 // Client requests arrive as raw JSON lines; only the routing-relevant fields
 // are typed, everything else passes through untouched.
@@ -26,19 +30,27 @@ interface BrokerMessageParams {
 
 type RpcCapableError = Error & { rpcCode?: number };
 
-function buildStreamThreadIds(method: string | undefined, params: BrokerMessageParams, result: unknown): Set<string> {
+function buildStreamThreadIds(
+  method: string | undefined,
+  params: BrokerMessageParams,
+  result: unknown,
+): Set<string> {
   const threadIds = new Set<string>();
   if (params?.threadId) {
     threadIds.add(params.threadId);
   }
   const reviewResult = result as { reviewThreadId?: string | null } | null | undefined;
-  if (method === "review/start" && reviewResult?.reviewThreadId) {
+  if (method === 'review/start' && reviewResult?.reviewThreadId) {
     threadIds.add(reviewResult.reviewThreadId);
   }
   return threadIds;
 }
 
-function buildJsonRpcError(code: number, message: string, data?: unknown): { code: number; message: string; data?: unknown } {
+function buildJsonRpcError(
+  code: number,
+  message: string,
+  data?: unknown,
+): { code: number; message: string; data?: unknown } {
   return data === undefined ? { code, message } : { code, message, data };
 }
 
@@ -55,7 +67,7 @@ function send(socket: net.Socket, message: unknown): void {
 }
 
 function isInterruptRequest(message: BrokerClientMessage): boolean {
-  return message?.method === "turn/interrupt";
+  return message?.method === 'turn/interrupt';
 }
 
 function writePidFile(pidFile: string | null): void {
@@ -63,36 +75,42 @@ function writePidFile(pidFile: string | null): void {
     return;
   }
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });
-  fs.writeFileSync(pidFile, `${process.pid}\n`, "utf8");
+  fs.writeFileSync(pidFile, `${process.pid}\n`, 'utf8');
 }
 
 export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   // The broker is shared by every session in the workspace: a throw escaping
   // an async socket handler or the notification router must not kill it.
-  process.on("unhandledRejection", (reason) => {
-    process.stderr.write(`broker unhandled rejection: ${reason instanceof Error ? reason.stack ?? reason.message : String(reason)}\n`);
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(
+      `broker unhandled rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}\n`,
+    );
   });
-  process.on("uncaughtException", (error) => {
-    process.stderr.write(`broker uncaught exception: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  process.on('uncaughtException', (error) => {
+    process.stderr.write(
+      `broker uncaught exception: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
   });
 
   const [subcommand, ...argv] = fullArgv;
-  if (subcommand !== "serve") {
-    throw new Error("Usage: node scripts/app-server-broker.ts serve --endpoint <value> [--cwd <path>] [--pid-file <path>]");
+  if (subcommand !== 'serve') {
+    throw new Error(
+      'Usage: node scripts/app-server-broker.ts serve --endpoint <value> [--cwd <path>] [--pid-file <path>]',
+    );
   }
 
   const { options } = parseArgs(argv, {
-    valueOptions: ["cwd", "pid-file", "endpoint"]
+    valueOptions: ['cwd', 'pid-file', 'endpoint'],
   });
 
   if (!options.endpoint) {
-    throw new Error("Missing required --endpoint.");
+    throw new Error('Missing required --endpoint.');
   }
 
   const cwd = options.cwd ? path.resolve(process.cwd(), options.cwd as string) : process.cwd();
   const endpoint = String(options.endpoint);
   const listenTarget = parseBrokerEndpoint(endpoint);
-  const pidFile = options["pid-file"] ? path.resolve(options["pid-file"] as string) : null;
+  const pidFile = options['pid-file'] ? path.resolve(options['pid-file'] as string) : null;
   writePidFile(pidFile);
 
   const appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
@@ -117,8 +135,8 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
     }
     void appClient
       .request(
-        "turn/interrupt" as AppServerMethod,
-        { threadId, turnId } as AppServerRequestParams<AppServerMethod>
+        'turn/interrupt' as AppServerMethod,
+        { threadId, turnId } as AppServerRequestParams<AppServerMethod>,
       )
       .catch(() => {
         // Best effort: if the interrupt fails, the grace window still
@@ -158,7 +176,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
       | { threadId?: string | null; turn?: { id?: string | null } | null; turnId?: string | null }
       | undefined;
     const notifThreadId = notifParams?.threadId ?? null;
-    if (message.method === "turn/started" && notifThreadId) {
+    if (message.method === 'turn/started' && notifThreadId) {
       const turnId = notifParams?.turnId ?? notifParams?.turn?.id ?? null;
       if (turnId) {
         runningTurns.set(notifThreadId, turnId);
@@ -170,7 +188,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
         }
       }
     }
-    if (message.method === "turn/completed" && notifThreadId) {
+    if (message.method === 'turn/completed' && notifThreadId) {
       runningTurns.delete(notifThreadId);
       // The orphan's completion usually arrives with no connected client, so
       // this must run before the target check below - and it must NOT be
@@ -192,7 +210,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
       return;
     }
     send(target, message);
-    if (message.method === "turn/completed" && activeStreamSocket === target) {
+    if (message.method === 'turn/completed' && activeStreamSocket === target) {
       const threadId = message.params?.threadId ?? null;
       if (!threadId || !activeStreamThreadIds || activeStreamThreadIds.has(threadId)) {
         activeStreamSocket = null;
@@ -201,7 +219,11 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
           activeRequestSocket = null;
         }
       }
-    } else if (message.method === "turn/completed" && !activeStreamSocket && activeRequestSocket === target) {
+    } else if (
+      message.method === 'turn/completed' &&
+      !activeStreamSocket &&
+      activeRequestSocket === target
+    ) {
       const completedThreadId = message.params?.threadId;
       if (completedThreadId) {
         pendingStreamCompletions.add(completedThreadId);
@@ -215,7 +237,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
         try {
           server.close(() => resolve());
         } catch (error) {
-          if ((error as NodeJS.ErrnoException | null)?.code === "ERR_SERVER_NOT_RUNNING") {
+          if ((error as NodeJS.ErrnoException | null)?.code === 'ERR_SERVER_NOT_RUNNING') {
             resolve();
             return;
           }
@@ -226,7 +248,10 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
     return serverClosePromise;
   }
 
-  async function shutdown(server: net.Server, options: { destroySockets?: boolean } = {}): Promise<void> {
+  async function shutdown(
+    server: net.Server,
+    options: { destroySockets?: boolean } = {},
+  ): Promise<void> {
     shuttingDown = true;
     closeListener(server);
     if (shutdownPromise) {
@@ -247,11 +272,11 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
       await appClient.close().catch(() => {});
       await serverClosePromise;
       try {
-        if (listenTarget.kind === "unix") {
+        if (listenTarget.kind === 'unix') {
           fs.unlinkSync(listenTarget.path);
         }
       } catch (error) {
-        if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
+        if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
           throw error;
         }
       }
@@ -260,7 +285,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
           fs.unlinkSync(pidFile);
         }
       } catch (error) {
-        if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
+        if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
           throw error;
         }
       }
@@ -272,16 +297,16 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
 
   const server = net.createServer((socket) => {
     sockets.add(socket);
-    socket.setEncoding("utf8");
-    let buffer = "";
+    socket.setEncoding('utf8');
+    let buffer = '';
 
-    socket.on("data", async (chunk) => {
+    socket.on('data', async (chunk) => {
       buffer += chunk;
-      let newlineIndex = buffer.indexOf("\n");
+      let newlineIndex = buffer.indexOf('\n');
       while (newlineIndex !== -1) {
         const line = buffer.slice(0, newlineIndex);
         buffer = buffer.slice(newlineIndex + 1);
-        newlineIndex = buffer.indexOf("\n");
+        newlineIndex = buffer.indexOf('\n');
 
         if (!line.trim()) {
           continue;
@@ -293,32 +318,32 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
         } catch (error) {
           send(socket, {
             id: null,
-            error: buildJsonRpcError(-32700, `Invalid JSON: ${(error as SyntaxError).message}`)
+            error: buildJsonRpcError(-32700, `Invalid JSON: ${(error as SyntaxError).message}`),
           });
           continue;
         }
 
-        if (message.id !== undefined && message.method === "initialize") {
+        if (message.id !== undefined && message.method === 'initialize') {
           send(socket, {
             id: message.id,
             result: {
-              userAgent: "codex-companion-broker"
-            }
+              userAgent: 'codex-companion-broker',
+            },
           });
           continue;
         }
 
-        if (message.method === "initialized" && message.id === undefined) {
+        if (message.method === 'initialized' && message.id === undefined) {
           continue;
         }
 
-        if (message.id !== undefined && message.method === "broker/shutdown") {
+        if (message.id !== undefined && message.method === 'broker/shutdown') {
           if (message.params?.ifIdle) {
             // Deliberately ignores orphanedTurn: SessionEnd must be able to
             // reap a broker whose own worker just died - shutdown closes the
             // codex child, which kills the abandoned turn with it.
             const anotherClientConnected = [...sockets].some(
-              (candidate) => candidate !== socket && !candidate.destroyed
+              (candidate) => candidate !== socket && !candidate.destroyed,
             );
             if (anotherClientConnected || activeRequestSocket || activeStreamSocket) {
               send(socket, { id: message.id, result: { busy: true } });
@@ -350,21 +375,25 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
         if (shuttingDown) {
           send(socket, {
             id: message.id,
-            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, "Shared Codex broker is shutting down.")
+            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, 'Shared Codex broker is shutting down.'),
           });
           continue;
         }
 
         const allowInterruptDuringActiveStream =
-          isInterruptRequest(message) && activeStreamSocket && activeStreamSocket !== socket && !activeRequestSocket;
+          isInterruptRequest(message) &&
+          activeStreamSocket &&
+          activeStreamSocket !== socket &&
+          !activeRequestSocket;
 
         if (
-          ((activeRequestSocket && activeRequestSocket !== socket) || (activeStreamSocket && activeStreamSocket !== socket)) &&
+          ((activeRequestSocket && activeRequestSocket !== socket) ||
+            (activeStreamSocket && activeStreamSocket !== socket)) &&
           !allowInterruptDuringActiveStream
         ) {
           send(socket, {
             id: message.id,
-            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, "Shared Codex broker is busy.")
+            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, 'Shared Codex broker is busy.'),
           });
           continue;
         }
@@ -373,14 +402,14 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
           try {
             const result = await appClient.request(
               message.method as AppServerMethod,
-              (message.params ?? {}) as AppServerRequestParams<AppServerMethod>
+              (message.params ?? {}) as AppServerRequestParams<AppServerMethod>,
             );
             send(socket, { id: message.id, result });
           } catch (error) {
             const rpcError = error as RpcCapableError;
             send(socket, {
               id: message.id,
-              error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message)
+              error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message),
             });
           }
           continue;
@@ -393,7 +422,10 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
         if (isStreaming && orphanedTurn) {
           send(socket, {
             id: message.id,
-            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, "Shared Codex broker is finishing an abandoned turn.")
+            error: buildJsonRpcError(
+              BROKER_BUSY_RPC_CODE,
+              'Shared Codex broker is finishing an abandoned turn.',
+            ),
           });
           continue;
         }
@@ -402,13 +434,17 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
         try {
           const result = await appClient.request(
             message.method as AppServerMethod,
-            (message.params ?? {}) as AppServerRequestParams<AppServerMethod>
+            (message.params ?? {}) as AppServerRequestParams<AppServerMethod>,
           );
           send(socket, { id: message.id, result });
           if (isStreaming) {
-            const streamThreadIds = buildStreamThreadIds(message.method, message.params ?? {}, result);
+            const streamThreadIds = buildStreamThreadIds(
+              message.method,
+              message.params ?? {},
+              result,
+            );
             const alreadyCompleted = [...streamThreadIds].some((threadId) =>
-              pendingStreamCompletions.has(threadId)
+              pendingStreamCompletions.has(threadId),
             );
             if (!alreadyCompleted) {
               activeStreamSocket = socket;
@@ -423,7 +459,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
           const rpcError = error as RpcCapableError;
           send(socket, {
             id: message.id,
-            error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message)
+            error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message),
           });
           pendingStreamCompletions.clear();
           if (activeRequestSocket === socket) {
@@ -436,12 +472,12 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
       }
     });
 
-    socket.on("close", () => {
+    socket.on('close', () => {
       sockets.delete(socket);
       clearSocketOwnership(socket);
     });
 
-    socket.on("error", () => {
+    socket.on('error', () => {
       sockets.delete(socket);
       clearSocketOwnership(socket);
     });
@@ -459,7 +495,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
     }
   });
 
-  process.on("SIGTERM", async () => {
+  process.on('SIGTERM', async () => {
     try {
       await shutdown(server);
     } finally {
@@ -467,7 +503,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
     }
   });
 
-  process.on("SIGINT", async () => {
+  process.on('SIGINT', async () => {
     try {
       await shutdown(server);
     } finally {
@@ -476,7 +512,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   });
 
   server.listen(listenTarget.path, () => {
-    if (listenTarget.kind === "unix") {
+    if (listenTarget.kind === 'unix') {
       try {
         // Owner-only even if the parent temp dir's 0700 protection is weakened.
         fs.chmodSync(listenTarget.path, 0o600);

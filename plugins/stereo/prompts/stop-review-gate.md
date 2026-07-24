@@ -14,10 +14,11 @@ Challenge whether that specific work and its design choices should ship.
 <compact_output_contract>
 Return a compact final answer.
 Your first line must be exactly one of:
+
 - ALLOW: <short reason>
 - BLOCK: <short reason>
-Do not put anything before that first line.
-</compact_output_contract>
+  Do not put anything before that first line.
+  </compact_output_contract>
 
 <default_follow_through_policy>
 Use ALLOW if the previous turn did not make code changes or if you do not see a blocking issue.

@@ -3,39 +3,47 @@ import {
   buildStatusSnapshot,
   readStoredJob,
   resolveResultJob,
-  VERBOSE_MAX_PROGRESS_LINES
-} from "../../jobs/job-control.ts";
-import type { StatusSnapshot } from "../../jobs/job-control.ts";
-import type { JobRecord } from "../../workspace/state.ts";
-import { renderJobStatusReport, renderStatusReport, renderStoredJobResult } from "../../render/render.ts";
-import type { StatusRenderOptions, StoredJobLike } from "../../render/render.ts";
-import { waitForSingleJobSnapshot } from "../../workflows/task.ts";
-import { outputCommandResult, parseCommandInput, resolveCommandCwd } from "../io.ts";
-import { outputResult } from "../../shared/text.ts";
+  VERBOSE_MAX_PROGRESS_LINES,
+} from '../../jobs/job-control.ts';
+import type { StatusSnapshot } from '../../jobs/job-control.ts';
+import type { JobRecord } from '../../workspace/state.ts';
+import {
+  renderJobStatusReport,
+  renderStatusReport,
+  renderStoredJobResult,
+} from '../../render/render.ts';
+import type { StatusRenderOptions, StoredJobLike } from '../../render/render.ts';
+import { waitForSingleJobSnapshot } from '../../workflows/task.ts';
+import { outputCommandResult, parseCommandInput, resolveCommandCwd } from '../io.ts';
+import { outputResult } from '../../shared/text.ts';
 
-function renderStatusPayload(report: StatusSnapshot, asJson: unknown, options: StatusRenderOptions = {}): StatusSnapshot | string {
+function renderStatusPayload(
+  report: StatusSnapshot,
+  asJson: unknown,
+  options: StatusRenderOptions = {},
+): StatusSnapshot | string {
   return asJson ? report : renderStatusReport(report, options);
 }
 
 export async function handleStatus(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["cwd", "timeout-ms", "poll-interval-ms"],
-    booleanOptions: ["json", "all", "wait", "verbose"],
+    valueOptions: ['cwd', 'timeout-ms', 'poll-interval-ms'],
+    booleanOptions: ['json', 'all', 'wait', 'verbose'],
     aliasMap: {
-      v: "verbose"
-    }
+      v: 'verbose',
+    },
   });
 
   const cwd = resolveCommandCwd(options);
-  const reference = positionals[0] ?? "";
+  const reference = positionals[0] ?? '';
   const verbose = Boolean(options.verbose);
   const maxProgressLines = verbose ? VERBOSE_MAX_PROGRESS_LINES : undefined;
   if (reference) {
     const snapshot = options.wait
       ? await waitForSingleJobSnapshot(cwd, reference, {
-          timeoutMs: options["timeout-ms"],
-          pollIntervalMs: options["poll-interval-ms"],
-          maxProgressLines
+          timeoutMs: options['timeout-ms'],
+          pollIntervalMs: options['poll-interval-ms'],
+          maxProgressLines,
         })
       : buildSingleJobSnapshot(cwd, reference, { maxProgressLines });
     outputCommandResult(
@@ -44,15 +52,15 @@ export async function handleStatus(argv: string[]): Promise<void> {
         verbose,
         strandedReservations: snapshot.strandedReservations,
         waitTimedOut: snapshot.waitTimedOut ?? false,
-        timeoutMs: snapshot.timeoutMs ?? null
+        timeoutMs: snapshot.timeoutMs ?? null,
       }),
-      options.json
+      options.json,
     );
     return;
   }
 
   if (options.wait) {
-    throw new Error("`status --wait` requires a job id.");
+    throw new Error('`status --wait` requires a job id.');
   }
 
   const report = buildStatusSnapshot(cwd, { all: options.all, maxProgressLines });
@@ -61,17 +69,17 @@ export async function handleStatus(argv: string[]): Promise<void> {
 
 export function handleResult(argv: string[]): void {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["cwd"],
-    booleanOptions: ["json"]
+    valueOptions: ['cwd'],
+    booleanOptions: ['json'],
   });
 
   const cwd = resolveCommandCwd(options);
-  const reference = positionals[0] ?? "";
+  const reference = positionals[0] ?? '';
   const { workspaceRoot, job } = resolveResultJob(cwd, reference);
   const storedJob = readStoredJob(workspaceRoot, job.id) as (JobRecord & StoredJobLike) | null;
   const payload = {
     job,
-    storedJob
+    storedJob,
   };
 
   outputCommandResult(payload, renderStoredJobResult(job, storedJob), options.json);
