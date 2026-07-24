@@ -4,10 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import type { ChildProcess } from "node:child_process";
 import { createBrokerEndpoint, parseBrokerEndpoint } from "./endpoint.ts";
 import { terminateProcessTree } from "../platform/process.ts";
+import { BROKER_ENTRY } from "../shared/paths.ts";
 import { resolveStateDir } from "../workspace/state.ts";
 
 export const PID_FILE_ENV = "CODEX_COMPANION_APP_SERVER_PID_FILE";
@@ -299,10 +299,7 @@ export async function ensureBrokerSession(cwd: string, options: EnsureBrokerSess
   const endpoint = endpointFactory(sessionDir, options.platform);
   const pidFile = path.join(sessionDir, "broker.pid");
   const logFile = path.join(sessionDir, "broker.log");
-  const scriptPath =
-    options.scriptPath ??
-    // PHASE-5: repoint to src broker entry
-    fileURLToPath(new URL("../../scripts/app-server-broker.mjs", import.meta.url));
+  const scriptPath = options.scriptPath ?? BROKER_ENTRY;
 
   const child = spawnBrokerProcess({
     scriptPath,

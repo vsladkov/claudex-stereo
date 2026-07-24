@@ -11,7 +11,7 @@ import {
   evaluateStopReview,
   parseStopReviewOutput,
   resolveStopReviewTimeoutMs
-} from "../plugins/stereo/scripts/stop-review-gate-hook.mjs";
+} from "../plugins/stereo/src/hooks/stop-review-gate.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOOKS_FILE = path.join(ROOT, "plugins", "stereo", "hooks", "hooks.json");

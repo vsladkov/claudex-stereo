@@ -51,6 +51,10 @@ export interface NativeReviewRenderResult {
 export interface TaskRenderMeta {
   write?: boolean | null;
   touchedFiles?: unknown;
+  // Accepted from the task workflow for parity with its payloads; the task
+  // rendering itself does not use them.
+  title?: string | null;
+  jobId?: string | null;
 }
 
 export interface StoredJobResultLike {
@@ -670,7 +674,7 @@ export function renderNativeReviewResult(result: NativeReviewRenderResult, meta:
 }
 
 export function renderTaskResult(
-  parsedResult: { rawOutput?: unknown; failureMessage?: unknown } | null | undefined,
+  parsedResult: { rawOutput?: unknown; failureMessage?: unknown; reasoningSummary?: string[] | null } | null | undefined,
   meta: TaskRenderMeta | null | undefined
 ): string {
   const rawOutput = typeof parsedResult?.rawOutput === "string" ? parsedResult.rawOutput : "";

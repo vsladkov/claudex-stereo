@@ -1,27 +1,74 @@
 import fs from "node:fs";
+import process from "node:process";
 
 import {
   getSessionRuntimeStatus,
   listStrandedThreadReservations,
   looksLikeVerificationCommand
-} from "../../src/runtime/index.ts";
-import { getConfig, listJobs, readJobFile, resolveJobFile } from "../../src/workspace/state.ts";
-import { SESSION_ID_ENV } from "../../src/jobs/tracked-jobs.ts";
-import { resolveWorkspaceRoot } from "../../src/workspace/workspace.ts";
+} from "../runtime/index.ts";
+import type { SessionRuntimeStatus, StrandedReservationEntry } from "../runtime/index.ts";
+import { getConfig, listJobs, readJobFile, resolveJobFile } from "../workspace/state.ts";
+import type { JobRecord, StereoConfig } from "../workspace/state.ts";
+import { SESSION_ID_ENV } from "./tracked-jobs.ts";
+import { resolveWorkspaceRoot } from "../workspace/workspace.ts";
 
 export const DEFAULT_MAX_STATUS_JOBS = 8;
 export const DEFAULT_MAX_PROGRESS_LINES = 4;
 export const VERBOSE_MAX_PROGRESS_LINES = 20;
 
-export function sortJobsNewestFirst(jobs) {
+export interface SessionFilterOptions {
+  sessionId?: string | null;
+  env?: NodeJS.ProcessEnv | null;
+}
+
+export interface EnrichJobOptions {
+  maxProgressLines?: number;
+}
+
+export interface StatusSnapshotOptions extends SessionFilterOptions, EnrichJobOptions {
+  all?: unknown;
+  maxJobs?: number;
+}
+
+// A job as presented by status/result surfaces: the raw record plus the
+// display fields computed on read.
+export interface EnrichedJob extends JobRecord {
+  kindLabel: string;
+  progressPreview: string[];
+  elapsed: string | null;
+  duration: string | null;
+  phase: string;
+}
+
+export interface StatusSnapshot {
+  workspaceRoot: string;
+  config: StereoConfig;
+  sessionRuntime: SessionRuntimeStatus;
+  strandedReservations: StrandedReservationEntry[];
+  running: EnrichedJob[];
+  latestFinished: EnrichedJob | null;
+  recent: EnrichedJob[];
+  needsReview: boolean;
+}
+
+export interface SingleJobSnapshot {
+  workspaceRoot: string;
+  strandedReservations: StrandedReservationEntry[];
+  job: EnrichedJob;
+  // Populated only by the status --wait polling wrapper.
+  waitTimedOut?: boolean;
+  timeoutMs?: number | null;
+}
+
+export function sortJobsNewestFirst(jobs: JobRecord[]): JobRecord[] {
   return [...jobs].sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
 }
 
-function getCurrentSessionId(options = {}) {
+function getCurrentSessionId(options: SessionFilterOptions = {}): string | null {
   return options.env?.[SESSION_ID_ENV] ?? process.env[SESSION_ID_ENV] ?? null;
 }
 
-export function filterJobsForCurrentSession(jobs, options = {}) {
+export function filterJobsForCurrentSession(jobs: JobRecord[], options: SessionFilterOptions = {}): JobRecord[] {
   const sessionId = options.sessionId ?? getCurrentSessionId(options);
   if (!sessionId) {
     return jobs;
@@ -29,7 +76,7 @@ export function filterJobsForCurrentSession(jobs, options = {}) {
   return jobs.filter((job) => job.sessionId === sessionId);
 }
 
-function getJobTypeLabel(job) {
+function getJobTypeLabel(job: JobRecord): string {
   if (typeof job.kindLabel === "string" && job.kindLabel) {
     return job.kindLabel;
   }
@@ -54,11 +101,11 @@ function getJobTypeLabel(job) {
   return "job";
 }
 
-function stripLogPrefix(line) {
+function stripLogPrefix(line: string): string {
   return line.replace(/^\[[^\]]+\]\s*/, "").trim();
 }
 
-function isProgressBlockTitle(line) {
+function isProgressBlockTitle(line: string): boolean {
   return (
     ["Final output", "Assistant message", "Reasoning summary", "Review output"].includes(line) ||
     /^Subagent .+ message$/.test(line) ||
@@ -68,7 +115,7 @@ function isProgressBlockTitle(line) {
 
 const PROGRESS_PREVIEW_TAIL_BYTES = 64 * 1024;
 
-function readLogTail(logFile) {
+function readLogTail(logFile: string): string {
   const size = fs.statSync(logFile).size;
   if (size <= PROGRESS_PREVIEW_TAIL_BYTES) {
     return fs.readFileSync(logFile, "utf8");
@@ -87,7 +134,7 @@ function readLogTail(logFile) {
   }
 }
 
-export function readJobProgressPreview(logFile, maxLines = DEFAULT_MAX_PROGRESS_LINES) {
+export function readJobProgressPreview(logFile: string | null | undefined, maxLines = DEFAULT_MAX_PROGRESS_LINES): string[] {
   if (!logFile || !fs.existsSync(logFile)) {
     return [];
   }
@@ -103,7 +150,7 @@ export function readJobProgressPreview(logFile, maxLines = DEFAULT_MAX_PROGRESS_
   return lines.slice(-maxLines);
 }
 
-function formatElapsedDuration(startValue, endValue = null) {
+function formatElapsedDuration(startValue: string | null | undefined, endValue: string | null | undefined = null): string | null {
   const start = Date.parse(startValue ?? "");
   if (!Number.isFinite(start)) {
     return null;
@@ -128,7 +175,7 @@ function formatElapsedDuration(startValue, endValue = null) {
   return `${seconds}s`;
 }
 
-function inferLegacyJobPhase(job, progressPreview = []) {
+function inferLegacyJobPhase(job: JobRecord, progressPreview: string[] = []): string {
   switch (job.status) {
     case "queued":
       return "queued";
@@ -143,7 +190,7 @@ function inferLegacyJobPhase(job, progressPreview = []) {
   }
 
   for (let index = progressPreview.length - 1; index >= 0; index -= 1) {
-    const line = progressPreview[index].toLowerCase();
+    const line = (progressPreview[index] ?? "").toLowerCase();
     if (line.startsWith("starting codex") || line.startsWith("thread ready") || line.startsWith("turn started")) {
       return "starting";
     }
@@ -180,26 +227,27 @@ function inferLegacyJobPhase(job, progressPreview = []) {
   return job.jobClass === "review" ? "reviewing" : "running";
 }
 
-function isJobProcessGone(job) {
+function isJobProcessGone(job: JobRecord): boolean {
   if (process.platform === "win32") {
     return false;
   }
   if (job.status !== "queued" && job.status !== "running") {
     return false;
   }
-  if (!Number.isFinite(job.pid) || job.pid <= 0) {
+  const pid = job.pid;
+  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) {
     return false;
   }
   try {
-    process.kill(job.pid, 0);
+    process.kill(pid, 0);
     return false;
   } catch (error) {
     // EPERM means the process exists but belongs to another user: alive.
-    return error?.code === "ESRCH";
+    return (error as NodeJS.ErrnoException | null | undefined)?.code === "ESRCH";
   }
 }
 
-export function enrichJob(job, options = {}) {
+export function enrichJob(job: JobRecord, options: EnrichJobOptions = {}): EnrichedJob {
   const maxProgressLines = options.maxProgressLines ?? DEFAULT_MAX_PROGRESS_LINES;
   const enriched = {
     ...job,
@@ -223,7 +271,7 @@ export function enrichJob(job, options = {}) {
   };
 }
 
-export function readStoredJob(workspaceRoot, jobId) {
+export function readStoredJob(workspaceRoot: string, jobId: string): JobRecord | null {
   const jobFile = resolveJobFile(workspaceRoot, jobId);
   if (!fs.existsSync(jobFile)) {
     return null;
@@ -231,7 +279,16 @@ export function readStoredJob(workspaceRoot, jobId) {
   return readJobFile(jobFile);
 }
 
-function matchJobReference(jobs, reference, predicate = () => true, options = {}) {
+interface MatchJobReferenceOptions {
+  optional?: boolean;
+}
+
+function matchJobReference(
+  jobs: JobRecord[],
+  reference: string,
+  predicate: (job: JobRecord) => boolean = () => true,
+  options: MatchJobReferenceOptions = {}
+): JobRecord | null {
   const filtered = jobs.filter(predicate);
   if (!reference) {
     return filtered[0] ?? null;
@@ -244,7 +301,7 @@ function matchJobReference(jobs, reference, predicate = () => true, options = {}
 
   const prefixMatches = filtered.filter((job) => job.id.startsWith(reference));
   if (prefixMatches.length === 1) {
-    return prefixMatches[0];
+    return prefixMatches[0] ?? null;
   }
   if (prefixMatches.length > 1) {
     throw new Error(`Job reference "${reference}" is ambiguous. Use a longer job id.`);
@@ -256,7 +313,7 @@ function matchJobReference(jobs, reference, predicate = () => true, options = {}
   throw new Error(`No job found for "${reference}". Run /stereo:status to list known jobs.`);
 }
 
-export function buildStatusSnapshot(cwd, options = {}) {
+export function buildStatusSnapshot(cwd: string, options: StatusSnapshotOptions = {}): StatusSnapshot {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const config = getConfig(workspaceRoot);
   const jobs = sortJobsNewestFirst(filterJobsForCurrentSession(listJobs(workspaceRoot), options));
@@ -289,7 +346,7 @@ export function buildStatusSnapshot(cwd, options = {}) {
   };
 }
 
-export function buildSingleJobSnapshot(cwd, reference, options = {}) {
+export function buildSingleJobSnapshot(cwd: string, reference: string, options: EnrichJobOptions = {}): SingleJobSnapshot {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const selected = matchJobReference(jobs, reference, () => true, { optional: true });
@@ -304,7 +361,7 @@ export function buildSingleJobSnapshot(cwd, reference, options = {}) {
   };
 }
 
-export function resolveResultJob(cwd, reference) {
+export function resolveResultJob(cwd: string, reference: string): { workspaceRoot: string; job: JobRecord } {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const jobs = sortJobsNewestFirst(reference ? listJobs(workspaceRoot) : filterJobsForCurrentSession(listJobs(workspaceRoot)));
   const selected = matchJobReference(
@@ -332,7 +389,7 @@ export function resolveResultJob(cwd, reference) {
   throw new Error("No finished Codex jobs found for this repository yet.");
 }
 
-export function resolveCancelableJob(cwd, reference, options = {}) {
+export function resolveCancelableJob(cwd: string, reference: string, options: SessionFilterOptions = {}): { workspaceRoot: string; job: JobRecord } {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
@@ -347,8 +404,9 @@ export function resolveCancelableJob(cwd, reference, options = {}) {
 
   const sessionScopedActiveJobs = filterJobsForCurrentSession(activeJobs, options);
 
-  if (sessionScopedActiveJobs.length === 1) {
-    return { workspaceRoot, job: sessionScopedActiveJobs[0] };
+  const [onlyActiveJob] = sessionScopedActiveJobs;
+  if (sessionScopedActiveJobs.length === 1 && onlyActiveJob) {
+    return { workspaceRoot, job: onlyActiveJob };
   }
   if (sessionScopedActiveJobs.length > 1) {
     throw new Error("Multiple Codex jobs are active. Pass a job id to /stereo:cancel.");

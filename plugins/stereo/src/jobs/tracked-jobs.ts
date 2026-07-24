@@ -26,8 +26,14 @@ export interface JobExecution {
   summary?: string;
 }
 
+// A freshly created record has no status yet: the enqueue/run path assigns
+// the first one ("queued"/"running") itself, so only the id is required here.
+export interface PendingJobRecord extends Partial<JobRecord> {
+  id: string;
+}
+
 // A job handed to runTrackedJob must know which workspace owns its artifacts.
-export interface TrackedJob extends JobRecord {
+export interface TrackedJob extends PendingJobRecord {
   workspaceRoot: string;
 }
 
@@ -91,7 +97,7 @@ export function createJobLogFile(workspaceRoot: string, jobId: string, title?: s
   return logFile;
 }
 
-export function createJobRecord<T extends JobRecord>(base: T, options: CreateJobRecordOptions = {}): T & { createdAt: string; sessionId?: string } {
+export function createJobRecord<T extends PendingJobRecord>(base: T, options: CreateJobRecordOptions = {}): T & { createdAt: string; sessionId?: string } {
   const env = options.env ?? process.env;
   const sessionId = env[options.sessionIdEnv ?? SESSION_ID_ENV];
   return {

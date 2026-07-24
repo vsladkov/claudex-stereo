@@ -14,7 +14,7 @@ import {
   resolveCancelableJob,
   resolveResultJob,
   sortJobsNewestFirst
-} from "../plugins/stereo/scripts/lib/job-control.mjs";
+} from "../plugins/stereo/src/jobs/job-control.ts";
 import { saveState } from "../plugins/stereo/src/workspace/state.ts";
 
 const DEAD_PID = 2147483647;
