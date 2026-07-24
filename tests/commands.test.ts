@@ -49,7 +49,7 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /```bash/);
   assert.match(source, /```typescript/);
   assert.match(source, /adversarial-review "\$ARGUMENTS"/);
-  assert.match(source, /\[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]/);
+  assert.match(source, /\[--scope auto\|working-tree\|branch\] \[--model <model\|spark\|sol\|terra\|luna>\] \[focus \.\.\.\]/);
   assert.match(source, /run_in_background:\s*true/);
   assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.ts" adversarial-review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex adversarial review"/);
@@ -215,15 +215,15 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(agent, /Leave `--effort` unset unless the user explicitly requests a specific reasoning effort/i);
   assert.match(agent, /Leave model unset by default/i);
   assert.match(agent, /If the user asks for `spark`, map that to `--model gpt-5\.3-codex-spark`/i);
-  assert.match(agent, /If the user asks for a concrete model name such as `gpt-5\.4-mini`, pass it through with `--model`/i);
+  assert.match(agent, /If the user asks for a concrete model or alias such as `spark`, pass it through with `--model`/i);
   assert.match(agent, /Return the stdout of the `codex-companion` command exactly as-is/i);
   assert.match(agent, /If the Bash call fails or Codex cannot be invoked, return nothing/i);
-  assert.match(agent, /gpt-5-4-prompting/);
+  assert.match(agent, /codex-prompting/);
   assert.match(agent, /only to tighten the user's request into a better Codex prompt/i);
   assert.match(agent, /Do not use that skill to inspect the repository, reason through the problem yourself, draft a solution, or do any independent work/i);
   assert.match(runtimeSkill, /only job is to invoke `task` once and return that stdout unchanged/i);
   assert.match(runtimeSkill, /Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
-  assert.match(runtimeSkill, /use the `gpt-5-4-prompting` skill to rewrite the user's request into a tighter Codex prompt/i);
+  assert.match(runtimeSkill, /use the `codex-prompting` skill to rewrite the user's request into a tighter Codex prompt/i);
   assert.match(runtimeSkill, /That prompt drafting is the only Claude-side work allowed/i);
   assert.match(runtimeSkill, /Leave `--effort` unset unless the user explicitly requests a specific effort/i);
   assert.match(runtimeSkill, /Leave model unset by default/i);
@@ -235,7 +235,7 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(runtimeSkill, /If the Bash call fails or Codex cannot be invoked, return nothing/i);
   assert.match(readme, /`stereo:codex-rescue` subagent/i);
   assert.match(readme, /if you do not pass `--model` or `--effort`, Codex chooses its own defaults/i);
-  assert.match(readme, /--model gpt-5\.4-mini --effort medium/i);
+  assert.match(readme, /--model spark --effort medium/i);
   assert.match(readme, /`spark`, the plugin maps that to `gpt-5\.3-codex-spark`/i);
   assert.match(readme, /continue a previous Codex task/i);
   assert.match(readme, /### `\/stereo:setup`/);
@@ -269,8 +269,8 @@ test("transfer, result, and cancel commands are exposed as deterministic runtime
 
 test("internal docs use task terminology for rescue runs", () => {
   const runtimeSkill = read("skills/codex-cli-runtime/SKILL.md");
-  const promptingSkill = read("skills/gpt-5-4-prompting/SKILL.md");
-  const promptRecipes = read("skills/gpt-5-4-prompting/references/codex-prompt-recipes.md");
+  const promptingSkill = read("skills/codex-prompting/SKILL.md");
+  const promptRecipes = read("skills/codex-prompting/references/codex-prompt-recipes.md");
 
   assert.match(runtimeSkill, /codex-companion\.ts" task "<raw arguments>"/);
   assert.match(runtimeSkill, /Use `task` for every rescue request/i);

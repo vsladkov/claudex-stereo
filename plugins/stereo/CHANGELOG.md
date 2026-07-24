@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1
+
+- Session end kills its own running jobs before probing the shared broker, so ending a session mid-task reliably reaps the broker instead of leaving it running forever
+- Interrupt abandoned turns even when the owner dies before `turn/started` arrives; re-interrupt and extend the recovery gate once if the turn ignores the first interrupt; stop forwarding an orphaned turn's completion to unrelated clients
+- Grow markdown fences past embedded backtick runs when rendering raw Codex output, so reviewer prose containing code blocks cannot break report formatting
+- Require `--thread` for plan-review rounds above 1 (the revision framing is meaningless in a fresh thread)
+- Cap retained app-server stderr at 64KB in direct-session clients
+- Replace nonexistent `gpt-5.4` model names in README examples and the prompting skill (now `codex-prompting`) with the real aliases; document `--model` on `/stereo:review` and `/stereo:adversarial-review`
+
 ## 1.2.0
 
 - Migrate the runtime to TypeScript: layered `src/` architecture (cli, workflows, runtime, jobs, broker, transport, workspace, render, models, shared) running natively on Node >= 24 type stripping - no build step; typed model registry as the provider expansion point
