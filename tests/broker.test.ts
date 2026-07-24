@@ -283,6 +283,63 @@ async function startBroker(
   };
 }
 
+test("a client that vanishes mid-turn gets its turn interrupted and the broker recovers", async (t) => {
+  const broker = await startBroker(t, "slow-turn");
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request("thread/start", {
+    cwd: broker.cwd,
+    sandbox: "read-only",
+    ephemeral: false
+  });
+  const threadId = started.result.thread.id;
+  const turn = await owner.request("turn/start", {
+    threadId,
+    input: [{ type: "text", text: "abandon this stream", text_elements: [] }]
+  });
+  assert.equal(turn.error, undefined);
+  await owner.waitForNotification(
+    (message) => message.method === "turn/started" && message.params?.threadId === threadId
+  );
+
+  // The owner dies mid-turn (crashed CLI, killed worker, stop-gate timeout).
+  owner.socket.destroy();
+
+  // The broker must interrupt the abandoned turn on codex's side...
+  await waitFor(() => {
+    const stateFile = path.join(broker.binDir, "fake-codex-state.json");
+    if (!fs.existsSync(stateFile)) {
+      return false;
+    }
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    return state.lastInterrupt?.threadId === threadId;
+  });
+
+  // ...and become usable again for the next client once the turn resolves.
+  const successor = createJsonlClient(broker.endpoint);
+  t.after(() => successor.close());
+  await initializeClient(successor);
+  await waitFor(async () => {
+    const restarted = await successor.request("thread/start", {
+      cwd: broker.cwd,
+      sandbox: "read-only",
+      ephemeral: false
+    });
+    if (restarted.error) {
+      // Still inside the abandoned-turn grace window for streaming work.
+      return false;
+    }
+    const retry = await successor.request("turn/start", {
+      threadId: restarted.result.thread.id,
+      input: [{ type: "text", text: "fresh turn after recovery", text_elements: [] }]
+    });
+    return retry.error === undefined;
+  }, { timeoutMs: 8000, intervalMs: 200 });
+  assert.equal(processIsAlive(broker.child.pid), true);
+});
+
 test("guarded broker shutdown refuses while another client owns an active stream", async (t) => {
   const broker = await startBroker(t, "slow-turn");
   const owner = createJsonlClient(broker.endpoint);

@@ -99,6 +99,16 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   let activeRequestSocket: net.Socket | null = null;
   let activeStreamSocket: net.Socket | null = null;
   let activeStreamThreadIds: Set<string> | null = null;
+  // turn/started can arrive before or after the turn/start response installs
+  // the stream socket, so in-flight turn identities are tracked in a map
+  // keyed by thread (deleted again on turn/completed) instead of a single
+  // install-ordered variable.
+  const runningTurns = new Map<string, string>();
+  // A client that vanishes mid-turn leaves codex running work nobody will
+  // read. Remember the abandoned turn, ask codex to interrupt it, and refuse
+  // new streaming work until it completes (or the grace window expires).
+  const ORPHAN_GRACE_MS = 10_000;
+  let orphanedTurn: { threadIds: Set<string>; at: number } | null = null;
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let serverClosePromise: Promise<void> | null = null;
@@ -109,6 +119,24 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
       activeRequestSocket = null;
     }
     if (activeStreamSocket === socket) {
+      if (activeStreamThreadIds && activeStreamThreadIds.size > 0) {
+        orphanedTurn = { threadIds: new Set(activeStreamThreadIds), at: Date.now() };
+        for (const threadId of activeStreamThreadIds) {
+          const turnId = runningTurns.get(threadId);
+          if (!turnId) {
+            continue;
+          }
+          void appClient
+            .request(
+              "turn/interrupt" as AppServerMethod,
+              { threadId, turnId } as AppServerRequestParams<AppServerMethod>
+            )
+            .catch(() => {
+              // Best effort: if the interrupt fails, the grace window still
+              // clears the orphan marker.
+            });
+        }
+      }
       activeStreamSocket = null;
       activeStreamThreadIds = null;
     }
@@ -122,6 +150,24 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   const pendingStreamCompletions = new Set<string>();
 
   function routeNotification(message: AppServerNotification): void {
+    const notifParams = message.params as
+      | { threadId?: string | null; turn?: { id?: string | null } | null; turnId?: string | null }
+      | undefined;
+    const notifThreadId = notifParams?.threadId ?? null;
+    if (message.method === "turn/started" && notifThreadId) {
+      const turnId = notifParams?.turnId ?? notifParams?.turn?.id ?? null;
+      if (turnId) {
+        runningTurns.set(notifThreadId, turnId);
+      }
+    }
+    if (message.method === "turn/completed" && notifThreadId) {
+      runningTurns.delete(notifThreadId);
+      // The orphan's completion usually arrives with no connected client, so
+      // this must run before the target check below.
+      if (orphanedTurn?.threadIds.has(notifThreadId)) {
+        orphanedTurn = null;
+      }
+    }
     const target = activeRequestSocket ?? activeStreamSocket;
     if (!target) {
       return;
@@ -325,6 +371,16 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
         }
 
         const isStreaming = STREAMING_METHODS.has(message.method as string);
+        if (orphanedTurn && Date.now() - orphanedTurn.at >= ORPHAN_GRACE_MS) {
+          orphanedTurn = null;
+        }
+        if (isStreaming && orphanedTurn) {
+          send(socket, {
+            id: message.id,
+            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, "Shared Codex broker is finishing an abandoned turn.")
+          });
+          continue;
+        }
         activeRequestSocket = socket;
 
         try {

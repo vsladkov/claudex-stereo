@@ -318,10 +318,18 @@ export function completeTurn(state: TurnCaptureState, turn: Turn | null = null, 
       state.turnId = turn.id;
     }
   } else if (!state.finalTurn) {
+    // Complete synthetic (no cast): a consumer reading items/error/timestamps
+    // on an inferred completion gets honest empty values, not undefined.
     state.finalTurn = {
       id: state.turnId ?? "inferred-turn",
-      status: "completed"
-    } as Turn;
+      status: "completed",
+      items: [],
+      itemsView: "notLoaded",
+      error: null,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null
+    };
   }
 
   if (options.inferred) {

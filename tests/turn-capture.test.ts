@@ -156,7 +156,16 @@ test("completeTurn resolves the completion promise exactly once", async () => {
   const inferred = createTurnCaptureState("thread-2");
   completeTurn(inferred);
   const inferredState = await inferred.completion;
-  assert.deepEqual(inferredState.finalTurn, { id: "inferred-turn", status: "completed" });
+  assert.deepEqual(inferredState.finalTurn, {
+    id: "inferred-turn",
+    status: "completed",
+    items: [],
+    itemsView: "notLoaded",
+    error: null,
+    startedAt: null,
+    completedAt: null,
+    durationMs: null
+  });
 });
 
 test("captureTurn records malformed notifications instead of throwing", async () => {
