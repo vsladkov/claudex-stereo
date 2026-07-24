@@ -4,7 +4,7 @@ import process from "node:process";
 
 import { writeExecutable } from "./helpers.ts";
 
-export function installFakeCodex(binDir, behavior = "review-ok") {
+export function installFakeCodex(binDir: string, behavior = "review-ok"): void {
   const statePath = path.join(binDir, "fake-codex-state.json");
   const scriptPath = path.join(binDir, "codex");
   const source = `#!/usr/bin/env node
@@ -786,7 +786,9 @@ rl.on("line", (line) => {
   }
 }
 
-export function buildEnv(binDir) {
+export type FakeCodexEnv = NodeJS.ProcessEnv & { PATH: string; CODEX_HOME: string };
+
+export function buildEnv(binDir: string): FakeCodexEnv {
   const sep = process.platform === "win32" ? ";" : ":";
   return {
     ...process.env,

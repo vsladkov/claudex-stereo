@@ -3,10 +3,11 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
-import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
+import { buildEnv, installFakeCodex } from "./fake-codex-fixture.ts";
 import { makeTempDir } from "./helpers.ts";
 import { createBrokerEndpoint, parseBrokerEndpoint } from "../plugins/stereo/src/broker/endpoint.ts";
 import { BROKER_BUSY_RPC_CODE } from "../plugins/stereo/src/transport/app-server-client.ts";
@@ -23,20 +24,54 @@ import {
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BROKER_SCRIPT = path.join(ROOT, "plugins", "stereo", "scripts", "app-server-broker.ts");
 
-function delay(milliseconds) {
+// Minimal shape of the JSONL frames the broker exchanges; payloads stay loose
+// on purpose so assertions read exactly like the pre-migration test.
+interface BrokerMessage {
+  id?: number | null;
+  method?: string;
+  params?: Record<string, any>;
+  result?: any;
+  error?: any;
+}
+
+interface PendingWaiter {
+  resolve: (message: BrokerMessage) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+}
+
+interface NotificationWaiter {
+  predicate: (message: BrokerMessage) => boolean;
+  resolve: (message: BrokerMessage) => void;
+  timeout: NodeJS.Timeout;
+}
+
+// The union hides accepted-variant fields behind the discriminant; the tests
+// assert on both variants' fields, so widen to one shape locally.
+interface ShutdownOutcomeShape {
+  accepted: boolean;
+  pid?: number;
+  busy?: boolean;
+  detail?: string;
+}
+
+function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function processIsAlive(pid) {
+function processIsAlive(pid: number | undefined): boolean {
   try {
-    process.kill(pid, 0);
+    process.kill(pid!, 0);
     return true;
   } catch (error) {
-    return error?.code !== "ESRCH";
+    return (error as NodeJS.ErrnoException | null)?.code !== "ESRCH";
   }
 }
 
-async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 25 } = {}) {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  { timeoutMs = 5000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<boolean> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const value = await predicate();
@@ -48,7 +83,7 @@ async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 25 } = {}) {
   throw new Error("Timed out waiting for broker test condition.");
 }
 
-function createJsonlClient(endpoint) {
+function createJsonlClient(endpoint: string) {
   const target = parseBrokerEndpoint(endpoint);
   const socket = net.createConnection({ path: target.path });
   socket.setEncoding("utf8");
@@ -56,29 +91,29 @@ function createJsonlClient(endpoint) {
   let buffer = "";
   let connected = false;
   let closed = false;
-  const pending = new Map();
-  const notifications = [];
-  const notificationWaiters = [];
+  const pending = new Map<number, PendingWaiter>();
+  const notifications: BrokerMessage[] = [];
+  const notificationWaiters: NotificationWaiter[] = [];
 
-  const ready = new Promise((resolve, reject) => {
+  const ready = new Promise<void>((resolve, reject) => {
     socket.once("connect", () => {
       connected = true;
       resolve();
     });
     socket.once("error", reject);
   });
-  const closedPromise = new Promise((resolve) => {
+  const closedPromise = new Promise<void>((resolve) => {
     socket.once("close", () => {
       closed = true;
       resolve();
     });
   });
 
-  function dispatch(message) {
+  function dispatch(message: BrokerMessage) {
     if (message.id !== undefined) {
-      const waiter = pending.get(message.id);
+      const waiter = pending.get(message.id!);
       if (waiter) {
-        pending.delete(message.id);
+        pending.delete(message.id!);
         clearTimeout(waiter.timeout);
         waiter.resolve(message);
       }
@@ -114,11 +149,11 @@ function createJsonlClient(endpoint) {
     pending.clear();
   });
 
-  async function request(method, params = {}, timeoutMs = 4000) {
+  async function request(method: string, params: Record<string, unknown> = {}, timeoutMs = 4000): Promise<BrokerMessage> {
     await ready;
     const id = nextId;
     nextId += 1;
-    const response = new Promise((resolve, reject) => {
+    const response = new Promise<BrokerMessage>((resolve, reject) => {
       const timeout = setTimeout(() => {
         pending.delete(id);
         reject(new Error(`Timed out waiting for ${method}.`));
@@ -129,13 +164,13 @@ function createJsonlClient(endpoint) {
     return response;
   }
 
-  function waitForNotification(predicate, timeoutMs = 4000) {
+  function waitForNotification(predicate: (message: BrokerMessage) => boolean, timeoutMs = 4000): Promise<BrokerMessage> {
     const existing = notifications.find(predicate);
     if (existing) {
       return Promise.resolve(existing);
     }
-    return new Promise((resolve, reject) => {
-      const waiter = {
+    return new Promise<BrokerMessage>((resolve, reject) => {
+      const waiter: NotificationWaiter = {
         predicate,
         resolve,
         timeout: setTimeout(() => {
@@ -168,7 +203,9 @@ function createJsonlClient(endpoint) {
   };
 }
 
-async function initializeClient(client) {
+type JsonlClient = ReturnType<typeof createJsonlClient>;
+
+async function initializeClient(client: JsonlClient): Promise<void> {
   const response = await client.request("initialize", {
     clientInfo: { name: "broker-test", version: "1" },
     capabilities: { experimentalApi: true }
@@ -177,7 +214,11 @@ async function initializeClient(client) {
   client.socket.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
 }
 
-async function startBroker(t, behavior = "review-ok", options = {}) {
+async function startBroker(
+  t: TestContext,
+  behavior = "review-ok",
+  options: { cwd?: string; binDir?: string; saveState?: boolean } = {}
+) {
   const cwd = options.cwd ?? makeTempDir("broker-workspace-");
   const binDir = options.binDir ?? makeTempDir("broker-bin-");
   const sessionDir = makeTempDir("broker-session-");
@@ -199,7 +240,7 @@ async function startBroker(t, behavior = "review-ok", options = {}) {
 
   const session = {
     endpoint,
-    pid: child.pid,
+    pid: child.pid!,
     pidFile,
     logFile,
     sessionDir
@@ -242,7 +283,7 @@ test("guarded broker shutdown refuses while another client owns an active stream
   });
   assert.equal(turn.error, undefined);
 
-  const outcome = await sendBrokerShutdownIfIdle(broker.endpoint);
+  const outcome: ShutdownOutcomeShape = await sendBrokerShutdownIfIdle(broker.endpoint);
   assert.equal(outcome.accepted, false);
   assert.equal(outcome.busy, true);
   await owner.waitForNotification(
@@ -270,7 +311,7 @@ test("guarded broker shutdown refuses in the inter-RPC resume window", async (t)
   });
   assert.equal(resumed.error, undefined);
 
-  const outcome = await sendBrokerShutdownIfIdle(broker.endpoint);
+  const outcome: ShutdownOutcomeShape = await sendBrokerShutdownIfIdle(broker.endpoint);
   assert.equal(outcome.accepted, false);
   assert.equal(outcome.busy, true);
   assert.equal(processIsAlive(broker.child.pid), true);
@@ -279,7 +320,7 @@ test("guarded broker shutdown refuses in the inter-RPC resume window", async (t)
 test("guarded idle shutdown returns only after broker teardown is complete", async (t) => {
   const broker = await startBroker(t);
   const target = parseBrokerEndpoint(broker.endpoint);
-  const outcome = await sendBrokerShutdownIfIdle(broker.endpoint);
+  const outcome: ShutdownOutcomeShape = await sendBrokerShutdownIfIdle(broker.endpoint);
 
   assert.equal(outcome.accepted, true);
   assert.equal(outcome.pid, broker.child.pid);
@@ -305,9 +346,9 @@ test("guarded idle shutdown waits for a slow child exit before stale-session rec
     scriptPath: BROKER_SCRIPT,
     timeoutMs: 4000
   });
-  assert.notEqual(replacement.endpoint, broker.endpoint);
-  assert.equal(await waitForBrokerEndpoint(replacement.endpoint, 1000), true);
-  await sendBrokerShutdown(replacement.endpoint);
+  assert.notEqual(replacement!.endpoint, broker.endpoint);
+  assert.equal(await waitForBrokerEndpoint(replacement!.endpoint, 1000), true);
+  await sendBrokerShutdown(replacement!.endpoint);
 });
 
 test("broker propagates an unexpected child app-server death to front clients", async (t) => {
@@ -359,7 +400,7 @@ test("busy guarded drain leaves the companion broker state untouched", async (t)
   await initializeClient(owner);
   const before = loadBrokerSession(broker.cwd);
 
-  const outcome = await sendBrokerShutdownIfIdle(broker.endpoint);
+  const outcome: ShutdownOutcomeShape = await sendBrokerShutdownIfIdle(broker.endpoint);
   assert.equal(outcome.accepted, false);
   assert.equal(outcome.busy, true);
   assert.deepEqual(loadBrokerSession(broker.cwd), before);
@@ -407,7 +448,7 @@ test("garbage input gets a -32700 reply and cannot crash the shared broker", asy
   const broker = await startBroker(t);
   const target = parseBrokerEndpoint(broker.endpoint);
 
-  const lines = [];
+  const lines: BrokerMessage[] = [];
   const raw = net.createConnection({ path: target.path });
   raw.setEncoding("utf8");
   let rawBuffer = "";
@@ -429,9 +470,9 @@ test("garbage input gets a -32700 reply and cannot crash the shared broker", asy
   });
   raw.write("this is not json\n");
   await waitFor(() => lines.length > 0);
-  assert.equal(lines[0].id, null);
-  assert.equal(lines[0].error.code, -32700);
-  assert.match(lines[0].error.message, /Invalid JSON/);
+  assert.equal(lines[0]!.id, null);
+  assert.equal(lines[0]!.error.code, -32700);
+  assert.match(lines[0]!.error.message, /Invalid JSON/);
 
   // Half-close immediately after another garbage line; the broker's reply
   // write must not become an unhandled rejection that kills the process.

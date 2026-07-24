@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import test from "node:test";
+import type { TestContext } from "node:test";
 
 import { makeTempDir } from "./helpers.ts";
 import {
@@ -16,11 +17,12 @@ import {
   sortJobsNewestFirst
 } from "../plugins/stereo/src/jobs/job-control.ts";
 import { saveState } from "../plugins/stereo/src/workspace/state.ts";
+import type { JobRecord } from "../plugins/stereo/src/workspace/state.ts";
 
 const DEAD_PID = 2147483647;
 const IS_WINDOWS = process.platform === "win32";
 
-function useTempCodexHome(t) {
+function useTempCodexHome(t: TestContext): string {
   const previous = process.env.CODEX_HOME;
   const codexHome = makeTempDir("codex-home-");
   process.env.CODEX_HOME = codexHome;
@@ -34,7 +36,7 @@ function useTempCodexHome(t) {
   return codexHome;
 }
 
-function seedJobs(workspace, jobs) {
+function seedJobs(workspace: string, jobs: JobRecord[]): void {
   saveState(workspace, {
     version: 1,
     config: { stopReviewGate: false },
@@ -42,7 +44,7 @@ function seedJobs(workspace, jobs) {
   });
 }
 
-function jobAt(id, minute, patch = {}) {
+function jobAt(id: string, minute: number, patch: Partial<JobRecord> = {}): JobRecord {
   const stamp = `2026-03-18T15:${String(minute).padStart(2, "0")}:00.000Z`;
   return {
     id,
@@ -120,7 +122,7 @@ test("buildStatusSnapshot keeps recent finished jobs when many jobs are active",
 
   const snapshot = buildStatusSnapshot(workspace, { env: { CODEX_COMPANION_SESSION_ID: "sess-current" } });
   assert.equal(snapshot.running.length, 3);
-  assert.equal(snapshot.latestFinished.id, "finished-0");
+  assert.equal(snapshot.latestFinished!.id, "finished-0");
   // Active jobs must not consume the recent budget: 8 finished jobs beyond the
   // latest one are still listed.
   assert.equal(snapshot.recent.length, 8);

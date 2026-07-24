@@ -11,7 +11,7 @@
   "scripts": {
     "bump-version": "node scripts/bump-version.ts",
     "check-version": "node scripts/bump-version.ts --check",
-    "test": "node --test --require ./tests/env-bootstrap.cjs \"tests/*.test.mjs\" \"tests/*.test.ts\"",
+    "test": "node --test --require ./tests/env-bootstrap.cjs \"tests/*.test.ts\"",
     "pretypecheck": "mkdir -p plugins/stereo/.generated/app-server-types && codex app-server generate-ts --out plugins/stereo/.generated/app-server-types",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck"

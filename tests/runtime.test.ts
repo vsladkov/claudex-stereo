@@ -3,11 +3,12 @@ import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
+import { buildEnv, installFakeCodex } from "./fake-codex-fixture.ts";
 import { initGitRepo, makeTempDir, run } from "./helpers.ts";
 import { parseBrokerEndpoint } from "../plugins/stereo/src/broker/endpoint.ts";
 import {
@@ -18,6 +19,7 @@ import {
   spawnBrokerProcess,
   waitForBrokerEndpoint
 } from "../plugins/stereo/src/broker/lifecycle.ts";
+import type { BrokerSession } from "../plugins/stereo/src/broker/lifecycle.ts";
 import {
   acquireThreadReservation,
   releaseThreadReservation
@@ -31,7 +33,10 @@ const BROKER_SCRIPT = path.join(PLUGIN_ROOT, "scripts", "app-server-broker.ts");
 const STOP_HOOK = path.join(PLUGIN_ROOT, "scripts", "stop-review-gate-hook.ts");
 const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.ts");
 
-async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
+async function waitFor<T>(
+  predicate: () => T | Promise<T>,
+  { timeoutMs = 5000, intervalMs = 50 }: { timeoutMs?: number; intervalMs?: number } = {}
+): Promise<NonNullable<Awaited<T>>> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const value = await predicate();
@@ -43,7 +48,7 @@ async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
   throw new Error("Timed out waiting for condition.");
 }
 
-function withCodexHome(codexHome, fn) {
+function withCodexHome<T>(codexHome: string, fn: () => T): T {
   const previous = process.env.CODEX_HOME;
   process.env.CODEX_HOME = codexHome;
   try {
@@ -57,8 +62,8 @@ function withCodexHome(codexHome, fn) {
   }
 }
 
-function brokerEndpointConnectable(endpoint) {
-  return new Promise((resolve) => {
+function brokerEndpointConnectable(endpoint: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
     const socket = net.createConnection({ path: parseBrokerEndpoint(endpoint).path });
     socket.once("connect", () => {
       socket.end();
@@ -68,8 +73,19 @@ function brokerEndpointConnectable(endpoint) {
   });
 }
 
-function runNodeWithTimeout(args, options = {}) {
-  return new Promise((resolve, reject) => {
+interface NodeRunOutcome {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+function runNodeWithTimeout(
+  args: readonly string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}
+): Promise<NodeRunOutcome> {
+  return new Promise<NodeRunOutcome>((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: options.cwd,
       env: options.env,
@@ -105,11 +121,11 @@ function runNodeWithTimeout(args, options = {}) {
   });
 }
 
-function readFakeState(binDir) {
+function readFakeState(binDir: string): Record<string, any> {
   try {
     return JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
   } catch (error) {
-    if (error?.code === "ENOENT" || error instanceof SyntaxError) {
+    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT" || error instanceof SyntaxError) {
       return {};
     }
     throw error;
@@ -139,18 +155,26 @@ test("readFakeState treats missing and partially written fixture state as not re
   assert.equal(pollCount > 1, true);
 });
 
-function readCompanionState(cwd) {
+interface CompanionStateFile {
+  jobs: Array<Record<string, any>>;
+  [key: string]: any;
+}
+
+function readCompanionState(cwd: string): CompanionStateFile {
   return JSON.parse(fs.readFileSync(path.join(resolveStateDir(cwd), "state.json"), "utf8"));
 }
 
-function readJobLog(cwd, jobId) {
+function readJobLog(cwd: string, jobId: string): string {
   const state = readCompanionState(cwd);
   const job = state.jobs.find((candidate) => candidate.id === jobId);
   assert.ok(job, `Expected job ${jobId} in companion state.`);
   return fs.readFileSync(job.logFile, "utf8");
 }
 
-function findThreadReservation(codexHome, threadId) {
+function findThreadReservation(
+  codexHome: string,
+  threadId: string
+): { path: string; record: Record<string, any> } | null {
   const lockDir = path.join(codexHome, "companion-thread-locks");
   if (!fs.existsSync(lockDir)) {
     return null;
@@ -168,7 +192,7 @@ function findThreadReservation(codexHome, threadId) {
   return null;
 }
 
-function initializeBasicRepo() {
+function initializeBasicRepo(): string {
   const repo = makeTempDir();
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
@@ -177,7 +201,7 @@ function initializeBasicRepo() {
   return repo;
 }
 
-function registerSessionCleanup(t, cwd, env) {
+function registerSessionCleanup(t: TestContext, cwd: string, env: NodeJS.ProcessEnv): void {
   t.after(() => {
     run(process.execPath, [SESSION_HOOK, "SessionEnd"], {
       cwd,
@@ -291,7 +315,7 @@ test("setup and status surface stranded thread reservations on every route", (t)
       try {
         fs.unlinkSync(target);
       } catch (error) {
-        if (error?.code !== "ENOENT") {
+        if ((error as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
           throw error;
         }
       }
@@ -305,21 +329,21 @@ test("setup and status surface stranded thread reservations on every route", (t)
   const setupPayload = JSON.parse(setupJson.stdout);
   assert.equal(setupPayload.strandedReservations.length, 3);
   const cleanupEntry = setupPayload.strandedReservations.find(
-    (entry) => entry.kind === "stranded-cleanup"
+    (entry: Record<string, any>) => entry.kind === "stranded-cleanup"
   );
   const claimEntry = setupPayload.strandedReservations.find(
-    (entry) => entry.kind === "orphaned-claim"
+    (entry: Record<string, any>) => entry.kind === "orphaned-claim"
   );
   assert.ok(cleanupEntry);
   assert.ok(claimEntry);
 
   const cleanupStep = setupPayload.nextSteps.find(
-    (step) => step.includes(`\`${reservations.deadCleanup.path}\``)
+    (step: string) => step.includes(`\`${reservations.deadCleanup.path}\``)
   );
   assert.ok(cleanupStep);
   assert.ok(cleanupStep.includes(`\`${reservations.deadCleanup.cleanupPath}\``));
   const claimStep = setupPayload.nextSteps.find(
-    (step) => step.includes(`\`${reservations.liveOwner.cleanupPath}\``)
+    (step: string) => step.includes(`\`${reservations.liveOwner.cleanupPath}\``)
   );
   assert.ok(claimStep);
   assert.equal(claimStep.includes(`\`${reservations.liveOwner.path}\``), false);
@@ -391,7 +415,7 @@ test("setup reports a blocked write sandbox", { skip: process.platform === "win3
   assert.equal(payload.ready, true);
   assert.equal(payload.writeSandbox.available, false);
   assert.match(payload.writeSandbox.detail, /bwrap/);
-  assert.equal(payload.nextSteps.some((step) => /task --write|\/stereo:implement/.test(step)), true);
+  assert.equal(payload.nextSteps.some((step: string) => /task --write|\/stereo:implement/.test(step)), true);
 
   const renderedResult = run("node", [SCRIPT, "setup"], {
     cwd: ROOT,
@@ -415,7 +439,7 @@ test("setup treats an unsupported sandbox probe as inconclusive", { skip: proces
   const payload = JSON.parse(jsonResult.stdout);
   assert.equal(payload.writeSandbox.available, null);
   assert.match(payload.writeSandbox.detail, /unsupported/i);
-  assert.equal(payload.nextSteps.some((step) => /task --write|\/stereo:implement/.test(step)), false);
+  assert.equal(payload.nextSteps.some((step: string) => /task --write|\/stereo:implement/.test(step)), false);
 
   const renderedResult = run("node", [SCRIPT, "setup"], {
     cwd: ROOT,
@@ -572,7 +596,7 @@ test("a task-worker bootstrap failure marks the job failed instead of leaving it
 
   assert.notEqual(result.status, 0);
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
-  const ghost = state.jobs.find((job) => job.id === "task-ghost");
+  const ghost = state.jobs.find((job: Record<string, any>) => job.id === "task-ghost");
   assert.equal(ghost.status, "failed");
   assert.match(ghost.errorMessage, /No stored job found/);
 });
@@ -706,7 +730,7 @@ test("transfer delegates the current Claude session directly to native import", 
   assert.equal(fakeState.threads[0].name, "Native transfer");
   assert.equal(fakeState.lastExternalAgentImport.sourcePath, canonicalSourcePath);
   assert.deepEqual(
-    fakeState.threads[0].visibleMessages.map((message) => message.text),
+    fakeState.threads[0].visibleMessages.map((message: Record<string, any>) => message.text),
     ["Initial request", "Initial answer", "/stereo:transfer"]
   );
 });
@@ -1469,7 +1493,7 @@ test("review rejects focus text because it is native-review only", () => {
     env: buildEnv(binDir)
   });
 
-  assert.equal(result.status > 0, true);
+  assert.equal(result.status! > 0, true);
   assert.match(result.stderr, /does not support custom focus text/i);
   assert.match(result.stderr, /\/stereo:adversarial-review focus on auth/i);
 });
@@ -1490,7 +1514,7 @@ test("review rejects staged-only scope because it is native-review only", () => 
     env: buildEnv(binDir)
   });
 
-  assert.equal(result.status > 0, true);
+  assert.equal(result.status! > 0, true);
   assert.match(result.stderr, /Unsupported review scope "staged"/i);
   assert.match(result.stderr, /Use one of: auto, working-tree, branch, or pass --base <ref>/i);
 });
@@ -1511,7 +1535,7 @@ test("adversarial review rejects staged-only scope to match review target select
     env: buildEnv(binDir)
   });
 
-  assert.equal(result.status > 0, true);
+  assert.equal(result.status! > 0, true);
   assert.match(result.stderr, /Unsupported review scope "staged"/i);
   assert.match(result.stderr, /Use one of: auto, working-tree, branch, or pass --base <ref>/i);
 });
@@ -2114,10 +2138,10 @@ test("cancel stops an active background job and marks it cancelled", async (t) =
 
   t.after(() => {
     try {
-      process.kill(-sleeper.pid, "SIGTERM");
+      process.kill(-sleeper.pid!, "SIGTERM");
     } catch {
       try {
-        process.kill(sleeper.pid, "SIGTERM");
+        process.kill(sleeper.pid!, "SIGTERM");
       } catch {
         // Ignore missing process.
       }
@@ -2177,15 +2201,15 @@ test("cancel stops an active background job and marks it cancelled", async (t) =
 
   await waitFor(() => {
     try {
-      process.kill(sleeper.pid, 0);
+      process.kill(sleeper.pid!, 0);
       return false;
     } catch (error) {
-      return error?.code === "ESRCH";
+      return (error as NodeJS.ErrnoException | null)?.code === "ESRCH";
     }
   });
 
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
-  const cancelled = state.jobs.find((job) => job.id === "task-live");
+  const cancelled = state.jobs.find((job: Record<string, any>) => job.id === "task-live");
   assert.equal(cancelled.status, "cancelled");
   assert.equal(cancelled.pid, null);
 
@@ -2322,7 +2346,7 @@ test("cancel sends turn interrupt to the shared app-server before killing a brok
   const stateDir = resolveStateDir(repo);
   const runningJob = await waitFor(() => {
     const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
-    const job = state.jobs.find((candidate) => candidate.id === jobId);
+    const job = state.jobs.find((candidate: Record<string, any>) => candidate.id === jobId);
     if (job?.status === "running" && job.threadId && job.turnId) {
       return job;
     }
@@ -2395,10 +2419,10 @@ test("session end removes only the ending session's active jobs and preserves fi
 
   t.after(() => {
     try {
-      process.kill(-sleeper.pid, "SIGTERM");
+      process.kill(-sleeper.pid!, "SIGTERM");
     } catch {
       try {
-        process.kill(sleeper.pid, "SIGTERM");
+        process.kill(sleeper.pid!, "SIGTERM");
       } catch {
         // Ignore missing process.
       }
@@ -2480,16 +2504,16 @@ test("session end removes only the ending session's active jobs and preserves fi
 
   await waitFor(() => {
     try {
-      process.kill(sleeper.pid, 0);
+      process.kill(sleeper.pid!, 0);
       return false;
     } catch (error) {
-      return error?.code === "ESRCH";
+      return (error as NodeJS.ErrnoException | null)?.code === "ESRCH";
     }
   });
 
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
-  assert.deepEqual(state.jobs.map((job) => job.id).sort(), ["review-completed", "review-other"]);
-  assert.equal(state.jobs.every((job) => job.id !== "review-running"), true);
+  assert.deepEqual(state.jobs.map((job: Record<string, any>) => job.id).sort(), ["review-completed", "review-other"]);
+  assert.equal(state.jobs.every((job: Record<string, any>) => job.id !== "review-running"), true);
 });
 
 test("stop hook runs a stop-time review task and blocks on findings when the review gate is enabled", () => {
@@ -2810,7 +2834,7 @@ test("setup and status honor --cwd when reading shared session runtime", () => {
 
   saveBrokerSession(targetWorkspace, {
     endpoint: "unix:/tmp/fake-broker.sock"
-  });
+  } as BrokerSession);
 
   const status = run("node", [SCRIPT, "status", "--cwd", targetWorkspace], {
     cwd: invocationWorkspace
@@ -3162,7 +3186,7 @@ test("plan-review --background enqueues a detached worker and stores structured 
 
   const stateDir = resolveStateDir(repo);
   const stateAfterLaunch = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
-  const indexedAfterLaunch = stateAfterLaunch.jobs.find((job) => job.id === launchPayload.jobId);
+  const indexedAfterLaunch = stateAfterLaunch.jobs.find((job: Record<string, any>) => job.id === launchPayload.jobId);
   assert.ok(indexedAfterLaunch);
   assert.equal(Object.hasOwn(indexedAfterLaunch, "request"), false);
   const jobFile = path.join(stateDir, "jobs", `${launchPayload.jobId}.json`);
@@ -3201,7 +3225,7 @@ test("plan-review --background enqueues a detached worker and stores structured 
   assert.equal(resultPayload.storedJob.result.result.verdict, "needs-revision");
   assert.match(resultPayload.storedJob.rendered, /# Codex Plan Review/);
   const stateAfterCompletion = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
-  const indexedAfterCompletion = stateAfterCompletion.jobs.find((job) => job.id === launchPayload.jobId);
+  const indexedAfterCompletion = stateAfterCompletion.jobs.find((job: Record<string, any>) => job.id === launchPayload.jobId);
   assert.ok(indexedAfterCompletion);
   assert.equal(Object.hasOwn(indexedAfterCompletion, "request"), false);
   assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(jobFile, "utf8")), "request"), true);
@@ -3452,10 +3476,10 @@ test("an endpoint-pinned runtime is never drained after a private write retry", 
   assert.equal(write.status, 0, write.stderr);
   assert.equal(readFakeState(binDir).appServerStarts, 2);
   assert.equal(await brokerEndpointConnectable(endpoint), true);
-  assert.equal(process.kill(broker.pid, 0), true);
+  assert.equal(process.kill(broker.pid!, 0), true);
 
   const taskJob = readCompanionState(repo).jobs.find((job) => job.jobClass === "task");
-  assert.match(readJobLog(repo, taskJob.id), /not plugin-owned/i);
+  assert.match(readJobLog(repo, taskJob!.id), /not plugin-owned/i);
 });
 
 test("a resumed thread is reserved for exactly one run", async (t) => {
@@ -3543,7 +3567,7 @@ test("a fresh persistent thread is reserved before its id is published", async (
   const running = await waitFor(() => {
     const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
     const reservation = job?.threadId ? findThreadReservation(env.CODEX_HOME, job.threadId) : null;
-    const turnStarts = readFakeState(binDir).turnStarts ?? [];
+    const turnStarts: Array<Record<string, any>> = readFakeState(binDir).turnStarts ?? [];
     const turnStarted = job?.threadId
       ? turnStarts.some((entry) => entry.threadId === job.threadId)
       : false;
@@ -3558,7 +3582,7 @@ test("a fresh persistent thread is reserved before its id is published", async (
   assert.notEqual(competitor.status, 0);
   assert.match(competitor.stderr, new RegExp(`job ${jobId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   assert.equal(fs.existsSync(path.join(binDir, "fake-codex-state.json")), true);
-  const turnStarts = readFakeState(binDir).turnStarts ?? [];
+  const turnStarts: Array<Record<string, any>> = readFakeState(binDir).turnStarts ?? [];
   assert.equal(turnStarts.filter((entry) => entry.threadId === running.job.threadId).length, 1);
 
   const waited = run(
