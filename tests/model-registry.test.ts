@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   MODEL_REGISTRY,
   defaultPairEffort,
+  modelProviderFor,
   normalizeReasoningEffort,
   normalizeRequestedModel,
   registryEntryForModel
@@ -14,6 +15,10 @@ test("normalizeRequestedModel resolves the documented aliases to exact models", 
   assert.equal(normalizeRequestedModel("terra"), "gpt-5.6-terra");
   assert.equal(normalizeRequestedModel("luna"), "gpt-5.6-luna");
   assert.equal(normalizeRequestedModel("spark"), "gpt-5.3-codex-spark");
+  assert.equal(normalizeRequestedModel("kimi"), "kimi-k3");
+  assert.equal(normalizeRequestedModel("qwen"), "qwen3.7-plus");
+  assert.equal(normalizeRequestedModel("deepseek"), "deepseek-v4-pro");
+  assert.equal(normalizeRequestedModel("glm"), "glm-5.1");
 });
 
 test("normalizeRequestedModel matches aliases case-insensitively and trims whitespace", () => {
@@ -21,6 +26,8 @@ test("normalizeRequestedModel matches aliases case-insensitively and trims white
   assert.equal(normalizeRequestedModel("Terra"), "gpt-5.6-terra");
   assert.equal(normalizeRequestedModel("\tLuNa\n"), "gpt-5.6-luna");
   assert.equal(normalizeRequestedModel(" Spark"), "gpt-5.3-codex-spark");
+  assert.equal(normalizeRequestedModel(" KiMi "), "kimi-k3");
+  assert.equal(normalizeRequestedModel("QWEN"), "qwen3.7-plus");
 });
 
 test("normalizeRequestedModel passes unknown models through with original casing", () => {
@@ -36,12 +43,13 @@ test("normalizeRequestedModel returns null for null and empty input", () => {
   assert.equal(normalizeRequestedModel("   "), null);
 });
 
-test("defaultPairEffort gives max to the gpt-5.6 family and xhigh otherwise", () => {
+test("defaultPairEffort preserves OpenAI defaults and omits effort for unknown non-OpenAI models", () => {
   assert.equal(defaultPairEffort("gpt-5.6"), "max");
   assert.equal(defaultPairEffort("gpt-5.6-sol"), "max");
   assert.equal(defaultPairEffort("gpt-5.6-terra"), "max");
   assert.equal(defaultPairEffort("gpt-5.5"), "xhigh");
   assert.equal(defaultPairEffort("gpt-5.3-codex-spark"), "xhigh");
+  assert.equal(defaultPairEffort("some-chat-model"), null);
 });
 
 test("defaultPairEffort enforces the family prefix boundary", () => {
@@ -81,7 +89,23 @@ test("registry entries drive defaultPairEffort ahead of the family prefix rule",
   // Unregistered models still use the family prefix fallback.
   assert.equal(registryEntryForModel("gpt-5.6-nova"), null);
   assert.equal(defaultPairEffort("gpt-5.6-nova"), "max");
-  assert.equal(registryEntryForModel("kimi-k3"), null);
-  assert.equal(defaultPairEffort("kimi-k3"), "xhigh");
+  assert.deepEqual(registryEntryForModel("kimi-k3"), MODEL_REGISTRY.kimi);
+  assert.equal(defaultPairEffort("kimi-k3"), null);
 });
 
+test("provider models omit pair effort and route exact registered model ids", () => {
+  const expectedProviders = {
+    "kimi-k3": "moonshot",
+    "qwen3.7-plus": "dashscope",
+    "deepseek-v4-pro": "deepseek",
+    "glm-5.1": "zhipu"
+  };
+
+  for (const [model, provider] of Object.entries(expectedProviders)) {
+    assert.equal(defaultPairEffort(model), null);
+    assert.equal(modelProviderFor(model), provider);
+  }
+
+  assert.equal(modelProviderFor("some-chat-model"), null);
+  assert.equal(modelProviderFor("kimi-k3-custom"), null);
+});

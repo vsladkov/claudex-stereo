@@ -23,6 +23,7 @@ export const DEFAULT_CONTINUE_PROMPT =
 
 export interface ThreadSessionOptions {
   model?: string | null;
+  modelProvider?: string | null;
   approvalPolicy?: ThreadStartParams["approvalPolicy"];
   sandbox?: ThreadStartParams["sandbox"];
   ephemeral?: boolean | null;
@@ -37,6 +38,7 @@ export function buildThreadParams(cwd: string, options: ThreadSessionOptions = {
   return {
     cwd,
     model: options.model ?? null,
+    modelProvider: options.modelProvider ?? null,
     approvalPolicy: options.approvalPolicy ?? "never",
     sandbox: options.sandbox ?? "read-only",
     serviceName: SERVICE_NAME,
@@ -49,6 +51,7 @@ export function buildResumeParams(threadId: string, cwd: string, options: Thread
     threadId,
     cwd,
     model: options.model ?? null,
+    modelProvider: options.modelProvider ?? null,
     approvalPolicy: options.approvalPolicy ?? "never",
     sandbox: options.sandbox ?? "read-only"
   };

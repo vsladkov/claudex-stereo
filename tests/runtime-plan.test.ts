@@ -56,6 +56,47 @@ test("plan-review applies sol/max defaults and names a pair thread", () => {
   assert.match(fakeState.threads[0].name, /^Codex Companion Pair/);
 });
 
+test("plan-review routes provider aliases per thread and omits provider-unsafe effort", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const statePath = path.join(binDir, "fake-codex-state.json");
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const providerRun = run(
+    "node",
+    [SCRIPT, "plan-review", "--model", "kimi", "Review the provider routing plan"],
+    {
+      cwd: repo,
+      env: buildEnv(binDir)
+    }
+  );
+
+  assert.equal(providerRun.status, 0, providerRun.stderr);
+  const providerState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(providerState.lastThreadStart.model, "kimi-k3");
+  assert.equal(providerState.lastThreadStart.modelProvider, "moonshot");
+  assert.equal(providerState.lastTurnStart.effort, null);
+
+  const openAiRun = run(
+    "node",
+    [SCRIPT, "plan-review", "--model", "sol", "Review the OpenAI routing control"],
+    {
+      cwd: repo,
+      env: buildEnv(binDir)
+    }
+  );
+
+  assert.equal(openAiRun.status, 0, openAiRun.stderr);
+  const openAiState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(openAiState.lastThreadStart.model, "gpt-5.6-sol");
+  assert.equal(openAiState.lastThreadStart.modelProvider, "openai");
+  assert.equal(openAiState.lastTurnStart.effort, "max");
+});
+
 test("plan-review defaults 5.6-family model overrides to max", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -95,7 +136,7 @@ test("plan-review defaults 5.6-family model overrides to max", () => {
   assert.equal(aliasState.lastTurnStart.effort, "max");
 });
 
-test("plan-review keeps the xhigh default for non-5.6 models", () => {
+test("plan-review keeps the xhigh default for non-5.6 gpt models", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   const statePath = path.join(binDir, "fake-codex-state.json");

@@ -1,6 +1,6 @@
 ---
 description: Have Codex implement the plan approved in /stereo:plan, then review the diff and iterate until accepted
-argument-hint: '[--model <model|sol|terra|luna>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
+argument-hint: '[--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---

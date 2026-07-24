@@ -44,7 +44,7 @@ function buildThread(thread) {
     id: thread.id,
     preview: thread.preview || "",
     ephemeral: Boolean(thread.ephemeral),
-    modelProvider: "openai",
+    modelProvider: thread.modelProvider || "openai",
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     status: { type: "idle" },
@@ -323,6 +323,9 @@ if (args[0] !== "app-server") {
 const bootState = loadState();
 bootState.appServerStarts = (bootState.appServerStarts || 0) + 1;
 bootState.lastAppServerPid = process.pid;
+bootState.codexHome = process.env.CODEX_HOME || null;
+const configPath = process.env.CODEX_HOME ? path.join(process.env.CODEX_HOME, "config.toml") : null;
+bootState.configContents = configPath && fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf8") : null;
 saveState(bootState);
 
 const rl = readline.createInterface({ input: process.stdin });
@@ -375,8 +378,17 @@ rl.on("line", (line) => {
         if (requiresExperimental("persistExtendedHistory", message, state) || requiresExperimental("persistFullHistory", message, state)) {
           throw new Error("thread/start.persistFullHistory requires experimentalApi capability");
         }
+        const requestedProvider = message.params.modelProvider ?? "openai";
         const thread = nextThread(state, message.params.cwd, message.params.ephemeral);
-        send({ id: message.id, result: { thread: buildThread(thread), model: message.params.model || "gpt-5.4", modelProvider: "openai", serviceTier: null, cwd: thread.cwd, approvalPolicy: "never", sandbox: sandboxPolicy(message.params.sandbox), reasoningEffort: null } });
+        thread.modelProvider = requestedProvider;
+        state.lastThreadStart = {
+          model: message.params.model ?? null,
+          modelProvider: requestedProvider,
+          sandbox: message.params.sandbox ?? null,
+          cwd: message.params.cwd ?? null
+        };
+        saveState(state);
+        send({ id: message.id, result: { thread: buildThread(thread), model: message.params.model || "gpt-5.4", modelProvider: requestedProvider, serviceTier: null, cwd: thread.cwd, approvalPolicy: "never", sandbox: sandboxPolicy(message.params.sandbox), reasoningEffort: null } });
         send({ method: "thread/started", params: { thread: { id: thread.id } } });
         break;
       }
@@ -409,9 +421,12 @@ rl.on("line", (line) => {
         }
         const thread = ensureThread(state, message.params.threadId);
         thread.updatedAt = now();
+        const requestedProvider = message.params.modelProvider ?? "openai";
+        thread.modelProvider = requestedProvider;
         state.lastResume = {
           threadId: message.params.threadId,
           model: message.params.model ?? null,
+          modelProvider: requestedProvider,
           sandbox: message.params.sandbox ?? null
         };
         saveState(state);
@@ -420,7 +435,7 @@ rl.on("line", (line) => {
           (BEHAVIOR === "stale-write-escalation" && state.appServerStarts < 2)
             ? sandboxPolicy("read-only")
             : sandboxPolicy(message.params.sandbox);
-        send({ id: message.id, result: { thread: buildThread(thread), model: message.params.model || "gpt-5.4", modelProvider: "openai", serviceTier: null, cwd: thread.cwd, approvalPolicy: "never", sandbox: reportedSandbox, reasoningEffort: null } });
+        send({ id: message.id, result: { thread: buildThread(thread), model: message.params.model || "gpt-5.4", modelProvider: requestedProvider, serviceTier: null, cwd: thread.cwd, approvalPolicy: "never", sandbox: reportedSandbox, reasoningEffort: null } });
         if (BEHAVIOR === "die-after-resume") {
           setImmediate(() => process.exit(23));
         }
@@ -701,6 +716,25 @@ rl.on("line", (line) => {
                   }
               }
             ]
+            : []),
+          ...(BEHAVIOR === "provider-probe" && state.turnStarts.length === 1
+            ? [
+                {
+                  completed: {
+                    type: "commandExecution",
+                    id: "command_" + turnId,
+                    command: "node --version",
+                    cwd: thread.cwd,
+                    processId: null,
+                    source: "agent",
+                    status: "completed",
+                    commandActions: [],
+                    aggregatedOutput: process.version,
+                    exitCode: 0,
+                    durationMs: 1
+                  }
+                }
+              ]
             : []),
           {
             completed: { type: "agentMessage", id: "msg_" + turnId, text: payload, phase: "final_answer" }

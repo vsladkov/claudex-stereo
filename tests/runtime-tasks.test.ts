@@ -839,6 +839,40 @@ test("task --write --thread escalates the resumed thread to workspace-write", ()
   assert.equal(fakeState.lastTurnStart.prompt, "implement the approved plan");
 });
 
+test("task routes a registered provider model when resuming an explicit thread", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  const statePath = path.join(binDir, "fake-codex-state.json");
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const first = run("node", [SCRIPT, "plan-review", "--json", "Initial plan draft"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+  assert.equal(first.status, 0, first.stderr);
+  const threadId = JSON.parse(first.stdout).threadId;
+  assert.ok(threadId);
+
+  const resumed = run(
+    "node",
+    [SCRIPT, "task", "--thread", threadId, "--model", "deepseek", "continue through DeepSeek"],
+    {
+      cwd: repo,
+      env: buildEnv(binDir)
+    }
+  );
+
+  assert.equal(resumed.status, 0, resumed.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  assert.equal(fakeState.lastResume.threadId, threadId);
+  assert.equal(fakeState.lastResume.model, "deepseek-v4-pro");
+  assert.equal(fakeState.lastResume.modelProvider, "deepseek");
+});
+
 test("task rejects --thread combined with resume or fresh flags", () => {
   const repo = makeTempDir();
 

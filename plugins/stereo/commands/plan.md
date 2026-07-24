@@ -1,6 +1,6 @@
 ---
 description: Draft an implementation plan with Claude and iterate with Codex plan reviews until Codex approves it
-argument-hint: '[--model <model|sol|terra|luna>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
+argument-hint: '[--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---
@@ -18,7 +18,7 @@ Scope of the result-handling rules:
 - Inside the plan-review loop, act on Codex's findings and revise the plan without asking the user.
 
 Argument handling:
-- `--model` and `--effort` are runtime-selection flags. Forward them verbatim to every `plan-review` call. If unset, the companion defaults to `sol` (mapped to `gpt-5.6-sol`) at `max` effort; gpt-5.6-family model overrides also default to `max`, and other models default to `xhigh`.
+- `--model` and `--effort` are runtime-selection flags. Forward them verbatim to every `plan-review` call. If unset, the companion defaults to `sol` (mapped to `gpt-5.6-sol`) at `max` effort; gpt-5.6-family model overrides also default to `max`, other `gpt-*` models default to `xhigh`, and non-OpenAI models omit the effort override.
 - `--max-plan-rounds <n>` caps the review loop. If absent, the cap defaults to 6 — healthy loops approve in 2-5 rounds; a plan that cannot converge by then has a scope problem, not a detail problem.
 - All remaining text is the task description. If it is empty, ask the user what to plan before doing anything else.
 

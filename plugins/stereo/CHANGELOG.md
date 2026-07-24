@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+
+- Add Kimi, Qwen, DeepSeek, and GLM model aliases with per-thread custom-provider routing
+- Omit the pair workflow's default reasoning-effort override for third-party models while preserving existing OpenAI defaults
+- Document Codex's Responses-only custom-provider contract and add a user-runnable provider compatibility probe
+
 ## 1.2.1
 
 - Session end kills its own running jobs before probing the shared broker, so ending a session mid-task reliably reaps the broker instead of leaving it running forever

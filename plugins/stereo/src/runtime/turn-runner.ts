@@ -1,5 +1,6 @@
 import { WriteEscalationRetryError } from "../shared/errors.ts";
 import type { ReviewDelivery, ReviewTarget, ThreadStartParams, Turn, TurnStartParams } from "../protocol/app-server.ts";
+import { modelProviderFor } from "../models/registry.ts";
 import { BROKER_ENDPOINT_ENV, CodexAppServerClient } from "../transport/app-server-client.ts";
 import { loadBrokerSession } from "../broker/lifecycle.ts";
 import { getCodexAvailability } from "./availability.ts";
@@ -137,11 +138,13 @@ export async function runAppServerReview(cwd: string, options: RunAppServerRevie
   if (!availability.available) {
     throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.");
   }
+  const modelProvider = options.model ? modelProviderFor(options.model) : null;
 
   return withAppServer(cwd, async (client) => {
     emitProgress(options.onProgress, "Starting Codex review thread.", "starting");
     const thread = await startThread(client, cwd, {
       model: options.model,
+      modelProvider,
       sandbox: "read-only",
       ephemeral: true,
       threadName: options.threadName
@@ -222,6 +225,7 @@ export async function runAppServerTurn(cwd: string, options: RunAppServerTurnOpt
   if (!availability.available) {
     throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.");
   }
+  const modelProvider = options.model ? modelProviderFor(options.model) : null;
 
   const reservationMeta = {
     jobId: options.jobId ?? null,
@@ -240,6 +244,7 @@ export async function runAppServerTurn(cwd: string, options: RunAppServerTurnOpt
           emitProgress(options.onProgress, `Resuming thread ${options.resumeThreadId}.`, "starting");
           const response = await resumeThread(client, options.resumeThreadId, cwd, {
             model: options.model,
+            modelProvider,
             sandbox: options.sandbox,
             ephemeral: false
           });
@@ -265,6 +270,7 @@ export async function runAppServerTurn(cwd: string, options: RunAppServerTurnOpt
           emitProgress(options.onProgress, "Starting Codex task thread.", "starting");
           const response = await startThread(client, cwd, {
             model: options.model,
+            modelProvider,
             sandbox: options.sandbox,
             ephemeral: options.persistThread ? false : true,
             threadName: options.threadName ?? null,

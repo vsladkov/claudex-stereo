@@ -18,8 +18,8 @@ they already have.
 
 ## Requirements
 
-- **ChatGPT subscription (incl. Free) or OpenAI API key.**
-  - Usage will contribute to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
+- **Codex authentication or a configured custom model provider.**
+  - OpenAI-backed usage contributes to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
 - **Node.js 24 or later** (the plugin runs its TypeScript sources natively via Node's type stripping)
 
 ## Install
@@ -130,7 +130,7 @@ This command is read-only. It does not fix code.
 
 Starts the dual-model pair workflow: Claude drafts an implementation plan, then Codex adversarially reviews it in a persistent thread until it returns an `approve` verdict. Claude revises the plan between rounds, rebuts findings it can disprove, and may descope a finding into `## Out of scope` as a documented residual when fixing it would grow the plan beyond its goal - so the loop converges on a reviewable plan instead of accreting scope. Reviews are judged against the plan's own `## Goal` and `## Out of scope` sections; real but out-of-scope hazards come back as non-blocking `residual_risks` with follow-up-plan suggestions.
 
-By default the plan reviews run with the `sol` model alias (mapped to `gpt-5.6-sol`) at `max` reasoning effort. gpt-5.6-family model overrides also default to `max`; other models default to `xhigh`. Override either with `--model` and `--effort`. The loop is capped at 6 rounds by default (healthy reviews approve in 2-5); use `--max-plan-rounds <n>` to change the cap, and at the cap Claude offers to split the plan rather than iterate forever.
+By default the plan reviews run with the `sol` model alias (mapped to `gpt-5.6-sol`) at `max` reasoning effort. gpt-5.6-family model overrides also default to `max`, other `gpt-*` models default to `xhigh`, and non-OpenAI models omit the effort override. Override either with `--model` and `--effort`. The loop is capped at 6 rounds by default (healthy reviews approve in 2-5); use `--max-plan-rounds <n>` to change the cap, and at the cap Claude offers to split the plan rather than iterate forever.
 
 `terra` and `luna` map to `gpt-5.6-terra` and `gpt-5.6-luna`.
 
@@ -197,7 +197,7 @@ Ask Codex to redesign the database connection to be more resilient.
 **Notes:**
 
 - if you do not pass `--model` or `--effort`, Codex chooses its own defaults.
-- if you say `spark`, the plugin maps that to `gpt-5.3-codex-spark`
+- `spark` maps to `gpt-5.3-codex-spark`; third-party aliases are listed under [Other model providers](#other-model-providers)
 - follow-up rescue requests can continue the latest Codex task in the repo
 
 ### `/stereo:transfer`
@@ -346,6 +346,42 @@ Your configuration will be picked up based on:
 
 Check out the Codex docs for more [configuration options](https://developers.openai.com/codex/config-reference).
 
+### Other model providers
+
+Codex custom providers currently require `wire_api = "responses"`. A Chat Completions endpoint cannot be used directly: `wire_api = "chat"` is rejected by current Codex. Point `base_url` at an endpoint that actually speaks the Responses API, whether that is a provider-native endpoint or a gateway you operate.
+
+The plugin does not endorse or verify any third-party endpoint or gateway. Its aliases only select a model id and a `[model_providers.<id>]` table per thread. Start from a provider stanza like this in `$CODEX_HOME/config.toml` (normally `~/.codex/config.toml`):
+
+```toml
+[model_providers.example]
+name = "My Responses provider"
+base_url = "https://responses-speaking.example/v1"
+env_key = "EXAMPLE_API_KEY"
+wire_api = "responses"
+```
+
+Use the provider id from the table below in place of `example`. The URLs in the last column document the model ids and API keys; they are not claims that the provider's native endpoint implements the Responses API.
+
+| Alias | Model id | Provider table | Conventional key | Provider documentation |
+| --- | --- | --- | --- | --- |
+| `kimi` | `kimi-k3` | `[model_providers.moonshot]` | `MOONSHOT_API_KEY` | [Kimi API](https://platform.kimi.ai/docs/overview) |
+| `qwen` | `qwen3.7-plus` | `[model_providers.dashscope]` | `DASHSCOPE_API_KEY` | [Alibaba Cloud Model Studio](https://help.aliyun.com/en/model-studio/text-generation-model/) |
+| `deepseek` | `deepseek-v4-pro` | `[model_providers.deepseek]` | `DEEPSEEK_API_KEY` | [DeepSeek API](https://api-docs.deepseek.com/quick_start/pricing/) |
+| `glm` | `glm-5.1` | `[model_providers.zhipu]` | `ZAI_API_KEY` | [Z.AI API](https://docs.z.ai/guides/overview/migrate-to-glm-new) |
+
+Aliases and their exact registered model ids select the listed provider per thread. For example, both `--model kimi` and `--model kimi-k3` route to `model_providers.moonshot`. An unregistered raw model id is passed through unchanged with no provider override, so it uses your config's default `model_provider`.
+
+Before first use, save just the provider stanza to a temporary TOML file and run the compatibility probe from this repository checkout:
+
+```bash
+npm run provider-probe -- --config /path/to/provider-stanza.toml --model kimi-k3
+npm run provider-probe -- --config /path/to/provider-stanza.toml --model kimi-k3 --live
+```
+
+The first command starts Codex with a temporary `CODEX_HOME` to prove the stanza parses; it does not edit your real config. `--live` additionally requires the stanza's `env_key`, makes a tool-using turn and a follow-up turn in a scratch workspace, and may incur provider charges. Re-run it when a provider changes its endpoint or model catalog.
+
+Third-party structured-output and tool-calling fidelity varies. Run a small `/stereo:plan --model <alias> ...` round before trusting a provider with implementation work. Provider API-key billing and quotas are independent of ChatGPT plan quotas.
+
 ### Moving The Work Over To Codex
 
 Delegated tasks and any [stop gate](#what-does-the-review-gate-do) run can also be directly resumed inside Codex by running `codex resume` either with the specific session ID you received from running `/stereo:result` or `/stereo:status` or by selecting it from the list.
@@ -359,6 +395,8 @@ This way you can review the Codex work or continue the work there.
 If you are already signed into Codex on this machine, that account should work immediately here too. This plugin uses your local Codex CLI authentication.
 
 If you only use Claude Code today and have not used Codex yet, you will also need to sign in to Codex with either a ChatGPT account or an API key. [Codex is available with your ChatGPT subscription](https://developers.openai.com/codex/pricing/), and [`codex login`](https://developers.openai.com/codex/cli/reference/#codex-login) supports both ChatGPT and API key sign-in. Run `/stereo:setup` to check whether Codex is ready, and use `!codex login` if it is not.
+
+If you use only a custom provider, its `model_providers` stanza and environment key can satisfy runtime authentication instead; see [Other model providers](#other-model-providers).
 
 ### Does the plugin use a separate Codex runtime?
 
