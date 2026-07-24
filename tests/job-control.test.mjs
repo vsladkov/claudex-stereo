@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import test from "node:test";
 
-import { makeTempDir } from "./helpers.mjs";
+import { makeTempDir } from "./helpers.ts";
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,

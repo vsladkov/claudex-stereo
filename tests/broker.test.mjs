@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
-import { makeTempDir } from "./helpers.mjs";
-import { createBrokerEndpoint, parseBrokerEndpoint } from "../plugins/stereo/scripts/lib/broker-endpoint.mjs";
+import { makeTempDir } from "./helpers.ts";
+import { createBrokerEndpoint, parseBrokerEndpoint } from "../plugins/stereo/src/broker/endpoint.ts";
 import { BROKER_BUSY_RPC_CODE } from "../plugins/stereo/scripts/lib/app-server.mjs";
 import {
   ensureBrokerSession,

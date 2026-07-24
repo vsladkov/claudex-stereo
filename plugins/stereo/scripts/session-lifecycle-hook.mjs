@@ -3,8 +3,8 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { readStdinIfPiped } from "./lib/fs.mjs";
-import { terminateProcessTree } from "./lib/process.mjs";
+import { readStdinIfPiped } from "../src/shared/fs.ts";
+import { terminateProcessTree } from "../src/platform/process.ts";
 import { BROKER_ENDPOINT_ENV } from "./lib/app-server.mjs";
 import { releaseThreadReservationForCancelledJob } from "./lib/codex.mjs";
 import {

@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { terminateProcessTree } from "../plugins/stereo/scripts/lib/process.mjs";
+import { terminateProcessTree } from "../plugins/stereo/src/platform/process.ts";
 
 test("terminateProcessTree uses taskkill on Windows", () => {
   let captured = null;
   const outcome = terminateProcessTree(1234, {
     platform: "win32",
-    runCommandImpl(command, args) {
+    runCommandImpl(command: string, args: readonly string[] = []) {
       captured = { command, args };
       return {
         command,
@@ -35,7 +35,7 @@ test("terminateProcessTree uses taskkill on Windows", () => {
 test("terminateProcessTree treats missing Windows processes as already stopped", () => {
   const outcome = terminateProcessTree(1234, {
     platform: "win32",
-    runCommandImpl(command, args) {
+    runCommandImpl(command: string, args: readonly string[] = []) {
       return {
         command,
         args,
@@ -50,6 +50,7 @@ test("terminateProcessTree treats missing Windows processes as already stopped",
 
   assert.equal(outcome.attempted, true);
   assert.equal(outcome.method, "taskkill");
+  assert.ok(outcome.result);
   assert.equal(outcome.result.status, 128);
   assert.match(outcome.result.stdout, /not found/i);
 });

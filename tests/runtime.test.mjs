@@ -8,8 +8,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
-import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
-import { parseBrokerEndpoint } from "../plugins/stereo/scripts/lib/broker-endpoint.mjs";
+import { initGitRepo, makeTempDir, run } from "./helpers.ts";
+import { parseBrokerEndpoint } from "../plugins/stereo/src/broker/endpoint.ts";
 import {
   ensureBrokerSession,
   loadBrokerSession,
@@ -583,7 +583,9 @@ test("--json inside prompt text does not switch error output to JSON", () => {
 
   // Two argv entries so normalizeArgv keeps them as separate tokens and the
   // prompt text stays a positional (a single raw string would flag-parse it).
-  const result = run("node", [SCRIPT, "task", "--prompt-file", "does-not-exist.md", "explain the --json flag"], {
+  // process.execPath (not PATH-resolved "node"): the stripped PATH exists to
+  // hide codex, but must not swap in an older system node that cannot run .ts.
+  const result = run(process.execPath, [SCRIPT, "task", "--prompt-file", "does-not-exist.md", "explain the --json flag"], {
     cwd: repo,
     env: { ...process.env, PATH: "/usr/bin:/bin" }
   });

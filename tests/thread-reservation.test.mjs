@@ -12,7 +12,7 @@ import {
   releaseThreadReservation,
   releaseThreadReservationForCancelledJob
 } from "../plugins/stereo/scripts/lib/codex.mjs";
-import { makeTempDir } from "./helpers.mjs";
+import { makeTempDir } from "./helpers.ts";
 
 const DEAD_PID = 2147483647;
 

@@ -7,8 +7,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { getCodexAvailability } from "./lib/codex.mjs";
-import { readStdinIfPiped } from "./lib/fs.mjs";
-import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
+import { readStdinIfPiped } from "../src/shared/fs.ts";
+import { loadPromptTemplate, interpolateTemplate } from "../src/shared/prompts.ts";
 import { getConfig, listJobs } from "./lib/state.mjs";
 import { filterJobsForCurrentSession, sortJobsNewestFirst } from "./lib/job-control.mjs";
 import { SESSION_ID_ENV } from "./lib/tracked-jobs.mjs";

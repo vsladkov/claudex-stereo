@@ -4,17 +4,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
-import { makeTempDir, run } from "./helpers.mjs";
+import { makeTempDir, run } from "./helpers.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SCRIPT = path.join(ROOT, "scripts", "bump-version.mjs");
+const SCRIPT = path.join(ROOT, "scripts", "bump-version.ts");
 
-function writeJson(filePath, json) {
+function writeJson(filePath: string, json: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(json, null, 2)}\n`);
 }
 
-function readJson(filePath) {
+function readJson(filePath: string) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 

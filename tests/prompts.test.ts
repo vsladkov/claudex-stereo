@@ -3,7 +3,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { loadPromptTemplate, interpolateTemplate } from "../plugins/stereo/scripts/lib/prompts.mjs";
+import { loadPromptTemplate, interpolateTemplate } from "../plugins/stereo/src/shared/prompts.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "stereo");

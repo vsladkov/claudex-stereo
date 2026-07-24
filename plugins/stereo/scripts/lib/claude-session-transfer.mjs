@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ensureAbsolutePath } from "./fs.mjs";
+import { ensureAbsolutePath } from "../../src/shared/fs.ts";
 
 export const TRANSCRIPT_PATH_ENV = "CODEX_COMPANION_TRANSCRIPT_PATH";
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), ".claude", "projects");

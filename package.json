@@ -6,14 +6,15 @@
   "description": "Use Codex from Claude Code to review code or delegate tasks.",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=24"
   },
   "scripts": {
-    "bump-version": "node scripts/bump-version.mjs",
-    "check-version": "node scripts/bump-version.mjs --check",
-    "prebuild": "mkdir -p plugins/stereo/.generated/app-server-types && codex app-server generate-ts --out plugins/stereo/.generated/app-server-types",
-    "build": "tsc -p tsconfig.app-server.json",
-    "test": "node --test --require ./tests/env-bootstrap.cjs tests/*.test.mjs"
+    "bump-version": "node scripts/bump-version.ts",
+    "check-version": "node scripts/bump-version.ts --check",
+    "test": "node --test --require ./tests/env-bootstrap.cjs \"tests/*.test.mjs\" \"tests/*.test.ts\"",
+    "pretypecheck": "mkdir -p plugins/stereo/.generated/app-server-types && codex app-server generate-ts --out plugins/stereo/.generated/app-server-types",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

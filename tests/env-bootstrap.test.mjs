@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { makeTempDir, run } from "./helpers.mjs";
+import { makeTempDir, run } from "./helpers.ts";
 import { resolveStateDir } from "../plugins/stereo/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

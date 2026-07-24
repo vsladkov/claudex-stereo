@@ -5,7 +5,7 @@ import process from "node:process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { makeTempDir, initGitRepo, run } from "./helpers.mjs";
+import { makeTempDir, initGitRepo, run } from "./helpers.ts";
 import { resolveStateDir } from "../plugins/stereo/scripts/lib/state.mjs";
 import {
   evaluateStopReview,

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { writeExecutable } from "./helpers.mjs";
+import { writeExecutable } from "./helpers.ts";
 
 export function installFakeCodex(binDir, behavior = "review-ok") {
   const statePath = path.join(binDir, "fake-codex-state.json");

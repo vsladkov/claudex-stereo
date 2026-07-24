@@ -5,8 +5,8 @@ import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createBrokerEndpoint, parseBrokerEndpoint } from "./broker-endpoint.mjs";
-import { terminateProcessTree } from "./process.mjs";
+import { createBrokerEndpoint, parseBrokerEndpoint } from "../../src/broker/endpoint.ts";
+import { terminateProcessTree } from "../../src/platform/process.ts";
 import { resolveStateDir } from "./state.mjs";
 
 export const PID_FILE_ENV = "CODEX_COMPANION_APP_SERVER_PID_FILE";

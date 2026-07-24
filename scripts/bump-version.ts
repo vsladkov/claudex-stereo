@@ -5,7 +5,20 @@ import process from "node:process";
 
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-const TARGETS = [
+type JsonObject = Record<string, unknown>;
+
+interface VersionValue {
+  label: string;
+  get: (json: JsonObject) => unknown;
+  set: (json: JsonObject, version: string) => void;
+}
+
+interface VersionTarget {
+  file: string;
+  values: VersionValue[];
+}
+
+const TARGETS: VersionTarget[] = [
   {
     file: "package.json",
     values: [
@@ -29,11 +42,12 @@ const TARGETS = [
         }
       },
       {
-        label: "packages[\"\"].version",
-        get: (json) => json.packages?.[""]?.version,
+        label: 'packages[""].version',
+        get: (json) => rootPackageEntry(json)?.version,
         set: (json, version) => {
-          requireObject(json.packages?.[""], "package-lock.json packages[\"\"]");
-          json.packages[""].version = version;
+          const entry = rootPackageEntry(json);
+          requireObject(entry, 'package-lock.json packages[""]');
+          entry.version = version;
         }
       }
     ]
@@ -55,10 +69,10 @@ const TARGETS = [
     values: [
       {
         label: "metadata.version",
-        get: (json) => json.metadata?.version,
+        get: (json) => (json.metadata as JsonObject | undefined)?.version,
         set: (json, version) => {
           requireObject(json.metadata, ".claude-plugin/marketplace.json metadata");
-          json.metadata.version = version;
+          (json.metadata as JsonObject).version = version;
         }
       },
       {
@@ -72,11 +86,18 @@ const TARGETS = [
   }
 ];
 
-function usage() {
+interface CliOptions {
+  check: boolean;
+  root: string;
+  version: string | null;
+  help?: boolean;
+}
+
+function usage(): string {
   return [
     "Usage:",
-    "  node scripts/bump-version.mjs <version>",
-    "  node scripts/bump-version.mjs --check [version]",
+    "  node scripts/bump-version.ts <version>",
+    "  node scripts/bump-version.ts --check [version]",
     "",
     "Options:",
     "  --check       Verify manifest versions. Uses package.json when version is omitted.",
@@ -85,8 +106,8 @@ function usage() {
   ].join("\n");
 }
 
-function parseArgs(argv) {
-  const options = {
+function parseArgs(argv: readonly string[]): CliOptions {
+  const options: CliOptions = {
     check: false,
     root: process.cwd(),
     version: null
@@ -94,6 +115,9 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === undefined) {
+      continue;
+    }
 
     if (arg === "--check") {
       options.check = true;
@@ -119,35 +143,47 @@ function parseArgs(argv) {
   return options;
 }
 
-function validateVersion(version) {
+function validateVersion(version: string): void {
   if (!VERSION_PATTERN.test(version)) {
     throw new Error(`Expected a semver-like version such as 1.0.3, got: ${version}`);
   }
 }
 
-function requireObject(value, label) {
+function requireObject(value: unknown, label: string): asserts value is JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`Expected ${label} to be an object.`);
   }
 }
 
-function findMarketplacePlugin(json) {
-  const plugin = json.plugins?.find((entry) => entry?.name === "stereo");
+function rootPackageEntry(json: JsonObject): JsonObject | undefined {
+  const packages = json.packages;
+  if (!packages || typeof packages !== "object" || Array.isArray(packages)) {
+    return undefined;
+  }
+  const entry = (packages as JsonObject)[""];
+  return entry && typeof entry === "object" && !Array.isArray(entry) ? (entry as JsonObject) : undefined;
+}
+
+function findMarketplacePlugin(json: JsonObject): JsonObject {
+  const plugins = Array.isArray(json.plugins) ? (json.plugins as unknown[]) : [];
+  const plugin = plugins.find(
+    (entry) => entry && typeof entry === "object" && (entry as JsonObject).name === "stereo"
+  );
   requireObject(plugin, ".claude-plugin/marketplace.json plugins[stereo]");
   return plugin;
 }
 
-function readJson(root, file) {
+function readJson(root: string, file: string): JsonObject {
   const filePath = path.join(root, file);
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return JSON.parse(fs.readFileSync(filePath, "utf8")) as JsonObject;
 }
 
-function writeJson(root, file, json) {
+function writeJson(root: string, file: string, json: JsonObject): void {
   const filePath = path.join(root, file);
   fs.writeFileSync(filePath, `${JSON.stringify(json, null, 2)}\n`);
 }
 
-function readPackageVersion(root) {
+function readPackageVersion(root: string): string {
   const packageJson = readJson(root, "package.json");
   if (typeof packageJson.version !== "string") {
     throw new Error("package.json version must be a string.");
@@ -156,8 +192,8 @@ function readPackageVersion(root) {
   return packageJson.version;
 }
 
-function checkVersions(root, expectedVersion) {
-  const mismatches = [];
+function checkVersions(root: string, expectedVersion: string): string[] {
+  const mismatches: string[] = [];
 
   for (const target of TARGETS) {
     const json = readJson(root, target.file);
@@ -172,8 +208,8 @@ function checkVersions(root, expectedVersion) {
   return mismatches;
 }
 
-function bumpVersion(root, version) {
-  const changedFiles = [];
+function bumpVersion(root: string, version: string): string[] {
+  const changedFiles: string[] = [];
 
   for (const target of TARGETS) {
     const json = readJson(root, target.file);
@@ -192,7 +228,7 @@ function bumpVersion(root, version) {
   return changedFiles;
 }
 
-function main() {
+function main(): void {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     console.log(usage());

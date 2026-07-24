@@ -1,15 +1,60 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
-export function runCommand(command, args = [], options = {}) {
-  const result = spawnSync(command, args, {
+export interface RunCommandOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  input?: string;
+  maxBuffer?: number;
+  stdio?: "pipe" | "ignore" | "inherit";
+  shell?: boolean | string;
+}
+
+export interface CommandResult {
+  command: string;
+  args: readonly string[];
+  status: number;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  error: NodeJS.ErrnoException | null;
+}
+
+export type RunCommandFn = (command: string, args?: readonly string[], options?: RunCommandOptions) => CommandResult;
+
+export type KillFn = (pid: number, signal?: NodeJS.Signals | number) => unknown;
+
+export interface BinaryAvailability {
+  available: boolean;
+  detail: string;
+}
+
+export type TerminationMethod = "taskkill" | "kill" | "process-group" | "process" | null;
+
+export interface TerminationOutcome {
+  attempted: boolean;
+  delivered: boolean;
+  method: TerminationMethod;
+  result?: CommandResult;
+}
+
+export interface TerminateProcessTreeOptions {
+  platform?: NodeJS.Platform;
+  runCommandImpl?: RunCommandFn;
+  killImpl?: KillFn;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export function runCommand(command: string, args: readonly string[] = [], options: RunCommandOptions = {}): CommandResult {
+  const result = spawnSync(command, [...args], {
     cwd: options.cwd,
     env: options.env,
     encoding: "utf8",
     input: options.input,
     maxBuffer: options.maxBuffer,
     stdio: options.stdio ?? "pipe",
-    shell: options.shell ?? (process.platform === "win32" ? (process.env.SHELL || true) : false),
+    shell: options.shell ?? (process.platform === "win32" ? process.env.SHELL || true : false),
     windowsHide: true
   });
 
@@ -20,11 +65,11 @@ export function runCommand(command, args = [], options = {}) {
     signal: result.signal ?? null,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
-    error: result.error ?? null
+    error: (result.error as NodeJS.ErrnoException | undefined) ?? null
   };
 }
 
-export function runCommandChecked(command, args = [], options = {}) {
+export function runCommandChecked(command: string, args: readonly string[] = [], options: RunCommandOptions = {}): CommandResult {
   const result = runCommand(command, args, options);
   if (result.error) {
     throw result.error;
@@ -35,9 +80,13 @@ export function runCommandChecked(command, args = [], options = {}) {
   return result;
 }
 
-export function binaryAvailable(command, versionArgs = ["--version"], options = {}) {
+export function binaryAvailable(
+  command: string,
+  versionArgs: readonly string[] = ["--version"],
+  options: RunCommandOptions = {}
+): BinaryAvailability {
   const result = runCommand(command, versionArgs, options);
-  if (result.error && /** @type {NodeJS.ErrnoException} */ (result.error).code === "ENOENT") {
+  if (result.error && result.error.code === "ENOENT") {
     return { available: false, detail: "not found" };
   }
   if (result.error) {
@@ -50,18 +99,22 @@ export function binaryAvailable(command, versionArgs = ["--version"], options = 
   return { available: true, detail: result.stdout.trim() || result.stderr.trim() || "ok" };
 }
 
-function looksLikeMissingProcessMessage(text) {
+function looksLikeMissingProcessMessage(text: string): boolean {
   return /not found|no running instance|cannot find|does not exist|no such process/i.test(text);
 }
 
-export function terminateProcessTree(pid, options = {}) {
+function errorCode(error: unknown): string | undefined {
+  return error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : undefined;
+}
+
+export function terminateProcessTree(pid: number, options: TerminateProcessTreeOptions = {}): TerminationOutcome {
   if (!Number.isFinite(pid)) {
     return { attempted: false, delivered: false, method: null };
   }
 
   const platform = options.platform ?? process.platform;
   const runCommandImpl = options.runCommandImpl ?? runCommand;
-  const killImpl = options.killImpl ?? process.kill.bind(process);
+  const killImpl = options.killImpl ?? (process.kill.bind(process) as KillFn);
 
   if (platform === "win32") {
     const result = runCommandImpl("taskkill", ["/PID", String(pid), "/T", "/F"], {
@@ -83,7 +136,7 @@ export function terminateProcessTree(pid, options = {}) {
         killImpl(pid);
         return { attempted: true, delivered: true, method: "kill" };
       } catch (error) {
-        if (error?.code === "ESRCH") {
+        if (errorCode(error) === "ESRCH") {
           return { attempted: true, delivered: false, method: "kill" };
         }
         throw error;
@@ -101,12 +154,12 @@ export function terminateProcessTree(pid, options = {}) {
     killImpl(-pid, "SIGTERM");
     return { attempted: true, delivered: true, method: "process-group" };
   } catch (error) {
-    if (error?.code !== "ESRCH") {
+    if (errorCode(error) !== "ESRCH") {
       try {
         killImpl(pid, "SIGTERM");
         return { attempted: true, delivered: true, method: "process" };
       } catch (innerError) {
-        if (innerError?.code === "ESRCH") {
+        if (errorCode(innerError) === "ESRCH") {
           return { attempted: true, delivered: false, method: "process" };
         }
         throw innerError;
@@ -117,7 +170,7 @@ export function terminateProcessTree(pid, options = {}) {
   }
 }
 
-export function formatCommandFailure(result) {
+export function formatCommandFailure(result: CommandResult): string {
   const parts = [`${result.command} ${result.args.join(" ")}`.trim()];
   if (result.signal) {
     parts.push(`signal=${result.signal}`);

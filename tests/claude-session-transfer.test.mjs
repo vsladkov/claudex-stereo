@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import test from "node:test";
 
-import { makeTempDir } from "./helpers.mjs";
+import { makeTempDir } from "./helpers.ts";
 
 // CLAUDE_PROJECTS_DIR is derived from os.homedir() at module load, so the
 // temp HOME must be exported before the module is imported.

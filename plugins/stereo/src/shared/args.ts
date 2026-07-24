@@ -1,13 +1,29 @@
-export function parseArgs(argv, config = {}) {
+export interface ParseArgsConfig {
+  valueOptions?: readonly string[];
+  booleanOptions?: readonly string[];
+  aliasMap?: Readonly<Record<string, string>>;
+}
+
+export type ParsedOptionValue = string | boolean;
+
+export interface ParsedArgs {
+  options: Record<string, ParsedOptionValue>;
+  positionals: string[];
+}
+
+export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {}): ParsedArgs {
   const valueOptions = new Set(config.valueOptions ?? []);
   const booleanOptions = new Set(config.booleanOptions ?? []);
   const aliasMap = config.aliasMap ?? {};
-  const options = {};
-  const positionals = [];
+  const options: Record<string, ParsedOptionValue> = {};
+  const positionals: string[] = [];
   let passthrough = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
+    if (token === undefined) {
+      continue;
+    }
 
     if (passthrough) {
       positionals.push(token);
@@ -25,7 +41,7 @@ export function parseArgs(argv, config = {}) {
     }
 
     if (token.startsWith("--")) {
-      const [rawKey, inlineValue] = token.slice(2).split("=", 2);
+      const [rawKey = "", inlineValue] = token.slice(2).split("=", 2);
       const key = aliasMap[rawKey] ?? rawKey;
 
       if (booleanOptions.has(key)) {
@@ -73,10 +89,10 @@ export function parseArgs(argv, config = {}) {
   return { options, positionals };
 }
 
-export function splitRawArgumentString(raw) {
-  const tokens = [];
+export function splitRawArgumentString(raw: string): string[] {
+  const tokens: string[] = [];
   let current = "";
-  let quote = null;
+  let quote: string | null = null;
   let escaping = false;
 
   for (const character of raw) {
@@ -100,7 +116,7 @@ export function splitRawArgumentString(raw) {
       continue;
     }
 
-    if (character === "'" || character === "\"") {
+    if (character === "'" || character === '"') {
       quote = character;
       continue;
     }

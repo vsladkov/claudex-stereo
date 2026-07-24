@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { makeTempDir } from "./helpers.mjs";
+import { makeTempDir } from "./helpers.ts";
 import {
   loadState,
   resolveJobFile,

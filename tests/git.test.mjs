@@ -9,7 +9,7 @@ import {
   listRepositoryFiles,
   resolveReviewTarget
 } from "../plugins/stereo/scripts/lib/git.mjs";
-import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
+import { initGitRepo, makeTempDir, run } from "./helpers.ts";
 
 test("getWorkingTreeState preserves non-ASCII and quoted path text", () => {
   const cwd = makeTempDir();

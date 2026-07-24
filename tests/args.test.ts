@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseArgs, splitRawArgumentString } from "../plugins/stereo/scripts/lib/args.mjs";
+import { parseArgs, splitRawArgumentString } from "../plugins/stereo/src/shared/args.ts";
 
 test("parseArgs separates value options, boolean options, and positionals", () => {
   const { options, positionals } = parseArgs(

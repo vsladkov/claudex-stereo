@@ -40,10 +40,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { readJsonFile } from "./fs.mjs";
+import { readJsonFile } from "../../src/shared/fs.ts";
 import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV, CodexAppServerClient } from "./app-server.mjs";
 import { loadBrokerSession, sendBrokerShutdownIfIdle } from "./broker-lifecycle.mjs";
-import { binaryAvailable } from "./process.mjs";
+import { binaryAvailable } from "../../src/platform/process.ts";
 
 const SERVICE_NAME = "claude_code_codex_plugin";
 const TASK_THREAD_PREFIX = "Codex Companion Task";

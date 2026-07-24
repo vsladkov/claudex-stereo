@@ -12,9 +12,9 @@ import net from "node:net";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
-import { parseBrokerEndpoint } from "./broker-endpoint.mjs";
+import { parseBrokerEndpoint } from "../../src/broker/endpoint.ts";
 import { ensureBrokerSession, loadBrokerSession } from "./broker-lifecycle.mjs";
-import { terminateProcessTree } from "./process.mjs";
+import { terminateProcessTree } from "../../src/platform/process.ts";
 
 const PLUGIN_MANIFEST_URL = new URL("../../.claude-plugin/plugin.json", import.meta.url);
 const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, "utf8"));

@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { isProbablyText } from "./fs.mjs";
-import { formatCommandFailure, runCommand, runCommandChecked } from "./process.mjs";
+import { isProbablyText } from "../../src/shared/fs.ts";
+import { formatCommandFailure, runCommand, runCommandChecked } from "../../src/platform/process.ts";
 
 const MAX_UNTRACKED_BYTES = 24 * 1024;
 const DEFAULT_INLINE_DIFF_MAX_FILES = 2;

@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
+import { parseArgs, splitRawArgumentString } from "../src/shared/args.ts";
 import {
     buildPersistentPairThreadName,
     buildPersistentTaskThreadName,
@@ -27,11 +27,11 @@ import {
     runAppServerTurn
   } from "./lib/codex.mjs";
 import { resolveClaudeSessionPath } from "./lib/claude-session-transfer.mjs";
-import { readStdinIfPiped } from "./lib/fs.mjs";
+import { readStdinIfPiped } from "../src/shared/fs.ts";
 import { collectReviewContext, ensureGitRepository, listRepositoryFiles, resolveReviewTarget } from "./lib/git.mjs";
-import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
-import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
-import { serializeRepositoryMap } from "./lib/repo-map.mjs";
+import { binaryAvailable, terminateProcessTree } from "../src/platform/process.ts";
+import { loadPromptTemplate, interpolateTemplate } from "../src/shared/prompts.ts";
+import { serializeRepositoryMap } from "../src/workspace/repo-map.ts";
 import {
   generateJobId,
   getConfig,
