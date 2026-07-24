@@ -108,7 +108,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   // read. Remember the abandoned turn, ask codex to interrupt it, and refuse
   // new streaming work until it completes (or the grace window expires).
   const ORPHAN_GRACE_MS = 10_000;
-  let orphanedTurn: { threadIds: Set<string>; at: number; extended: boolean } | null = null;
+  let orphanedTurn: { threadIds: Set<string>; at: number } | null = null;
 
   function interruptRunningTurn(threadId: string): void {
     const turnId = runningTurns.get(threadId);
@@ -136,7 +136,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
     }
     if (activeStreamSocket === socket) {
       if (activeStreamThreadIds && activeStreamThreadIds.size > 0) {
-        orphanedTurn = { threadIds: new Set(activeStreamThreadIds), at: Date.now(), extended: false };
+        orphanedTurn = { threadIds: new Set(activeStreamThreadIds), at: Date.now() };
         for (const threadId of activeStreamThreadIds) {
           interruptRunningTurn(threadId);
         }
@@ -388,20 +388,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
 
         const isStreaming = STREAMING_METHODS.has(message.method as string);
         if (orphanedTurn && Date.now() - orphanedTurn.at >= ORPHAN_GRACE_MS) {
-          const stillRunning = [...orphanedTurn.threadIds].some((threadId) => runningTurns.has(threadId));
-          if (stillRunning && !orphanedTurn.extended) {
-            // The interrupt was lost or codex is winding down slowly: try
-            // once more and extend the gate one grace period before giving up.
-            for (const threadId of orphanedTurn.threadIds) {
-              interruptRunningTurn(threadId);
-            }
-            orphanedTurn = { ...orphanedTurn, at: Date.now(), extended: true };
-          } else {
-            if (stillRunning) {
-              process.stderr.write("broker: abandoned turn ignored two interrupts; reopening the stream gate\n");
-            }
-            orphanedTurn = null;
-          }
+          orphanedTurn = null;
         }
         if (isStreaming && orphanedTurn) {
           send(socket, {

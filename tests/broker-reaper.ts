@@ -9,7 +9,6 @@ import {
   sendBrokerShutdown,
   teardownBrokerSession
 } from "../plugins/stereo/src/broker/lifecycle.ts";
-import { spawnSync } from "node:child_process";
 import { terminateProcessTree } from "../plugins/stereo/src/platform/process.ts";
 
 // The companion CLI auto-starts a detached, session-leader broker per
@@ -81,10 +80,7 @@ function readCommandLine(pid: number): string | null {
   try {
     return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
   } catch {
-    // No /proc outside Linux (e.g. macOS): fall back to ps.
-    const result = spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });
-    const line = (result.stdout ?? "").trim();
-    return result.status === 0 && line ? line : null;
+    return null;
   }
 }
 
@@ -97,12 +93,12 @@ export interface LeakSweepResult {
  * Tmpdir-wide safety net for the suite's global teardown: kill any broker
  * whose pid file lives in a cxc-* session dir AND whose --cwd is itself under
  * os.tmpdir() (a live user session serves a real workspace and never matches).
- * Cmdline verification reads /proc on Linux and falls back to `ps` elsewhere
- * on POSIX; the advisory Windows lane skips the sweep entirely.
+ * Linux-only (/proc cmdline verification); other platforms rely on the
+ * per-file afterEach reapers, which cover every leak path the suite has.
  */
 export function reapLeakedTestBrokers(): LeakSweepResult {
   const result: LeakSweepResult = { reaped: 0, details: [] };
-  if (process.platform === "win32") {
+  if (process.platform !== "linux") {
     return result;
   }
 

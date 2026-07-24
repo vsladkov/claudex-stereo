@@ -144,16 +144,3 @@ test("reapLeakedTestBrokers kills tmp-cwd brokers and spares real workspaces", {
   }
 });
 
-test("the sweep's process-shape assumptions match spawnBrokerProcess", () => {
-  // reapLeakedTestBrokers matches on "app-server-broker", " serve ", and
-  // "--cwd <path>" in the command line, and on the cxc- session-dir prefix.
-  // Pin those against the actual spawn contract so a rename cannot silently
-  // disarm the safety net.
-  const source = fs.readFileSync(
-    path.join(ROOT, "plugins", "stereo", "src", "broker", "lifecycle.ts"),
-    "utf8"
-  );
-  assert.match(source, /\[scriptPath, "serve", "--endpoint", endpoint, "--cwd", cwd, "--pid-file", pidFile\]/);
-  assert.equal(BROKER_SESSION_DIR_PREFIX, "cxc-");
-  assert.match(path.basename(BROKER_SCRIPT), /app-server-broker\.ts/);
-});

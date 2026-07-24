@@ -1,8 +1,7 @@
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export interface ModelFamilyEntry {
+export interface ModelEntry {
   model: string;
-  family: string;
   defaultPairEffort: ReasoningEffort;
 }
 
@@ -22,11 +21,11 @@ export const PAIR_MODEL_OVERRIDE_EFFORT: ReasoningEffort = "xhigh"; // non-5.6 m
 export const PAIR_MAX_EFFORT_MODEL_FAMILY = "gpt-5.6";
 
 export const MODEL_REGISTRY = {
-  spark: { model: "gpt-5.3-codex-spark", family: "gpt-5.3-codex", defaultPairEffort: PAIR_MODEL_OVERRIDE_EFFORT },
-  sol: { model: "gpt-5.6-sol", family: PAIR_MAX_EFFORT_MODEL_FAMILY, defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  terra: { model: "gpt-5.6-terra", family: PAIR_MAX_EFFORT_MODEL_FAMILY, defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  luna: { model: "gpt-5.6-luna", family: PAIR_MAX_EFFORT_MODEL_FAMILY, defaultPairEffort: PAIR_DEFAULT_EFFORT }
-} satisfies Record<string, ModelFamilyEntry>;
+  spark: { model: "gpt-5.3-codex-spark", defaultPairEffort: PAIR_MODEL_OVERRIDE_EFFORT },
+  sol: { model: "gpt-5.6-sol", defaultPairEffort: PAIR_DEFAULT_EFFORT },
+  terra: { model: "gpt-5.6-terra", defaultPairEffort: PAIR_DEFAULT_EFFORT },
+  luna: { model: "gpt-5.6-luna", defaultPairEffort: PAIR_DEFAULT_EFFORT }
+} satisfies Record<string, ModelEntry>;
 
 // Alias lookup stays a Map keyed by the lowercased alias so exotic inputs
 // (e.g. "constructor") can never hit Object.prototype members.
@@ -34,11 +33,11 @@ const MODEL_ALIASES = new Map<string, string>(
   Object.entries(MODEL_REGISTRY).map(([alias, entry]) => [alias, entry.model])
 );
 
-const ENTRIES_BY_MODEL = new Map<string, ModelFamilyEntry>(
+const ENTRIES_BY_MODEL = new Map<string, ModelEntry>(
   Object.values(MODEL_REGISTRY).map((entry) => [entry.model, entry])
 );
 
-export function registryEntryForModel(resolvedModel: string): ModelFamilyEntry | null {
+export function registryEntryForModel(resolvedModel: string): ModelEntry | null {
   return ENTRIES_BY_MODEL.get(resolvedModel) ?? null;
 }
 
