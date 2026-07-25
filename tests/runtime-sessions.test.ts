@@ -729,7 +729,7 @@ test('a fresh persistent thread is reserved before its id is published', async (
 });
 
 test(
-  'SIGTERM terminalizes a background job and retains its in-flight reservation',
+  'SIGTERM terminalizes a background job and releases its reservation after orphan completion',
   { skip: process.platform === 'win32' },
   async (t) => {
     const repo = initializeBasicRepo();
@@ -814,21 +814,22 @@ test(
       { timeoutMs: 10000 },
     );
     assert.equal(cancelled.pid, null);
-    assert.equal(fs.existsSync(running.reservation.path), true);
+    // Signal-time cleanup still retains in-flight locks; the broker releases
+    // this one only after the abandoned turn's interrupt completion arrives.
+    await waitFor(() => !fs.existsSync(running.reservation.path), { timeoutMs: 10000 });
 
     const successor = run(
       process.execPath,
       [SCRIPT, 'task', '--thread', threadId, 'resume after the signalled worker'],
       { cwd: repo, env },
     );
-    assert.notEqual(successor.status, 0);
-    assert.match(successor.stderr, /appears to have crashed while reserving thread/i);
-    assert.ok(successor.stderr.includes(running.reservation.path));
+    assert.equal(successor.status, 0, successor.stderr);
+    assert.doesNotMatch(successor.stderr, /appears to have crashed while reserving thread/i);
   },
 );
 
 test(
-  'foreground SIGINT terminalizes the job and retains its in-flight reservation',
+  'foreground SIGINT releases its reservation after orphan completion',
   { skip: process.platform === 'win32' },
   async (t) => {
     const repo = initializeBasicRepo();
@@ -932,7 +933,16 @@ test(
       { timeoutMs: 10000 },
     );
     assert.equal(cancelled.pid, null);
-    assert.equal(fs.existsSync(running.reservation.path), true);
+    // As above, completion—not the signal handler—is the release proof.
+    await waitFor(() => !fs.existsSync(running.reservation.path), { timeoutMs: 10000 });
+
+    const successor = run(
+      process.execPath,
+      [SCRIPT, 'task', '--thread', threadId, 'resume after the foreground signal'],
+      { cwd: repo, env },
+    );
+    assert.equal(successor.status, 0, successor.stderr);
+    assert.doesNotMatch(successor.stderr, /appears to have crashed while reserving thread/i);
   },
 );
 
@@ -1053,11 +1063,12 @@ test('cancel never removes a foreign thread reservation', async (t) => {
     },
     { timeoutMs: 10000 },
   );
-  fs.writeFileSync(
-    reservation.path,
-    `${JSON.stringify({ ...reservation.record, jobId: 'foreign-job' })}\n`,
-    'utf8',
-  );
+  const foreignRecord = {
+    ...reservation.record,
+    jobId: 'foreign-job',
+    token: 'foreign-token',
+  };
+  fs.writeFileSync(reservation.path, `${JSON.stringify(foreignRecord)}\n`, 'utf8');
 
   const cancelled = run(process.execPath, [SCRIPT, 'cancel', jobId, '--json'], {
     cwd: repo,
@@ -1069,7 +1080,7 @@ test('cancel never removes a foreign thread reservation', async (t) => {
   assert.match(readJobLog(repo, jobId), /mismatch-skipped/);
   releaseThreadReservation({
     path: reservation.path,
-    token: reservation.record.token,
+    token: foreignRecord.token,
   });
 });
 

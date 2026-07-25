@@ -1,11 +1,19 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
-const THREAD_RESERVATION_DIR = 'companion-thread-locks';
+import {
+  claimAndDeleteThreadLock,
+  readReservationRecord,
+  resolveThreadReservationDir,
+  threadReservationPath,
+} from '../workspace/thread-lock-io.ts';
+import type { StoredReservationRecord } from '../workspace/thread-lock-io.ts';
+
 const THREAD_RESERVATION_DEATH_WAIT_MS = 2500;
 const THREAD_RESERVATION_POLL_MS = 50;
+
+export { resolveCodexHome } from '../workspace/thread-lock-io.ts';
 
 export interface ThreadReservationMeta {
   pid?: number;
@@ -76,19 +84,6 @@ export interface CancelledJobCleanupOptions extends ReservationOwnerDeathOptions
   }) => unknown | Promise<unknown>;
 }
 
-// Unvalidated reservation JSON read back from disk. Field types reflect what
-// the plugin writes; foreign or corrupted files may not conform, which every
-// consumer guards against.
-interface StoredReservationRecord {
-  invalid?: true;
-  error?: unknown;
-  token?: string;
-  pid?: number;
-  jobId?: string | null;
-  threadId?: string;
-  createdAt?: string;
-}
-
 interface ReservationLockRecord {
   pid: number;
   token: string;
@@ -105,30 +100,6 @@ interface ReservationClaimRecord {
 
 type ValidatedReservationRecord<T> =
   { state: 'valid'; record: T } | { state: 'missing' } | { state: 'invalid'; detail: string };
-
-export function resolveCodexHome(): string {
-  return path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
-}
-
-function resolveThreadReservationDir(): string {
-  return path.join(resolveCodexHome(), THREAD_RESERVATION_DIR);
-}
-
-function threadReservationPath(threadId: string): string {
-  const digest = crypto.createHash('sha256').update(String(threadId)).digest('hex').slice(0, 32);
-  return path.join(resolveThreadReservationDir(), `${digest}.lock`);
-}
-
-function readReservationRecord(lockPath: string): StoredReservationRecord | null {
-  try {
-    return JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'ENOENT') {
-      return null;
-    }
-    return { invalid: true, error };
-  }
-}
 
 function isValidReservationRecord(record: unknown, kind: 'lock' | 'claim'): boolean {
   const candidate = record as Record<string, unknown> | null | undefined;
@@ -624,68 +595,41 @@ export async function releaseThreadReservationForCancelledJob(
     if (!fs.existsSync(candidate.lockPath)) {
       continue;
     }
-    const cleanupPath = `${candidate.lockPath}.cleanup`;
-    try {
-      fs.writeFileSync(
-        cleanupPath,
-        `${JSON.stringify({ pid: process.pid, jobId, createdAt: new Date().toISOString() })}\n`,
-        { encoding: 'utf8', flag: 'wx' },
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'EEXIST') {
-        return {
-          released: false,
-          status: 'claim-skipped',
-          path: candidate.lockPath,
-          detail: `Reservation cleanup is already in progress for ${candidate.lockPath}.`,
-        };
-      }
-      throw error;
+    const outcome = await claimAndDeleteThreadLock(threadId ?? requestThreadId ?? '', {
+      lockPath: candidate.lockPath,
+      claimJobId: jobId,
+      verify: (current) => ({
+        ok: !current.invalid && current.jobId === jobId && current.pid === pid,
+        reason: `Reservation ${candidate.lockPath} belongs to a different owner.`,
+      }),
+      beforeUnlink: options.beforeUnlink,
+    });
+    if (outcome.status === 'claim-exists') {
+      return {
+        released: false,
+        status: 'claim-skipped',
+        path: candidate.lockPath,
+        detail: `Reservation cleanup is already in progress for ${candidate.lockPath}.`,
+      };
     }
-
-    try {
-      const current = readReservationRecord(candidate.lockPath);
-      if (!current) {
-        continue;
-      }
-      if (current.invalid || current.jobId !== jobId || current.pid !== pid) {
-        mismatch = {
-          released: false,
-          status: 'mismatch-skipped',
-          path: candidate.lockPath,
-          detail: `Reservation ${candidate.lockPath} belongs to a different owner.`,
-        };
-        continue;
-      }
-
-      await options.beforeUnlink?.({
-        lockPath: candidate.lockPath,
-        cleanupPath,
-        current,
-      });
-      try {
-        fs.unlinkSync(candidate.lockPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
-          throw error;
-        }
-      }
+    if (outcome.status === 'missing') {
+      continue;
+    }
+    if (outcome.status === 'verification-failed') {
+      mismatch = {
+        released: false,
+        status: 'mismatch-skipped',
+        path: candidate.lockPath,
+        detail: `Reservation ${candidate.lockPath} belongs to a different owner.`,
+      };
+      continue;
+    }
+    if (outcome.released) {
       return {
         released: true,
         status: candidate.source === 'scan' ? 'scan-released' : 'released',
         path: candidate.lockPath,
       };
-    } finally {
-      try {
-        fs.unlinkSync(cleanupPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
-          // A failed cleanup unlink outranks the loop's pending result on
-          // purpose: surfacing it beats silently leaving the claim file.
-          // eslint-disable-next-line no-unsafe-finally
-          throw error;
-        }
-      }
     }
   }
 

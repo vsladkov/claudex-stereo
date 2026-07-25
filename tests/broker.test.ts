@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -39,6 +40,7 @@ afterEach(async () => {
   }
 });
 const BROKER_SCRIPT = path.join(ROOT, 'plugins', 'stereo', 'scripts', 'app-server-broker.ts');
+const DEAD_PID = 2147483647;
 
 // Minimal shape of the JSONL frames the broker exchanges; payloads stay loose
 // on purpose so assertions read exactly like the pre-migration test.
@@ -184,6 +186,26 @@ function createJsonlClient(endpoint: string) {
     return response;
   }
 
+  async function sendAndDestroy(
+    method: string,
+    params: Record<string, unknown> = {},
+  ): Promise<void> {
+    await ready;
+    await new Promise<void>((resolve, reject) => {
+      socket.write(
+        `${JSON.stringify({ id: 1_000_000, method, params })}\n`,
+        (error?: Error | null) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          socket.destroy();
+          resolve();
+        },
+      );
+    });
+  }
+
   function waitForNotification(
     predicate: (message: BrokerMessage) => boolean,
     timeoutMs = 4000,
@@ -222,6 +244,7 @@ function createJsonlClient(endpoint: string) {
       return closed;
     },
     request,
+    sendAndDestroy,
     waitForNotification,
     close() {
       socket.end();
@@ -230,6 +253,41 @@ function createJsonlClient(endpoint: string) {
 }
 
 type JsonlClient = ReturnType<typeof createJsonlClient>;
+
+function seedBrokerReservation(
+  t: TestContext,
+  codexHome: string,
+  threadId: string,
+  pid = DEAD_PID,
+): { path: string; token: string } {
+  const digest = crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32);
+  const lockPath = path.join(codexHome, 'companion-thread-locks', `${digest}.lock`);
+  const token = `broker-test-${crypto.randomUUID()}`;
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(
+    lockPath,
+    `${JSON.stringify({
+      token,
+      pid,
+      jobId: 'broker-test-owner',
+      threadId,
+      createdAt: new Date().toISOString(),
+    })}\n`,
+    'utf8',
+  );
+  t.after(() => {
+    for (const target of [lockPath, `${lockPath}.cleanup`]) {
+      try {
+        fs.unlinkSync(target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
+          throw error;
+        }
+      }
+    }
+  });
+  return { path: lockPath, token };
+}
 
 async function initializeClient(client: JsonlClient): Promise<void> {
   const response = await client.request('initialize', {
@@ -308,6 +366,7 @@ test('a client that vanishes mid-turn gets its turn interrupted and the broker r
     ephemeral: false,
   });
   const threadId = started.result.thread.id;
+  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, threadId);
   const turn = await owner.request('turn/start', {
     threadId,
     input: [{ type: 'text', text: 'abandon this stream', text_elements: [] }],
@@ -329,6 +388,7 @@ test('a client that vanishes mid-turn gets its turn interrupted and the broker r
     const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     return state.lastInterrupt?.threadId === threadId;
   });
+  await waitFor(() => !fs.existsSync(reservation.path));
 
   // ...and become usable again for the next client once the turn resolves.
   const successor = createJsonlClient(broker.endpoint);
@@ -388,6 +448,233 @@ test('an owner dying before turn/started still gets its turn interrupted', async
     return state.lastInterrupt?.threadId === threadId;
   });
   assert.equal(processIsAlive(broker.child.pid), true);
+});
+
+test('disconnecting before a delayed turn/start response arms recovery and frees ownership', async (t) => {
+  const broker = await startBroker(t, 'slow-start-response');
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const threadId = started.result.thread.id;
+  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, threadId);
+  const abandonedResponse = owner
+    .request('turn/start', {
+      threadId,
+      input: [{ type: 'text', text: 'disconnect before the response', text_elements: [] }],
+    })
+    .catch(() => null);
+  await waitFor(() => {
+    const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
+    if (!fs.existsSync(stateFile)) {
+      return false;
+    }
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    return state.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId);
+  });
+  owner.socket.destroy();
+  await abandonedResponse;
+
+  await waitFor(() => {
+    const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
+    if (!fs.existsSync(stateFile)) {
+      return false;
+    }
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    return state.lastInterrupt?.threadId === threadId;
+  });
+  await waitFor(() => !fs.existsSync(reservation.path));
+
+  const successor = createJsonlClient(broker.endpoint);
+  t.after(() => successor.close());
+  await initializeClient(successor);
+  const successorThread = await successor.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const successorTurn = await successor.request('turn/start', {
+    threadId: successorThread.result.thread.id,
+    input: [{ type: 'text', text: 'stream after pre-response recovery', text_elements: [] }],
+  });
+  assert.equal(successorTurn.error, undefined);
+});
+
+test('a dead client whose turn completes before the start response does not arm an orphan gate', async (t) => {
+  const broker = await startBroker(t, 'fast-turn');
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const threadId = started.result.thread.id;
+  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, threadId);
+  await owner.sendAndDestroy('turn/start', {
+    threadId,
+    input: [{ type: 'text', text: 'complete before response continuation', text_elements: [] }],
+  });
+  await waitFor(() => !fs.existsSync(reservation.path));
+
+  const successor = createJsonlClient(broker.endpoint);
+  t.after(() => successor.close());
+  await initializeClient(successor);
+  const successorThread = await successor.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const successorTurn = await successor.request('turn/start', {
+    threadId: successorThread.result.thread.id,
+    input: [{ type: 'text', text: 'fast successor', text_elements: [] }],
+  });
+  assert.equal(successorTurn.error, undefined);
+});
+
+test('a detached review completion before its delayed response uses the review thread id', async (t) => {
+  const broker = await startBroker(t, 'slow-start-response');
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const sourceThreadId = started.result.thread.id;
+  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, sourceThreadId);
+  const abandonedResponse = owner
+    .request('review/start', {
+      threadId: sourceThreadId,
+      delivery: 'detached',
+      target: { type: 'uncommittedChanges' },
+    })
+    .catch(() => null);
+  await waitFor(() => {
+    const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
+    if (!fs.existsSync(stateFile)) {
+      return false;
+    }
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    return state.lastReviewStart?.sourceThreadId === sourceThreadId;
+  });
+  owner.socket.destroy();
+  await abandonedResponse;
+  await waitFor(() => !fs.existsSync(reservation.path));
+
+  const successor = createJsonlClient(broker.endpoint);
+  t.after(() => successor.close());
+  await initializeClient(successor);
+  const successorThread = await successor.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const successorTurn = await successor.request('turn/start', {
+    threadId: successorThread.result.thread.id,
+    input: [{ type: 'text', text: 'stream after detached review', text_elements: [] }],
+  });
+  assert.equal(successorTurn.error, undefined);
+});
+
+test('same-socket streaming pipelining receives the broker busy error', async (t) => {
+  const broker = await startBroker(t, 'slow-start-response');
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const threadId = started.result.thread.id;
+  const firstTurn = owner.request('turn/start', {
+    threadId,
+    input: [{ type: 'text', text: 'first pipelined turn', text_elements: [] }],
+  });
+  await waitFor(() => {
+    const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
+    if (!fs.existsSync(stateFile)) {
+      return false;
+    }
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    return state.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId);
+  });
+
+  const rejected = await owner.request('turn/start', {
+    threadId,
+    input: [{ type: 'text', text: 'second pipelined turn', text_elements: [] }],
+  });
+  assert.equal(rejected.error?.code, BROKER_BUSY_RPC_CODE);
+  assert.equal((await firstTurn).error, undefined);
+  await owner.waitForNotification(
+    (message) => message.method === 'turn/completed' && message.params?.threadId === threadId,
+  );
+});
+
+test('a disconnected request with no response transitions through the watchdog', async (t) => {
+  const broker = await startBroker(t, 'withheld-start-response');
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const threadId = started.result.thread.id;
+  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, threadId);
+  const abandonedResponse = owner
+    .request('turn/start', {
+      threadId,
+      input: [{ type: 'text', text: 'withhold this response', text_elements: [] }],
+    })
+    .catch(() => null);
+  await waitFor(() => {
+    const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
+    if (!fs.existsSync(stateFile)) {
+      return false;
+    }
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    return state.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId);
+  });
+  owner.socket.destroy();
+  await abandonedResponse;
+
+  const successor = createJsonlClient(broker.endpoint);
+  t.after(() => successor.close());
+  await initializeClient(successor);
+  const successorThread = await successor.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  await waitFor(
+    async () => {
+      const response = await successor.request('turn/start', {
+        threadId: successorThread.result.thread.id,
+        input: [{ type: 'text', text: 'stream after watchdog recovery', text_elements: [] }],
+      });
+      return response.error === undefined;
+    },
+    { timeoutMs: 15_000, intervalMs: 200 },
+  );
+  await waitFor(() => !fs.existsSync(reservation.path));
+  const state = JSON.parse(
+    fs.readFileSync(path.join(broker.binDir, 'fake-codex-state.json'), 'utf8'),
+  );
+  assert.equal(state.lastInterrupt?.threadId, threadId);
 });
 
 test("an orphaned turn's completion is not forwarded to an unrelated client", async (t) => {

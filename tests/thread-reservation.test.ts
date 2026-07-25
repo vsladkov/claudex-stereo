@@ -18,6 +18,8 @@ import {
   markLiveReservationPhase,
   releaseEligibleLiveReservations,
 } from '../plugins/stereo/src/runtime/reservations.ts';
+import { releaseLockForDeadOwner } from '../plugins/stereo/src/broker/server.ts';
+import { claimAndDeleteThreadLock } from '../plugins/stereo/src/workspace/thread-lock-io.ts';
 import { makeTempDir } from './helpers.ts';
 
 const DEAD_PID = 2147483647;
@@ -486,4 +488,151 @@ test('cancel cleanup admits one claimant and never removes a later owner', async
   assert.equal(staleCleanup.status, 'mismatch-skipped');
   assert.equal(fs.existsSync(successor.path), true);
   releaseThreadReservation(successor);
+});
+
+test('the shared cleanup core verifies under an exclusive claim and preserves hook ordering', async (t) => {
+  useTempCodexHome(t);
+  const accepted = acquireThreadReservation('shared-core-accepted', {
+    jobId: 'job-shared-core',
+    pid: DEAD_PID,
+  });
+  let hookRan = false;
+  const acceptedResult = await claimAndDeleteThreadLock(accepted.threadId, {
+    verify: (record) => ({
+      ok:
+        record.threadId === accepted.threadId &&
+        record.pid === accepted.pid &&
+        record.token === accepted.token,
+    }),
+    beforeUnlink: ({ lockPath, cleanupPath }) => {
+      assert.equal(fs.existsSync(lockPath), true);
+      assert.equal(fs.existsSync(cleanupPath), true);
+      hookRan = true;
+    },
+  });
+  assert.equal(acceptedResult.released, true);
+  assert.equal(hookRan, true);
+  assert.equal(fs.existsSync(accepted.path), false);
+  assert.equal(fs.existsSync(accepted.cleanupPath), false);
+
+  const rejected = acquireThreadReservation('shared-core-rejected', {
+    jobId: 'job-shared-core-rejected',
+    pid: DEAD_PID,
+  });
+  const rejectedResult = await claimAndDeleteThreadLock(rejected.threadId, {
+    verify: () => ({ ok: false, reason: 'expected rejection' }),
+  });
+  assert.equal(rejectedResult.status, 'verification-failed');
+  assert.equal(fs.existsSync(rejected.path), true);
+  assert.equal(fs.existsSync(rejected.cleanupPath), false);
+  releaseThreadReservation(rejected);
+
+  const foreignClaim = acquireThreadReservation('shared-core-foreign-claim', {
+    jobId: 'job-foreign-claim',
+    pid: DEAD_PID,
+  });
+  const claim = claimRecord({ jobId: 'foreign-cleaner', pid: process.pid });
+  writeRecord(foreignClaim.cleanupPath, claim);
+  const claimResult = await claimAndDeleteThreadLock(foreignClaim.threadId, {
+    verify: () => ({ ok: true }),
+  });
+  assert.equal(claimResult.status, 'claim-exists');
+  assert.deepEqual(JSON.parse(fs.readFileSync(foreignClaim.cleanupPath, 'utf8')), claim);
+  assert.equal(fs.existsSync(foreignClaim.path), true);
+  fs.unlinkSync(foreignClaim.cleanupPath);
+  releaseThreadReservation(foreignClaim);
+});
+
+test('broker cleanup releases only the captured dead reservation identity', async (t) => {
+  useTempCodexHome(t);
+  const matching = acquireThreadReservation('broker-release-match', {
+    jobId: 'job-broker-match',
+    pid: DEAD_PID,
+  });
+  let livenessProbes = 0;
+  const matchingResult = await releaseLockForDeadOwner(
+    matching.threadId,
+    { pid: matching.pid, token: matching.token },
+    {
+      isProcessAlive: () => {
+        livenessProbes += 1;
+        return livenessProbes === 1;
+      },
+      timeoutMs: 100,
+      pollMs: 1,
+    },
+  );
+  assert.equal(matchingResult.released, true);
+  assert.equal(livenessProbes >= 2, true);
+  assert.equal(fs.existsSync(matching.path), false);
+
+  for (const mismatch of ['token', 'pid', 'thread'] as const) {
+    const reservation = acquireThreadReservation(`broker-release-${mismatch}`, {
+      jobId: `job-broker-${mismatch}`,
+      pid: DEAD_PID,
+    });
+    const original = JSON.parse(fs.readFileSync(reservation.path, 'utf8'));
+    if (mismatch === 'thread') {
+      fs.writeFileSync(
+        reservation.path,
+        `${JSON.stringify({ ...original, threadId: 'replacement-thread' })}\n`,
+        'utf8',
+      );
+    }
+    const identity = {
+      pid: mismatch === 'pid' ? DEAD_PID - 1 : reservation.pid,
+      token: mismatch === 'token' ? 'replacement-token' : reservation.token,
+    };
+    const result = await releaseLockForDeadOwner(reservation.threadId, identity, {
+      isProcessAlive: () => false,
+      timeoutMs: 0,
+      pollMs: 1,
+    });
+    assert.equal(result.released, false, mismatch);
+    assert.equal(fs.existsSync(reservation.path), true, mismatch);
+    fs.unlinkSync(reservation.path);
+    releaseThreadReservation(reservation);
+  }
+
+  const live = acquireThreadReservation('broker-release-live', {
+    jobId: 'job-broker-live',
+    pid: process.pid,
+  });
+  const liveResult = await releaseLockForDeadOwner(
+    live.threadId,
+    { pid: live.pid, token: live.token },
+    { isProcessAlive: () => true, timeoutMs: 0, pollMs: 1 },
+  );
+  assert.equal(liveResult.released, false);
+  assert.match(liveResult.reason, /remained alive/);
+  assert.equal(fs.existsSync(live.path), true);
+  releaseThreadReservation(live);
+});
+
+test('cancel and broker cleanup serialize through one claim', async (t) => {
+  useTempCodexHome(t);
+  const reservation = acquireThreadReservation('concurrent-cleaners', {
+    jobId: 'job-concurrent-cleaners',
+    pid: 8555,
+  });
+
+  const [cancelResult, brokerResult] = await Promise.all([
+    releaseThreadReservationForCancelledJob(
+      {
+        threadId: reservation.threadId,
+        jobId: reservation.jobId,
+        pid: reservation.pid,
+      },
+      { isProcessAlive: () => false },
+    ),
+    releaseLockForDeadOwner(
+      reservation.threadId,
+      { pid: reservation.pid, token: reservation.token },
+      { isProcessAlive: () => false, timeoutMs: 0, pollMs: 1 },
+    ),
+  ]);
+
+  assert.equal(Number(cancelResult.released) + Number(brokerResult.released), 1);
+  assert.equal(fs.existsSync(reservation.path), false);
+  assert.equal(fs.existsSync(reservation.cleanupPath), false);
 });

@@ -516,18 +516,24 @@ rl.on("line", (line) => {
         break;
       }
 
-      case "review/start": {
-        const thread = ensureThread(state, message.params.threadId);
-        let reviewThread = thread;
+	      case "review/start": {
+	        const thread = ensureThread(state, message.params.threadId);
+	        let reviewThread = thread;
         if (message.params.delivery === "detached") {
           reviewThread = nextThread(state, thread.cwd, true);
-          send({ method: "thread/started", params: { thread: { id: reviewThread.id } } });
-        }
-        const turnId = nextTurnId(state);
-        send({ id: message.id, result: { turn: buildTurn(turnId), reviewThreadId: reviewThread.id } });
-        emitTurnCompleted(reviewThread.id, turnId, [
-          {
-            started: { type: "enteredReviewMode", id: turnId, review: "current changes" }
+	          send({ method: "thread/started", params: { thread: { id: reviewThread.id } } });
+	        }
+	        const turnId = nextTurnId(state);
+	        state.lastReviewStart = {
+	          sourceThreadId: thread.id,
+	          reviewThreadId: reviewThread.id,
+	          turnId
+	        };
+	        saveState(state);
+	        const reviewResult = { turn: buildTurn(turnId), reviewThreadId: reviewThread.id };
+	        const reviewItems = [
+	          {
+	            started: { type: "enteredReviewMode", id: turnId, review: "current changes" }
           },
           ...(BEHAVIOR === "with-reasoning"
             ? [
@@ -541,12 +547,22 @@ rl.on("line", (line) => {
                 }
               ]
             : []),
-          {
-            completed: { type: "exitedReviewMode", id: turnId, review: nativeReviewText(message.params.target) }
-          }
-        ]);
-        break;
-      }
+	          {
+	            completed: { type: "exitedReviewMode", id: turnId, review: nativeReviewText(message.params.target) }
+	          }
+	        ];
+	        if (BEHAVIOR === "slow-start-response") {
+	          // Detached reviews complete only on reviewThreadId. Emit that
+	          // completion before the delayed response so broker tests exercise
+	          // the response-derived expected-completion id.
+	          emitTurnCompleted(reviewThread.id, turnId, reviewItems);
+	          setTimeout(() => send({ id: message.id, result: reviewResult }), 800);
+	        } else {
+	          send({ id: message.id, result: reviewResult });
+	          emitTurnCompleted(reviewThread.id, turnId, reviewItems);
+	        }
+	        break;
+	      }
 
 	      case "turn/start": {
 	        const thread = ensureThread(state, message.params.threadId);
@@ -563,10 +579,12 @@ rl.on("line", (line) => {
 	          effort: message.params.effort ?? null,
 	          prompt
 	        };
-	        state.turnStarts = Array.isArray(state.turnStarts) ? state.turnStarts : [];
-	        state.turnStarts.push({ threadId: message.params.threadId, turnId });
-	        saveState(state);
-	        if (BEHAVIOR === "turn-start-no-turn") {
+		        state.turnStarts = Array.isArray(state.turnStarts) ? state.turnStarts : [];
+		        state.turnStarts.push({ threadId: message.params.threadId, turnId });
+		        saveState(state);
+		        const withholdStartResponse =
+		          BEHAVIOR === "withheld-start-response" && state.turnStarts.length === 1;
+		        if (BEHAVIOR === "turn-start-no-turn") {
 	          // Some responses may omit the turn object entirely; the capture
 	          // must still complete via thread-scoped notifications.
 	          send({ id: message.id, result: {} });
@@ -597,14 +615,21 @@ rl.on("line", (line) => {
 	              }
 	            },
 	            { method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "completed") } }
-	          ];
-	          // One write so the response and the completion land in a single
-	          // stream chunk, making the broker's fast-turn race deterministic.
-	          process.stdout.write(lines.map((entry) => JSON.stringify(entry)).join("\\n") + "\\n");
-	          break;
-	        }
+		          ];
+		          // One write so the response and the completion land in a single
+		          // stream chunk. A short dispatch delay also gives a raw client
+		          // time to close before that chunk, making the dead-socket race
+		          // deterministic without changing the response/completion order.
+		          setTimeout(
+		            () => process.stdout.write(lines.map((entry) => JSON.stringify(entry)).join("\\n") + "\\n"),
+		            25
+		          );
+		          break;
+		        }
 
-	        send({ id: message.id, result: { turn: buildTurn(turnId) } });
+		        if (BEHAVIOR !== "slow-start-response" && !withholdStartResponse) {
+		          send({ id: message.id, result: { turn: buildTurn(turnId) } });
+		        }
 
         if (BEHAVIOR === "die-mid-turn") {
           send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
@@ -762,10 +787,14 @@ rl.on("line", (line) => {
           }
         ];
 
-	        if (BEHAVIOR === "interruptible-slow-task") {
-	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
-	          const timer = setTimeout(() => {
-	            if (!interruptibleTurns.has(turnId)) {
+		        if (
+		          BEHAVIOR === "slow-turn" ||
+		          BEHAVIOR === "slow-start-response" ||
+		          withholdStartResponse
+		        ) {
+		          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+		          const timer = setTimeout(() => {
+		            if (!interruptibleTurns.has(turnId)) {
 	              return;
 	            }
 	            interruptibleTurns.delete(turnId);
@@ -773,28 +802,34 @@ rl.on("line", (line) => {
 	              if (entry && entry.completed) {
 	                send({ method: "item/completed", params: { threadId: thread.id, turnId, item: entry.completed } });
 	              }
-	            }
-	            send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "completed") } });
-	          }, 5000);
-	          interruptibleTurns.set(turnId, { threadId: thread.id, timer });
-	        } else if (BEHAVIOR === "slow-task") {
-	          emitTurnCompletedLater(thread.id, turnId, items, 400);
-	        } else if (BEHAVIOR === "slow-turn") {
-	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
-	          const timer = setTimeout(() => {
-	            if (!interruptibleTurns.has(turnId)) {
-	              return;
-	            }
-	            interruptibleTurns.delete(turnId);
-	            for (const entry of items) {
-	              if (entry && entry.completed) {
-	                send({ method: "item/completed", params: { threadId: thread.id, turnId, item: entry.completed } });
-	              }
-	            }
-	            send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "completed") } });
-	          }, 1500);
-	          interruptibleTurns.set(turnId, { threadId: thread.id, timer });
-	        } else {
+		            }
+		            send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "completed") } });
+		          }, withholdStartResponse ? 30000 : 1500);
+		          interruptibleTurns.set(turnId, { threadId: thread.id, timer });
+		          if (BEHAVIOR === "slow-start-response") {
+		            setTimeout(
+		              () => send({ id: message.id, result: { turn: buildTurn(turnId) } }),
+		              800
+		            );
+		          }
+		        } else if (BEHAVIOR === "interruptible-slow-task") {
+		          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+		          const timer = setTimeout(() => {
+		            if (!interruptibleTurns.has(turnId)) {
+		              return;
+		            }
+		            interruptibleTurns.delete(turnId);
+		            for (const entry of items) {
+		              if (entry && entry.completed) {
+		                send({ method: "item/completed", params: { threadId: thread.id, turnId, item: entry.completed } });
+		              }
+		            }
+		            send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "completed") } });
+		          }, 5000);
+		          interruptibleTurns.set(turnId, { threadId: thread.id, timer });
+		        } else if (BEHAVIOR === "slow-task") {
+		          emitTurnCompletedLater(thread.id, turnId, items, 400);
+		        } else {
 	          emitTurnCompleted(thread.id, turnId, items);
 	        }
 	        break;

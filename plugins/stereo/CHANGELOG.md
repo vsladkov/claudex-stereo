@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0
+
+- Recover turns whose broker client disconnects before the streaming start response, including fast completions and detached reviews, without installing dead socket ownership
+- Release dead workers' thread reservations after orphan completion through identity-verified exclusive cleanup claims
+
 ## 1.4.2
 
 - Degrade stored result reads to index-only output with an explicit warning when job JSON is unreadable, and clear stored effort when implementation overrides the model without an effort override
