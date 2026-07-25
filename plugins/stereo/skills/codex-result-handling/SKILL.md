@@ -13,6 +13,7 @@ When the helper returns Codex output:
 - Use the file paths and line numbers exactly as the helper reports them.
 - Preserve evidence boundaries. If Codex marked something as an inference, uncertainty, or follow-up question, keep that distinction.
 - Preserve output sections when the prompt asked for them, such as observed facts, inferences, open questions, touched files, or next steps.
+- Preserve any `Warnings:` section and its file paths verbatim.
 - If there are no findings, say that explicitly and keep the residual-risk note brief.
 - If Codex made edits, say so explicitly and list the touched files when the helper provides them.
 - For `stereo:codex-rescue`, do not turn a failed or incomplete Codex run into a Claude-side implementation attempt. Report the failure and stop.

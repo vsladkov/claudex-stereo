@@ -902,15 +902,26 @@ function withResultFooter(text: string, threadId: string | null, modelDisplay: s
   return `${output}\n${footer.join('\n')}\n`;
 }
 
+function appendStoredJobWarning(text: string, warning: string | null | undefined): string {
+  if (!warning) {
+    return text;
+  }
+  const output = text.endsWith('\n') ? text : `${text}\n`;
+  return `${output}\nWarnings:\n- ${warning}\n`;
+}
+
 export function renderStoredJobResult(
   job: RenderableJob,
   storedJob: StoredJobLike | null | undefined,
+  warning?: string | null,
 ): string {
   const threadId = storedJob?.threadId ?? job.threadId ?? null;
   const modelDisplay = job.modelDisplay ?? formatJobModel(resolveJobModel(job, storedJob));
+  const renderWithFooter = (text: string): string =>
+    withResultFooter(appendStoredJobWarning(text, warning), threadId, modelDisplay);
   const taskClass = storedJob?.jobClass ?? job.jobClass ?? null;
   if (taskClass === 'task' && storedJob?.rendered) {
-    return withResultFooter(storedJob.rendered, threadId, modelDisplay);
+    return renderWithFooter(storedJob.rendered);
   }
   // Review-class jobs always prefer the stored rendering: native reviews
   // carry no result/parseError keys, so keying only on the structured shape
@@ -919,7 +930,7 @@ export function renderStoredJobResult(
     (taskClass === 'review' || isStructuredReviewStoredResult(storedJob)) &&
     storedJob?.rendered
   ) {
-    return withResultFooter(storedJob.rendered, threadId, modelDisplay);
+    return renderWithFooter(storedJob.rendered);
   }
 
   const rawOutput =
@@ -927,11 +938,11 @@ export function renderStoredJobResult(
     (typeof storedJob?.result?.codex?.stdout === 'string' && storedJob.result.codex.stdout) ||
     '';
   if (rawOutput) {
-    return withResultFooter(rawOutput, threadId, modelDisplay);
+    return renderWithFooter(rawOutput);
   }
 
   if (storedJob?.rendered) {
-    return withResultFooter(storedJob.rendered, threadId, modelDisplay);
+    return renderWithFooter(storedJob.rendered);
   }
 
   const lines = [`# ${job.title ?? 'Codex Result'}`, '', `Job: ${job.id}`, `Status: ${job.status}`];
@@ -948,7 +959,7 @@ export function renderStoredJobResult(
     lines.push('', 'No captured result payload was stored for this job.');
   }
 
-  return withResultFooter(`${lines.join('\n').trimEnd()}\n`, threadId, modelDisplay);
+  return renderWithFooter(`${lines.join('\n').trimEnd()}\n`);
 }
 
 export function renderCancelReport(job: RenderableJob): string {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.2
+
+- Degrade stored result reads to index-only output with an explicit warning when job JSON is unreadable, and clear stored effort when implementation overrides the model without an effort override
+
 ## 1.4.1
 
 - Align rescue alias and effort forwarding with runtime resolution, preserve provider and model visibility in setup/status, omit null stored efforts during implementation, and clarify stop-gate output formatting

@@ -11,7 +11,7 @@ Codex writes the code in the same thread that reviewed the plan (by default `gpt
 Raw slash-command arguments:
 `$ARGUMENTS`
 
-Treat user-supplied `--model` and `--effort` values as overrides; otherwise use the stored values, but when the effective effort is null, omit the `--effort` flag entirely. In the templates below, `<effortArg>` means `--effort <effectiveEffort>` when non-null and nothing otherwise.
+Treat user-supplied `--model` and `--effort` values as overrides; otherwise use the stored values, but when the effective effort is null, omit the `--effort` flag entirely. If the user overrides `--model` without also passing `--effort`, treat the effort as unset — the stored effort belonged to the stored model, so `<effortArg>` is empty in that case. In the templates below, `<effortArg>` means `--effort <effectiveEffort>` when non-null and nothing otherwise.
 
 Scope of the result-handling rules:
 

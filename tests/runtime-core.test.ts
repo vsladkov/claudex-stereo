@@ -19,7 +19,7 @@ import {
 } from './runtime-helpers.ts';
 import { loadBrokerSession, saveBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import type { BrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
-import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { resolveJobFile, resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 registerBrokerReaping();
 
@@ -1104,6 +1104,62 @@ test('status treats a truncated legacy job file as an unknown model', () => {
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.job.model, null);
   assert.equal(payload.job.modelDisplay, '-');
+});
+
+test('result falls back to index data when the stored job file is unreadable', () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const task = run('node', [SCRIPT, 'task', 'inspect the stored result fallback'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(task.status, 0, task.stderr);
+
+  const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), 'state.json'), 'utf8'));
+  const job = state.jobs.find(
+    (candidate: Record<string, unknown>) => candidate.jobClass === 'task',
+  );
+  assert.ok(job);
+  const jobId = job.id as string;
+  const jobFile = resolveJobFile(repo, jobId);
+
+  const control = run('node', [SCRIPT, 'result', jobId, '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(control.status, 0, control.stderr);
+  const controlPayload = JSON.parse(control.stdout);
+  assert.equal(controlPayload.storedJob.id, jobId);
+  assert.equal(Object.hasOwn(controlPayload, 'storedJobWarning'), false);
+
+  fs.writeFileSync(jobFile, '{not-json', 'utf8');
+
+  const jsonResult = run('node', [SCRIPT, 'result', jobId, '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(jsonResult.status, 0, jsonResult.stderr);
+  const payload = JSON.parse(jsonResult.stdout);
+  assert.equal(payload.storedJob, null);
+  assert.equal(payload.storedJobWarning.includes(jobFile), true);
+  assert.match(payload.storedJobWarning, /^Stored result file is unreadable:/);
+  assert.match(payload.storedJobWarning, /Showing index data only\.$/);
+
+  const renderedResult = run('node', [SCRIPT, 'result', jobId], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(renderedResult.status, 0, renderedResult.stderr);
+  assert.match(renderedResult.stdout, /^# Codex Task/);
+  assert.equal(renderedResult.stdout.includes(`Job: ${jobId}`), true);
+  assert.match(renderedResult.stdout, /Status: completed/);
+  assert.match(renderedResult.stdout, /No captured result payload was stored for this job\./);
+  assert.match(renderedResult.stdout, /\nWarnings:\n- Stored result file is unreadable:/);
+  assert.equal(renderedResult.stdout.includes(jobFile), true);
+  assert.match(renderedResult.stdout, /Showing index data only\./);
 });
 
 test('result returns the stored output for the latest finished job by default', () => {

@@ -13,6 +13,7 @@ import {
   renderStoredJobResult,
 } from '../../render/render.ts';
 import type { StatusRenderOptions, StoredJobLike } from '../../render/render.ts';
+import { resolveJobFile } from '../../workspace/state.ts';
 import { waitForSingleJobSnapshot } from '../../workflows/task.ts';
 import { outputCommandResult, parseCommandInput, resolveCommandCwd } from '../io.ts';
 import { outputResult } from '../../shared/text.ts';
@@ -76,11 +77,25 @@ export function handleResult(argv: string[]): void {
   const cwd = resolveCommandCwd(options);
   const reference = positionals[0] ?? '';
   const { workspaceRoot, job } = resolveResultJob(cwd, reference);
-  const storedJob = readStoredJob(workspaceRoot, job.id) as (JobRecord & StoredJobLike) | null;
+  const jobFile = resolveJobFile(workspaceRoot, job.id);
+  let storedJob: (JobRecord & StoredJobLike) | null;
+  let storedJobWarning: string | null = null;
+  try {
+    storedJob = readStoredJob(workspaceRoot, job.id) as (JobRecord & StoredJobLike) | null;
+  } catch (error) {
+    storedJob = null;
+    const message = error instanceof Error ? error.message : String(error);
+    storedJobWarning = `Stored result file is unreadable: ${jobFile} (${message}). Showing index data only.`;
+  }
   const payload = {
     job,
     storedJob,
+    ...(storedJobWarning ? { storedJobWarning } : {}),
   };
 
-  outputCommandResult(payload, renderStoredJobResult(job, storedJob), options.json);
+  outputCommandResult(
+    payload,
+    renderStoredJobResult(job, storedJob, storedJobWarning),
+    options.json,
+  );
 }

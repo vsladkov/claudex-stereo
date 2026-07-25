@@ -208,6 +208,50 @@ test('renderStoredJobResult prefers rendered output for structured review jobs',
   assert.match(output, /Resume in Codex: codex resume thr_123/);
 });
 
+test('renderStoredJobResult appends warnings before the footer without changing clean output', () => {
+  const warning =
+    'Stored result file is unreadable: /tmp/task-warning.json (Unexpected end of JSON input). Showing index data only.';
+  const job = {
+    id: 'task-warning',
+    status: 'completed',
+    title: 'Codex Task',
+    jobClass: 'task',
+    threadId: 'thr_warning',
+    model: 'gpt-5.6-sol',
+  };
+  const storedJob = {
+    jobClass: 'task',
+    threadId: 'thr_warning',
+    rendered: 'Stored task output.\n',
+  };
+
+  assert.equal(
+    renderStoredJobResult(job, storedJob, warning),
+    'Stored task output.\n\nWarnings:\n- Stored result file is unreadable: /tmp/task-warning.json (Unexpected end of JSON input). Showing index data only.\n\nModel: gpt-5.6-sol\nCodex session ID: thr_warning\nResume in Codex: codex resume thr_warning\n',
+  );
+  assert.equal(
+    renderStoredJobResult(job, storedJob),
+    'Stored task output.\n\nModel: gpt-5.6-sol\nCodex session ID: thr_warning\nResume in Codex: codex resume thr_warning\n',
+  );
+
+  assert.equal(
+    renderStoredJobResult(
+      {
+        id: 'task-warning-fallback',
+        status: 'completed',
+        title: 'Codex Task',
+        summary: 'Index-only summary',
+        jobClass: 'task',
+        threadId: 'thr_fallback',
+        model: 'kimi-k3',
+      },
+      null,
+      warning,
+    ),
+    '# Codex Task\n\nJob: task-warning-fallback\nStatus: completed\nSummary: Index-only summary\n\nNo captured result payload was stored for this job.\n\nWarnings:\n- Stored result file is unreadable: /tmp/task-warning.json (Unexpected end of JSON input). Showing index data only.\n\nModel: kimi-k3@moonshot\nCodex session ID: thr_fallback\nResume in Codex: codex resume thr_fallback\n',
+  );
+});
+
 test('renderTaskResult warns only when a write run with output reports no touched files', () => {
   assert.equal(
     renderTaskResult({ rawOutput: 'Implemented the change.' }, { write: true, touchedFiles: [] }),
