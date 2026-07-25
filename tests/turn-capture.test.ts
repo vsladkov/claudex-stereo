@@ -9,6 +9,7 @@ import {
   completeTurn,
   createTurnCaptureState,
   scheduleInferredCompletion,
+  summarizeUnifiedDiff,
 } from '../plugins/stereo/src/runtime/turn-capture.ts';
 import type { ProgressUpdate } from '../plugins/stereo/src/runtime/turn-capture.ts';
 import type { AppServerClient } from '../plugins/stereo/src/runtime/threads.ts';
@@ -49,9 +50,261 @@ test('createTurnCaptureState seeds thread-scoped defaults', () => {
   assert.equal(state.tokenUsage, null);
   assert.equal(state.jobTokenUsage, null);
   assert.equal(state.primaryThreadTokenUsage, null);
+  assert.deepEqual(state.diffStats, { files: 0, additions: 0, deletions: 0 });
+  assert.equal(state.planProgress, null);
   assert.equal(state.pendingCollaborations.size, 0);
   assert.equal(state.activeSubagentTurns.size, 0);
   assert.ok(state.completion instanceof Promise);
+});
+
+test('summarizeUnifiedDiff counts files and hunk churn in a multi-file diff', () => {
+  const diff = [
+    'diff --git a/one.ts b/one.ts',
+    'index 1111111..2222222 100644',
+    '--- a/one.ts',
+    '+++ b/one.ts',
+    '@@ -1,2 +1,3 @@',
+    ' context',
+    '-old one',
+    '+new one',
+    '+new two',
+    'diff --git a/two.ts b/two.ts',
+    'index 3333333..4444444 100644',
+    '--- a/two.ts',
+    '+++ b/two.ts',
+    '@@ -4,2 +4,2 @@',
+    '-old two',
+    '+new three',
+  ].join('\n');
+
+  assert.deepEqual(summarizeUnifiedDiff(diff), {
+    files: 2,
+    additions: 3,
+    deletions: 2,
+  });
+});
+
+test('summarizeUnifiedDiff counts rename-only and binary entries without line churn', () => {
+  const diff = [
+    'diff --git a/old-name.ts b/new-name.ts',
+    'similarity index 100%',
+    'rename from old-name.ts',
+    'rename to new-name.ts',
+    'diff --git a/image.bin b/image.bin',
+    'new file mode 100644',
+    'index 0000000..1234567',
+    'Binary files /dev/null and b/image.bin differ',
+  ].join('\n');
+
+  assert.deepEqual(summarizeUnifiedDiff(diff), {
+    files: 2,
+    additions: 0,
+    deletions: 0,
+  });
+});
+
+test('summarizeUnifiedDiff distinguishes file headers from header-looking hunk content', () => {
+  const diff = [
+    'diff --git a/example.txt b/example.txt',
+    '--- a/example.txt',
+    '+++ b/example.txt',
+    '@@ -1,2 +1,3 @@',
+    '---deleted content beginning with two hyphens',
+    '+++added content beginning with two pluses',
+    '+--- foo',
+  ].join('\n');
+
+  assert.deepEqual(summarizeUnifiedDiff(diff), {
+    files: 1,
+    additions: 2,
+    deletions: 1,
+  });
+});
+
+test('summarizeUnifiedDiff returns zeros for empty and non-diff text', () => {
+  assert.deepEqual(summarizeUnifiedDiff(''), {
+    files: 0,
+    additions: 0,
+    deletions: 0,
+  });
+  assert.deepEqual(summarizeUnifiedDiff('garbage\n+fake addition\n@@ not a hunk\n-still fake'), {
+    files: 0,
+    additions: 0,
+    deletions: 0,
+  });
+});
+
+const captureDiff = [
+  'diff --git a/one.ts b/one.ts',
+  '--- a/one.ts',
+  '+++ b/one.ts',
+  '@@ -1,2 +1,5 @@',
+  '-old one',
+  '-old two',
+  '+new one',
+  '+new two',
+  '+new three',
+  '+new four',
+  '+new five',
+  'diff --git a/two.ts b/two.ts',
+  '--- a/two.ts',
+  '+++ b/two.ts',
+  '@@ -1 +1,5 @@',
+  '-old three',
+  '+new six',
+  '+new seven',
+  '+new eight',
+  '+new nine',
+  '+new ten',
+].join('\n');
+
+test('turn diff notifications emit only registered, changed stats including a return to zero', () => {
+  const updates: Array<string | ProgressUpdate> = [];
+  const state = createTurnCaptureState('thread-1', {
+    onProgress: (update) => updates.push(update),
+  });
+  state.threadTurnIds.set('thread-1', 'turn-1');
+
+  const sendDiff = (diff: unknown, turnId: unknown = 'turn-1') =>
+    applyTurnNotification(
+      state,
+      notification({
+        method: 'turn/diff/updated',
+        params: { threadId: 'thread-1', turnId, diff },
+      }),
+    );
+
+  sendDiff('');
+  assert.deepEqual(updates, []);
+
+  sendDiff(captureDiff);
+  assert.deepEqual(updates, [
+    {
+      message: 'Diff: 2 files (+10/-3)',
+      phase: 'editing',
+    },
+  ]);
+
+  sendDiff(captureDiff);
+  assert.equal(updates.length, 1);
+
+  sendDiff(`${captureDiff}\n+new eleven`);
+  assert.deepEqual(updates.at(-1), {
+    message: 'Diff: 2 files (+11/-3)',
+    phase: 'editing',
+  });
+
+  sendDiff('diff --git a/foreign.ts b/foreign.ts', 'turn-foreign');
+  applyTurnNotification(
+    state,
+    notification({
+      method: 'turn/diff/updated',
+      params: {
+        threadId: 'thread-1',
+        diff: 'diff --git a/absent.ts b/absent.ts',
+      },
+    }),
+  );
+  assert.equal(updates.length, 2);
+
+  sendDiff('');
+  assert.deepEqual(updates.at(-1), {
+    message: 'Diff: 0 files (+0/-0)',
+    phase: 'editing',
+  });
+});
+
+test('turn plan notifications label by array index and handle completion and reset', () => {
+  const updates: Array<string | ProgressUpdate> = [];
+  const state = createTurnCaptureState('thread-1', {
+    onProgress: (update) => updates.push(update),
+  });
+  state.threadTurnIds.set('thread-1', 'turn-1');
+
+  const sendPlan = (plan: unknown) =>
+    applyTurnNotification(
+      state,
+      notification({
+        method: 'turn/plan/updated',
+        params: { threadId: 'thread-1', turnId: 'turn-1', explanation: null, plan },
+      }),
+    );
+
+  const initialPlan = [
+    { step: 'inspect the parser', status: 'completed' },
+    { step: 'rewrite broker server ownership', status: 'inProgress' },
+    { step: 'verify the changes', status: 'pending' },
+  ];
+  sendPlan(initialPlan);
+  assert.deepEqual(updates, ['Step 2/3: rewrite broker server ownership']);
+
+  sendPlan(initialPlan);
+  assert.equal(updates.length, 1);
+
+  sendPlan([
+    { step: 'return to the first step', status: 'pending' },
+    { step: 'rewrite broker server ownership', status: 'completed' },
+    { step: 'verify the changes', status: 'completed' },
+  ]);
+  assert.equal(updates.at(-1), 'Step 1/3: return to the first step');
+
+  const completedPlan = [
+    { step: 'inspect the parser', status: 'completed' },
+    { step: 'rewrite broker server ownership', status: 'completed' },
+    { step: 'verify the changes', status: 'completed' },
+  ];
+  sendPlan(completedPlan);
+  assert.equal(updates.at(-1), 'Plan complete: 3/3 steps');
+  sendPlan(completedPlan);
+  assert.equal(updates.length, 3);
+
+  sendPlan([]);
+  assert.equal(state.planProgress, null);
+  assert.equal(updates.length, 3);
+  sendPlan(completedPlan);
+  assert.equal(updates.at(-1), 'Plan complete: 3/3 steps');
+  assert.equal(updates.length, 4);
+});
+
+test('turn diff and plan notifications ignore malformed params without throwing', () => {
+  const updates: Array<string | ProgressUpdate> = [];
+  const state = createTurnCaptureState('thread-1', {
+    onProgress: (update) => updates.push(update),
+  });
+  state.threadTurnIds.set('thread-1', 'turn-1');
+
+  const malformed = [
+    { method: 'turn/diff/updated', params: { threadId: 'thread-1', turnId: 'turn-1' } },
+    {
+      method: 'turn/diff/updated',
+      params: { threadId: 'thread-1', turnId: 'turn-1', diff: 42 },
+    },
+    {
+      method: 'turn/plan/updated',
+      params: { threadId: 'thread-1', turnId: 'turn-1', plan: 'not-an-array' },
+    },
+    {
+      method: 'turn/plan/updated',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        plan: [{ step: 42, status: 'pending' }],
+      },
+    },
+    {
+      method: 'turn/plan/updated',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        plan: [{ step: 'invalid status', status: 'done' }],
+      },
+    },
+  ];
+
+  for (const message of malformed) {
+    assert.doesNotThrow(() => applyTurnNotification(state, notification(message)));
+  }
+  assert.deepEqual(updates, []);
 });
 
 function usageBreakdown(

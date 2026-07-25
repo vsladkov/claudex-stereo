@@ -12,6 +12,7 @@ import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
 import { makeTempDir } from './helpers.ts';
 import { drainCreatedTempDirs } from './helpers.ts';
 import { reapWorkspaceBroker } from './broker-reaper.ts';
+import { readJsonIfReadable } from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 import {
   createBrokerEndpoint,
@@ -521,11 +522,8 @@ test('a client that vanishes mid-turn gets its turn interrupted and the broker r
   // The broker must interrupt the abandoned turn on codex's side...
   await waitFor(() => {
     const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
-    if (!fs.existsSync(stateFile)) {
-      return false;
-    }
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    return state.lastInterrupt?.threadId === threadId;
+    const state = readJsonIfReadable<Record<string, any>>(stateFile);
+    return state?.lastInterrupt?.threadId === threadId;
   });
   await waitFor(() => !fs.existsSync(reservation.path));
 
@@ -580,11 +578,8 @@ test('an owner dying before turn/started still gets its turn interrupted', async
 
   await waitFor(() => {
     const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
-    if (!fs.existsSync(stateFile)) {
-      return false;
-    }
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    return state.lastInterrupt?.threadId === threadId;
+    const state = readJsonIfReadable<Record<string, any>>(stateFile);
+    return state?.lastInterrupt?.threadId === threadId;
   });
   assert.equal(processIsAlive(broker.child.pid), true);
 });
@@ -610,22 +605,19 @@ test('disconnecting before a delayed turn/start response arms recovery and frees
     .catch(() => null);
   await waitFor(() => {
     const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
-    if (!fs.existsSync(stateFile)) {
-      return false;
-    }
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    return state.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId);
+    const state = readJsonIfReadable<Record<string, any>>(stateFile);
+    return (
+      state?.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId) ??
+      false
+    );
   });
   owner.socket.destroy();
   await abandonedResponse;
 
   await waitFor(() => {
     const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
-    if (!fs.existsSync(stateFile)) {
-      return false;
-    }
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    return state.lastInterrupt?.threadId === threadId;
+    const state = readJsonIfReadable<Record<string, any>>(stateFile);
+    return state?.lastInterrupt?.threadId === threadId;
   });
   await waitFor(() => !fs.existsSync(reservation.path));
 
@@ -700,11 +692,8 @@ test('a detached review completion before its delayed response uses the review t
     .catch(() => null);
   await waitFor(() => {
     const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
-    if (!fs.existsSync(stateFile)) {
-      return false;
-    }
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    return state.lastReviewStart?.sourceThreadId === sourceThreadId;
+    const state = readJsonIfReadable<Record<string, any>>(stateFile);
+    return state?.lastReviewStart?.sourceThreadId === sourceThreadId;
   });
   owner.socket.destroy();
   await abandonedResponse;
@@ -743,11 +732,11 @@ test('same-socket streaming pipelining receives the broker busy error', async (t
   });
   await waitFor(() => {
     const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
-    if (!fs.existsSync(stateFile)) {
-      return false;
-    }
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    return state.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId);
+    const state = readJsonIfReadable<Record<string, any>>(stateFile);
+    return (
+      state?.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId) ??
+      false
+    );
   });
 
   const rejected = await owner.request('turn/start', {
@@ -782,11 +771,11 @@ test('a disconnected request with no response transitions through the watchdog',
     .catch(() => null);
   await waitFor(() => {
     const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
-    if (!fs.existsSync(stateFile)) {
-      return false;
-    }
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    return state.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId);
+    const state = readJsonIfReadable<Record<string, any>>(stateFile);
+    return (
+      state?.turnStarts?.some((entry: Record<string, unknown>) => entry.threadId === threadId) ??
+      false
+    );
   });
   owner.socket.destroy();
   await abandonedResponse;
@@ -810,10 +799,13 @@ test('a disconnected request with no response transitions through the watchdog',
     { timeoutMs: 15_000, intervalMs: 200 },
   );
   await waitFor(() => !fs.existsSync(reservation.path));
-  const state = JSON.parse(
-    fs.readFileSync(path.join(broker.binDir, 'fake-codex-state.json'), 'utf8'),
-  );
-  assert.equal(state.lastInterrupt?.threadId, threadId);
+  const interrupted = await waitFor(() => {
+    const state = readJsonIfReadable<Record<string, any>>(
+      path.join(broker.binDir, 'fake-codex-state.json'),
+    );
+    return state?.lastInterrupt?.threadId === threadId;
+  });
+  assert.equal(interrupted, true);
 });
 
 test("an orphaned turn's completion is not forwarded to an unrelated client", async (t) => {
@@ -857,8 +849,8 @@ test("an orphaned turn's completion is not forwarded to an unrelated client", as
       // The orphan resolves once its interrupt-induced completion lands; keep
       // probing until the fixture records it.
       const stateFile = path.join(broker.binDir, 'fake-codex-state.json');
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-      return state.lastInterrupt?.threadId === threadId;
+      const state = readJsonIfReadable<Record<string, any>>(stateFile);
+      return state?.lastInterrupt?.threadId === threadId;
     },
     { timeoutMs: 8000, intervalMs: 100 },
   );

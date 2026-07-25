@@ -134,6 +134,54 @@ function emitTokenUsage(threadId, turnId, multiplier = 1) {
   }
 }
 
+function emitSlowTurnProgress(threadId, turnId) {
+  const initialPlan = [
+    { step: "inspect existing capture flow", status: "completed" },
+    { step: "summarize live file changes", status: "inProgress" },
+    { step: "verify progress reporting", status: "pending" }
+  ];
+  const advancedPlan = [
+    { step: "inspect existing capture flow", status: "completed" },
+    { step: "summarize live file changes", status: "completed" },
+    { step: "verify progress reporting", status: "inProgress" }
+  ];
+  const diff = [
+    "diff --git a/src/one.ts b/src/one.ts",
+    "--- a/src/one.ts",
+    "+++ b/src/one.ts",
+    "@@ -1 +1 @@",
+    "-old value",
+    "+new value",
+    "diff --git a/src/two.ts b/src/two.ts",
+    "--- a/src/two.ts",
+    "+++ b/src/two.ts",
+    "@@ -0,0 +1 @@",
+    "+second file"
+  ].join("\\n");
+  const foreignDiff = [
+    "diff --git a/foreign.ts b/foreign.ts",
+    "--- a/foreign.ts",
+    "+++ b/foreign.ts",
+    "@@ -0,0 +1 @@",
+    "+foreign turn content"
+  ].join("\\n");
+
+  send({
+    method: "turn/plan/updated",
+    params: { threadId, turnId, explanation: null, plan: initialPlan }
+  });
+  send({ method: "turn/diff/updated", params: { threadId, turnId, diff } });
+  send({ method: "turn/diff/updated", params: { threadId, turnId, diff } });
+  send({
+    method: "turn/diff/updated",
+    params: { threadId, turnId: turnId + "_foreign", diff: foreignDiff }
+  });
+  send({
+    method: "turn/plan/updated",
+    params: { threadId, turnId, explanation: null, plan: advancedPlan }
+  });
+}
+
 function sandboxPolicy(requested) {
   if (requested === "workspace-write") {
     return {
@@ -906,6 +954,9 @@ rl.on("line", (line) => {
 		          withholdStartResponse
 		        ) {
 		          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+		          if (BEHAVIOR === "slow-turn") {
+		            emitSlowTurnProgress(thread.id, turnId);
+		          }
 		          const timer = setTimeout(() => {
 		            if (!interruptibleTurns.has(turnId)) {
 	              return;

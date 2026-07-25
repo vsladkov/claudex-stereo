@@ -29,6 +29,19 @@ export interface CapturedTokenUsage {
   modelContextWindow: number | null;
 }
 
+export interface UnifiedDiffSummary {
+  files: number;
+  additions: number;
+  deletions: number;
+}
+
+interface PlanProgressSnapshot {
+  done: number;
+  total: number;
+  currentIndex: number | null;
+  currentText: string | null;
+}
+
 export interface TurnCaptureState {
   threadId: string;
   rootThreadId: string;
@@ -59,6 +72,8 @@ export interface TurnCaptureState {
   tokenUsage: CapturedTokenUsage | null;
   jobTokenUsage: TokenUsageBreakdown | null;
   primaryThreadTokenUsage: ThreadTokenUsage | null;
+  diffStats: UnifiedDiffSummary;
+  planProgress: PlanProgressSnapshot | null;
   onProgress: ProgressReporter | null;
 }
 
@@ -343,6 +358,8 @@ export function createTurnCaptureState(
     tokenUsage: null,
     jobTokenUsage: null,
     primaryThreadTokenUsage: null,
+    diffStats: { files: 0, additions: 0, deletions: 0 },
+    planProgress: null,
     onProgress: options.onProgress ?? null,
   };
 }
@@ -426,6 +443,170 @@ function recordTokenUsage(state: TurnCaptureState, params: unknown): void {
       thread: state.primaryThreadTokenUsage.total,
       modelContextWindow: state.primaryThreadTokenUsage.modelContextWindow,
     };
+  }
+}
+
+export function summarizeUnifiedDiff(diff: string): UnifiedDiffSummary {
+  let files = 0;
+  let additions = 0;
+  let deletions = 0;
+  let inHunk = false;
+  let lineStart = 0;
+
+  while (lineStart <= diff.length) {
+    const newlineIndex = diff.indexOf('\n', lineStart);
+    const lineEnd = newlineIndex === -1 ? diff.length : newlineIndex;
+
+    if (diff.startsWith('diff --git ', lineStart)) {
+      files += 1;
+      inHunk = false;
+    } else if (files > 0 && diff.startsWith('@@', lineStart)) {
+      inHunk = true;
+    } else if (inHunk && lineStart < lineEnd) {
+      const firstCharacter = diff.charCodeAt(lineStart);
+      if (firstCharacter === 43) {
+        additions += 1;
+      } else if (firstCharacter === 45) {
+        deletions += 1;
+      }
+    }
+
+    if (newlineIndex === -1) {
+      break;
+    }
+    lineStart = newlineIndex + 1;
+  }
+
+  return { files, additions, deletions };
+}
+
+function sameDiffStats(left: UnifiedDiffSummary, right: UnifiedDiffSummary): boolean {
+  return (
+    left.files === right.files &&
+    left.additions === right.additions &&
+    left.deletions === right.deletions
+  );
+}
+
+function recordTurnDiff(state: TurnCaptureState, params: unknown): void {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    return;
+  }
+  const notification = params as {
+    threadId?: unknown;
+    turnId?: unknown;
+    diff?: unknown;
+  };
+  if (
+    typeof notification.threadId !== 'string' ||
+    typeof notification.turnId !== 'string' ||
+    state.threadTurnIds.get(notification.threadId) !== notification.turnId ||
+    typeof notification.diff !== 'string'
+  ) {
+    return;
+  }
+
+  const nextStats = summarizeUnifiedDiff(notification.diff);
+  if (sameDiffStats(state.diffStats, nextStats)) {
+    return;
+  }
+
+  state.diffStats = nextStats;
+  emitProgress(
+    state.onProgress,
+    `Diff: ${nextStats.files} files (+${nextStats.additions}/-${nextStats.deletions})`,
+    'editing',
+  );
+}
+
+function isPlanStepStatus(value: unknown): value is 'pending' | 'inProgress' | 'completed' {
+  return value === 'pending' || value === 'inProgress' || value === 'completed';
+}
+
+function samePlanProgress(left: PlanProgressSnapshot | null, right: PlanProgressSnapshot): boolean {
+  return (
+    left !== null &&
+    left.done === right.done &&
+    left.total === right.total &&
+    left.currentIndex === right.currentIndex &&
+    left.currentText === right.currentText
+  );
+}
+
+function recordTurnPlan(state: TurnCaptureState, params: unknown): void {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    return;
+  }
+  const notification = params as {
+    threadId?: unknown;
+    turnId?: unknown;
+    plan?: unknown;
+  };
+  if (
+    typeof notification.threadId !== 'string' ||
+    typeof notification.turnId !== 'string' ||
+    state.threadTurnIds.get(notification.threadId) !== notification.turnId ||
+    !Array.isArray(notification.plan)
+  ) {
+    return;
+  }
+
+  if (notification.plan.length === 0) {
+    state.planProgress = null;
+    return;
+  }
+
+  let done = 0;
+  let inProgressIndex: number | null = null;
+  let inProgressText: string | null = null;
+  let pendingIndex: number | null = null;
+  let pendingText: string | null = null;
+
+  for (let index = 0; index < notification.plan.length; index += 1) {
+    const value = notification.plan[index];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return;
+    }
+    const step = value as { step?: unknown; status?: unknown };
+    if (typeof step.step !== 'string' || !isPlanStepStatus(step.status)) {
+      return;
+    }
+
+    if (step.status === 'completed') {
+      done += 1;
+    } else if (step.status === 'inProgress' && inProgressIndex === null) {
+      inProgressIndex = index;
+      inProgressText = step.step;
+    } else if (step.status === 'pending' && pendingIndex === null) {
+      pendingIndex = index;
+      pendingText = step.step;
+    }
+  }
+
+  const total = notification.plan.length;
+  const currentIndex = inProgressIndex ?? pendingIndex;
+  const currentText = inProgressIndex !== null ? inProgressText : pendingText;
+  const nextProgress: PlanProgressSnapshot = {
+    done,
+    total,
+    currentIndex,
+    currentText,
+  };
+  if (samePlanProgress(state.planProgress, nextProgress)) {
+    return;
+  }
+
+  state.planProgress = nextProgress;
+  if (currentIndex !== null && currentText !== null) {
+    emitProgress(
+      state.onProgress,
+      `Step ${currentIndex + 1}/${total}: ${shorten(currentText, 96)}`,
+    );
+    return;
+  }
+
+  if (done === total) {
+    emitProgress(state.onProgress, `Plan complete: ${total}/${total} steps`);
   }
 }
 
@@ -645,6 +826,12 @@ export function applyTurnNotification(
       break;
     case 'thread/tokenUsage/updated':
       recordTokenUsage(state, message.params);
+      break;
+    case 'turn/diff/updated':
+      recordTurnDiff(state, message.params);
+      break;
+    case 'turn/plan/updated':
+      recordTurnPlan(state, message.params);
       break;
     case 'item/started':
       recordItem(state, message.params.item, 'started', message.params.threadId ?? null);

@@ -19,6 +19,7 @@ import {
   readJobLog,
   registerBrokerReaping,
   registerSessionCleanup,
+  requireCompanionState,
   waitFor,
   withCodexHome,
 } from './runtime-helpers.ts';
@@ -653,7 +654,7 @@ test('a resumed thread is reserved for exactly one run', async (t) => {
   await waitFor(
     () => {
       const reservation = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
       return reservation?.record.jobId === jobId && job?.turnId ? reservation : null;
     },
     { timeoutMs: 10000 },
@@ -683,7 +684,7 @@ test('a fresh persistent thread is reserved before its id is published', async (
   const jobId = JSON.parse(launched.stdout).jobId;
   const running = await waitFor(
     () => {
-      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
       const reservation = job?.threadId
         ? findThreadReservation(env.CODEX_HOME, job.threadId)
         : null;
@@ -773,7 +774,7 @@ test(
 
     const running = await waitFor(
       () => {
-        const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+        const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
         const reservation = findThreadReservation(env.CODEX_HOME, threadId);
         const turnStarts: Array<Record<string, any>> = readFakeState(binDir).turnStarts ?? [];
         const started = turnStarts.some(
@@ -801,7 +802,7 @@ test(
     process.kill(runningWorkerPid, 'SIGTERM');
     const cancelled = await waitFor(
       () => {
-        const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+        const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
         const fakeState = readFakeState(binDir);
         return job?.status === 'cancelled' &&
           job.errorMessage === 'Terminated by SIGTERM.' &&
@@ -888,7 +889,7 @@ test(
 
     const running = await waitFor(
       () => {
-        const job = readCompanionState(repo, env).jobs.find(
+        const job = readCompanionState(repo, env)?.jobs.find(
           (candidate) => candidate.status === 'running' && candidate.pid === child.pid,
         );
         const reservation = findThreadReservation(env.CODEX_HOME, threadId);
@@ -919,7 +920,7 @@ test(
 
     const cancelled = await waitFor(
       () => {
-        const job = readCompanionState(repo, env).jobs.find(
+        const job = readCompanionState(repo, env)?.jobs.find(
           (candidate) => candidate.id === running.job.id,
         );
         const fakeState = readFakeState(binDir);
@@ -974,7 +975,7 @@ test('/stereo:cancel releases task and plan-review thread reservations', async (
   await waitFor(
     () => {
       const reservation = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo, env).jobs.find(
+      const job = readCompanionState(repo, env)?.jobs.find(
         (candidate) => candidate.id === taskJobId,
       );
       return reservation?.record.jobId === taskJobId && job?.turnId ? reservation : null;
@@ -1021,7 +1022,7 @@ test('/stereo:cancel releases task and plan-review thread reservations', async (
   await waitFor(
     () => {
       const reservation = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo, env).jobs.find(
+      const job = readCompanionState(repo, env)?.jobs.find(
         (candidate) => candidate.id === planJobId,
       );
       return reservation?.record.jobId === planJobId && job?.turnId ? reservation : null;
@@ -1062,7 +1063,7 @@ test('cancel never removes a foreign thread reservation', async (t) => {
   const reservation = await waitFor(
     () => {
       const lock = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
       return lock && job?.turnId ? lock : null;
     },
     { timeoutMs: 10000 },
@@ -1114,7 +1115,7 @@ test('SessionEnd releases reservations for the session jobs it kills', async () 
   await waitFor(
     () => {
       const lock = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
       return lock && job?.turnId ? lock : null;
     },
     { timeoutMs: 10000 },
@@ -1132,7 +1133,7 @@ test('SessionEnd releases reservations for the session jobs it kills', async () 
   assert.equal(ended.status, 0, ended.stderr);
   assert.equal(findThreadReservation(env.CODEX_HOME, threadId), null);
   assert.equal(
-    readCompanionState(repo, env).jobs.some((job) => job.id === jobId),
+    requireCompanionState(repo, env).jobs.some((job) => job.id === jobId),
     false,
   );
 });
@@ -1213,7 +1214,7 @@ test('SessionEnd leaves a busy shared broker (and its session state) running', a
   const jobId = JSON.parse(launch.stdout).jobId;
   await waitFor(
     () => {
-      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
       return job?.turnId ? job : null;
     },
     { timeoutMs: 10000 },
@@ -1264,7 +1265,7 @@ test("SessionEnd reaps the broker after killing this session's own running job",
   const jobId = JSON.parse(launch.stdout).jobId;
   await waitFor(
     () => {
-      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
       return job?.turnId ? job : null;
     },
     { timeoutMs: 10000 },
@@ -1285,7 +1286,7 @@ test("SessionEnd reaps the broker after killing this session's own running job",
 
   await waitFor(() => !processIsAlive(session.pid), { timeoutMs: 4000 });
   assert.equal(loadBrokerSession(repo), null, 'broker session state must be cleared');
-  const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
+  const job = requireCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
   assert.equal(job, undefined, 'the killed job must leave the index');
 });
 

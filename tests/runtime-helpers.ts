@@ -127,18 +127,22 @@ export function runNodeWithTimeout(
   });
 }
 
-export function readFakeState(binDir: string): Record<string, any> {
+export function readJsonIfReadable<T = unknown>(filePath: string): T | null {
   try {
-    return JSON.parse(fs.readFileSync(path.join(binDir, 'fake-codex-state.json'), 'utf8'));
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
   } catch (error) {
     if (
       (error as NodeJS.ErrnoException | null)?.code === 'ENOENT' ||
       error instanceof SyntaxError
     ) {
-      return {};
+      return null;
     }
     throw error;
   }
+}
+
+export function readFakeState(binDir: string): Record<string, any> {
+  return readJsonIfReadable<Record<string, any>>(path.join(binDir, 'fake-codex-state.json')) ?? {};
 }
 
 export interface CompanionStateFile {
@@ -158,10 +162,19 @@ export function resolveCompanionStateDir(
 export function readCompanionState(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
-): CompanionStateFile {
-  return JSON.parse(
-    fs.readFileSync(path.join(resolveCompanionStateDir(cwd, env), 'state.json'), 'utf8'),
+): CompanionStateFile | null {
+  return readJsonIfReadable<CompanionStateFile>(
+    path.join(resolveCompanionStateDir(cwd, env), 'state.json'),
   );
+}
+
+export function requireCompanionState(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): CompanionStateFile {
+  const state = readCompanionState(cwd, env);
+  assert.ok(state, 'Expected companion state to be readable.');
+  return state;
 }
 
 export function readJobLog(
@@ -169,7 +182,7 @@ export function readJobLog(
   jobId: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const state = readCompanionState(cwd, env);
+  const state = requireCompanionState(cwd, env);
   const job = state.jobs.find((candidate) => candidate.id === jobId);
   assert.ok(job, `Expected job ${jobId} in companion state.`);
   return fs.readFileSync(job.logFile, 'utf8');
@@ -188,7 +201,10 @@ export function findThreadReservation(
       continue;
     }
     const lockPath = path.join(lockDir, entry);
-    const record = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    const record = readJsonIfReadable<Record<string, any>>(lockPath);
+    if (!record) {
+      continue;
+    }
     if (record.threadId === threadId) {
       return { path: lockPath, record };
     }

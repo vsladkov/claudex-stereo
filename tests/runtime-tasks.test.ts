@@ -18,8 +18,10 @@ import {
   readJobLog,
   registerBrokerReaping,
   registerSessionCleanup,
+  requireCompanionState,
   runNodeWithTimeout,
   waitFor,
+  withCodexHome,
 } from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 import {
@@ -29,6 +31,10 @@ import {
   spawnBrokerProcess,
   waitForBrokerEndpoint,
 } from '../plugins/stereo/src/broker/lifecycle.ts';
+import {
+  buildSingleJobSnapshot,
+  DEFAULT_MAX_PROGRESS_LINES,
+} from '../plugins/stereo/src/jobs/job-control.ts';
 import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 registerBrokerReaping();
@@ -329,7 +335,7 @@ test('task jobs persist per-job token usage separately from cumulative thread us
   });
   assert.equal(second.status, 0, second.stderr);
 
-  const jobs = readCompanionState(repo, env).jobs.filter((job) => job.jobClass === 'task');
+  const jobs = requireCompanionState(repo, env).jobs.filter((job) => job.jobClass === 'task');
   assert.equal(jobs.length, 2);
   const newest = jobs[0]!;
   const oldest = jobs[1]!;
@@ -380,7 +386,9 @@ test('task token usage includes registered subagent turns in the job aggregate',
   });
   assert.equal(result.status, 0, result.stderr);
 
-  const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.jobClass === 'task');
+  const job = requireCompanionState(repo, env).jobs.find(
+    (candidate) => candidate.jobClass === 'task',
+  );
   assert.ok(job);
   assert.deepEqual(job.tokenUsage.job, {
     totalTokens: 1050,
@@ -691,7 +699,7 @@ test('qualified task models route bare ids to explicit providers and remain cano
   assert.equal(fakeState.lastThreadStart.modelProvider, 'myprov');
   assert.equal(fakeState.lastTurnStart.model, 'unregistered-x');
 
-  const taskJob = readCompanionState(repo, env).jobs.find(
+  const taskJob = requireCompanionState(repo, env).jobs.find(
     (job) => job.model === 'unregistered-x@myprov',
   );
   assert.ok(taskJob);
@@ -918,6 +926,61 @@ test('task --background enqueues a detached worker and exposes per-job status', 
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
 });
 
+test('slow write tasks expose diff and plan progress while running and retain it in the log', async () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'slow-turn');
+  const env = buildEnv(binDir);
+
+  const launched = run(
+    process.execPath,
+    [SCRIPT, 'task', '--background', '--write', '--json', 'exercise live progress'],
+    { cwd: repo, env },
+  );
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId;
+
+  await waitFor(
+    () => {
+      const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
+      if (job?.status !== 'running') {
+        return null;
+      }
+      const log = fs.readFileSync(job.logFile, 'utf8');
+      return log.includes('Diff: 2 files (+2/-1)') &&
+        log.includes('Step 3/3: verify progress reporting')
+        ? true
+        : null;
+    },
+    { timeoutMs: 10000 },
+  );
+
+  const runningSnapshot = withCodexHome(env.CODEX_HOME, () => buildSingleJobSnapshot(repo, jobId));
+  assert.equal(runningSnapshot.job.status, 'running');
+  assert.ok(runningSnapshot.job.progressPreview.length <= DEFAULT_MAX_PROGRESS_LINES);
+  assert.ok(runningSnapshot.job.progressPreview.includes('Diff: 2 files (+2/-1)'));
+  assert.ok(runningSnapshot.job.progressPreview.includes('Step 3/3: verify progress reporting'));
+
+  const waited = run(
+    process.execPath,
+    [SCRIPT, 'status', jobId, '--wait', '--timeout-ms', '15000', '--json'],
+    { cwd: repo, env },
+  );
+  assert.equal(waited.status, 0, waited.stderr);
+  assert.equal(JSON.parse(waited.stdout).job.status, 'completed');
+
+  const completedSnapshot = withCodexHome(env.CODEX_HOME, () =>
+    buildSingleJobSnapshot(repo, jobId),
+  );
+  assert.deepEqual(completedSnapshot.job.progressPreview, []);
+
+  const log = readJobLog(repo, jobId, env);
+  assert.equal(log.match(/Diff: 2 files \(\+2\/-1\)/g)?.length, 1);
+  assert.equal(log.match(/Step 2\/3: summarize live file changes/g)?.length, 1);
+  assert.equal(log.match(/Step 3\/3: verify progress reporting/g)?.length, 1);
+  assert.doesNotMatch(log, /Diff: 1 files \(\+1\/-0\)/);
+});
+
 test('commands lazily start and reuse one shared app-server after first use', async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -1080,7 +1143,7 @@ test('task --write --thread retries privately when the shared runtime ignores es
   assert.equal(implementation.status, 0, implementation.stderr);
   assert.match(implementation.stdout, /Handled the requested task/);
 
-  const state = readCompanionState(repo, env);
+  const state = requireCompanionState(repo, env);
   const taskJob = state.jobs.find((job) => job.jobClass === 'task');
   assert.ok(taskJob);
   const log = readJobLog(repo, taskJob.id, env);
@@ -1316,6 +1379,8 @@ test('an endpoint-pinned runtime is never drained after a private write retry', 
   assert.equal(await brokerEndpointConnectable(endpoint), true);
   assert.equal(process.kill(broker.pid!, 0), true);
 
-  const taskJob = readCompanionState(repo, pinnedEnv).jobs.find((job) => job.jobClass === 'task');
+  const taskJob = requireCompanionState(repo, pinnedEnv).jobs.find(
+    (job) => job.jobClass === 'task',
+  );
   assert.match(readJobLog(repo, taskJob!.id, pinnedEnv), /not plugin-owned/i);
 });

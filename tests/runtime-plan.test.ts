@@ -10,7 +10,10 @@ import {
   SCRIPT,
   initializeBasicRepo,
   processIsAlive,
+  readCompanionState,
+  readJsonIfReadable,
   registerBrokerReaping,
+  requireCompanionState,
   waitFor,
 } from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
@@ -363,14 +366,20 @@ test('plan-review --background enqueues a detached worker and stores structured 
   assert.match(launchPayload.jobId, /^plan-/);
 
   const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
-  const stateAfterLaunch = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
+  const stateAfterLaunch = await waitFor(() => {
+    const state = readCompanionState(repo, env);
+    return state?.jobs.some((job) => job.id === launchPayload.jobId) ? state : null;
+  });
   const indexedAfterLaunch = stateAfterLaunch.jobs.find(
     (job: Record<string, any>) => job.id === launchPayload.jobId,
   );
   assert.ok(indexedAfterLaunch);
   assert.equal(Object.hasOwn(indexedAfterLaunch, 'request'), false);
   const jobFile = path.join(stateDir, 'jobs', `${launchPayload.jobId}.json`);
-  const storedAfterLaunch = JSON.parse(fs.readFileSync(jobFile, 'utf8'));
+  const storedAfterLaunch = await waitFor(() => {
+    const stored = readJsonIfReadable<Record<string, any>>(jobFile);
+    return stored?.request?.kind === 'plan-review' ? stored : null;
+  });
   assert.equal(storedAfterLaunch.request.kind, 'plan-review');
   assert.match(storedAfterLaunch.request.plan, /Plan under background review/);
 
@@ -404,9 +413,7 @@ test('plan-review --background enqueues a detached worker and stores structured 
   assert.equal(resultPayload.job.status, 'completed');
   assert.equal(resultPayload.storedJob.result.result.verdict, 'needs-revision');
   assert.match(resultPayload.storedJob.rendered, /# Codex Plan Review/);
-  const stateAfterCompletion = JSON.parse(
-    fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'),
-  );
+  const stateAfterCompletion = requireCompanionState(repo, env);
   const indexedAfterCompletion = stateAfterCompletion.jobs.find(
     (job: Record<string, any>) => job.id === launchPayload.jobId,
   );

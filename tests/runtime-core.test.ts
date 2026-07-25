@@ -13,6 +13,7 @@ import {
   SCRIPT,
   SESSION_HOOK,
   initializeBasicRepo,
+  readCompanionState,
   readFakeState,
   registerBrokerReaping,
   registerSessionCleanup,
@@ -640,13 +641,7 @@ test('status shows a provider-qualified model for an active background task', as
 
   await waitFor(
     () => {
-      const state = JSON.parse(
-        fs.readFileSync(
-          path.join(resolveDurableStateDir(repo, env.CODEX_HOME), 'state.json'),
-          'utf8',
-        ),
-      );
-      return state.jobs.find(
+      return readCompanionState(repo, env)?.jobs.find(
         (job: Record<string, unknown>) => job.id === jobId && job.status === 'running',
       );
     },
@@ -1807,7 +1802,6 @@ test('cancel with a job id can still target an active job from another Claude se
 test('cancel sends turn interrupt to the shared app-server before killing a brokered task', async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
-  const fakeStatePath = path.join(binDir, 'fake-codex-state.json');
   installFakeCodex(binDir, 'interruptible-slow-task');
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
@@ -1829,11 +1823,11 @@ test('cancel sends turn interrupt to the shared app-server before killing a brok
   const jobId = launchPayload.jobId;
   assert.ok(jobId);
 
-  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   const runningJob = await waitFor(
     () => {
-      const state = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
-      const job = state.jobs.find((candidate: Record<string, any>) => candidate.id === jobId);
+      const job = readCompanionState(repo, env)?.jobs.find(
+        (candidate: Record<string, any>) => candidate.id === jobId,
+      );
       if (job?.status === 'running' && job.threadId && job.turnId) {
         return job;
       }
@@ -1853,13 +1847,8 @@ test('cancel sends turn interrupt to the shared app-server before killing a brok
   assert.equal(cancelPayload.turnInterruptAttempted, true);
   assert.equal(cancelPayload.turnInterrupted, true);
 
-  await waitFor(() => {
-    const fakeState = JSON.parse(fs.readFileSync(fakeStatePath, 'utf8'));
-    return fakeState.lastInterrupt ?? null;
-  });
-
-  const fakeState = JSON.parse(fs.readFileSync(fakeStatePath, 'utf8'));
-  assert.deepEqual(fakeState.lastInterrupt, {
+  const lastInterrupt = await waitFor(() => readFakeState(binDir).lastInterrupt ?? null);
+  assert.deepEqual(lastInterrupt, {
     threadId: runningJob.threadId,
     turnId: runningJob.turnId,
   });
@@ -1878,7 +1867,6 @@ test('cancel sends turn interrupt to the shared app-server before killing a brok
 test('setup preserves an existing shared broker while probing rate limits privately', (t) => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
-  const fakeStatePath = path.join(binDir, 'fake-codex-state.json');
   t.after(async () => {
     await reapWorkspaceBroker(repo);
   });
@@ -1902,7 +1890,7 @@ test('setup preserves an existing shared broker while probing rate limits privat
   if (!brokerSession) {
     return;
   }
-  const appServerStartsBefore = JSON.parse(fs.readFileSync(fakeStatePath, 'utf8')).appServerStarts;
+  const appServerStartsBefore = readFakeState(binDir).appServerStarts;
 
   const setup = run('node', [SCRIPT, 'setup', '--json'], {
     cwd: repo,
@@ -1911,7 +1899,7 @@ test('setup preserves an existing shared broker while probing rate limits privat
   assert.equal(setup.status, 0, setup.stderr);
   assert.equal(JSON.parse(setup.stdout).sessionRuntime.mode, 'shared');
 
-  const fakeState = JSON.parse(fs.readFileSync(fakeStatePath, 'utf8'));
+  const fakeState = readFakeState(binDir);
   assert.equal(fakeState.appServerStarts, appServerStartsBefore + 1);
   assert.deepEqual(loadBrokerSession(repo), brokerSession);
 

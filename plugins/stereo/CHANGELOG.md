@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.0
+
+- Surface live diff statistics and plan-step updates from active Codex turns in existing job logs and nonterminal status progress previews, with registered-turn filtering and change-only emission
+
 ## 1.7.0
 
 - Keep workspace config, job records and logs, and approved pair-plan state under `CODEX_HOME/companion-state` so state written by 1.7.0 and later survives plugin reinstalls; non-wiping upgrades migrate older state once
