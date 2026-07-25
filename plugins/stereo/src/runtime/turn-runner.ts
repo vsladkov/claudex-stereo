@@ -10,7 +10,11 @@ import { modelProviderFor } from '../models/registry.ts';
 import { BROKER_ENDPOINT_ENV, CodexAppServerClient } from '../transport/app-server-client.ts';
 import { loadBrokerSession } from '../broker/lifecycle.ts';
 import { getCodexAvailability } from './availability.ts';
-import { acquireThreadReservation, releaseThreadReservation } from './reservations.ts';
+import {
+  acquireThreadReservation,
+  markLiveReservationPhase,
+  releaseThreadReservation,
+} from './reservations.ts';
 import type { ThreadReservation } from './reservations.ts';
 import { buildResultStatus } from './structured-output.ts';
 import {
@@ -329,16 +333,21 @@ export async function runAppServerTurn(
         const turnState = await captureTurn(
           client,
           threadId,
-          () =>
-            client.request('turn/start', {
+          () => {
+            markLiveReservationPhase(reservation, 'in-flight');
+            return client.request('turn/start', {
               threadId,
               input: buildTurnInput(prompt),
               model: options.model ?? null,
               effort: options.effort ?? null,
               outputSchema: (options.outputSchema ?? null) as TurnStartParams['outputSchema'],
-            }),
+            });
+          },
           { onProgress: options.onProgress },
         );
+        if (!turnState.inferredCompletion) {
+          markLiveReservationPhase(reservation, 'post-turn');
+        }
 
         return {
           status: buildResultStatus(turnState),

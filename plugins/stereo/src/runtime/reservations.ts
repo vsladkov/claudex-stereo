@@ -22,6 +22,10 @@ export interface ThreadReservation {
   cleanupPath: string;
 }
 
+export type LiveReservationPhase = 'pre-turn' | 'in-flight' | 'post-turn';
+
+const liveReservations = new Map<ThreadReservation, LiveReservationPhase>();
+
 export interface ReleaseReservationResult {
   released: boolean;
   status: 'none' | 'missing' | 'token-mismatch' | 'released';
@@ -421,16 +425,45 @@ export function acquireThreadReservation(
     );
   }
 
-  return {
+  const reservation = {
     ...record,
     path: lockPath,
     cleanupPath,
   };
+  liveReservations.set(reservation, 'pre-turn');
+  return reservation;
+}
+
+function forgetLiveReservation(
+  reservation: { path?: string | null; token?: string | null } | null | undefined,
+): void {
+  if (!reservation?.path || !reservation.token) {
+    return;
+  }
+  for (const liveReservation of liveReservations.keys()) {
+    if (
+      liveReservation === reservation ||
+      (liveReservation.path === reservation.path && liveReservation.token === reservation.token)
+    ) {
+      liveReservations.delete(liveReservation);
+    }
+  }
+}
+
+export function markLiveReservationPhase(
+  reservation: ThreadReservation | null | undefined,
+  phase: LiveReservationPhase,
+): void {
+  if (!reservation || !liveReservations.has(reservation)) {
+    return;
+  }
+  liveReservations.set(reservation, phase);
 }
 
 export function releaseThreadReservation(
   reservation: { path?: string | null; token?: string | null } | null | undefined,
 ): ReleaseReservationResult {
+  forgetLiveReservation(reservation);
   if (!reservation?.path || !reservation.token) {
     return { released: false, status: 'none' };
   }
@@ -450,6 +483,39 @@ export function releaseThreadReservation(
     }
     throw error;
   }
+}
+
+export function releaseEligibleLiveReservations(): { released: number; retained: number } {
+  let released = 0;
+  let retained = 0;
+  for (const [reservation, phase] of [...liveReservations]) {
+    if (phase === 'in-flight') {
+      retained += 1;
+      continue;
+    }
+    const current = readReservationRecord(reservation.path);
+    if (
+      !current ||
+      current.invalid ||
+      current.token !== reservation.token ||
+      current.jobId !== reservation.jobId
+    ) {
+      retained += 1;
+      continue;
+    }
+    try {
+      if (releaseThreadReservation(reservation).released) {
+        released += 1;
+      } else {
+        retained += 1;
+      }
+    } catch {
+      // Signal-time cleanup is best effort per reservation: one bad path
+      // must not prevent the remaining eligible locks from being released.
+      retained += 1;
+    }
+  }
+  return { released, retained };
 }
 
 async function waitForReservationOwnerDeath(

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.0
+
+- Terminalize foreground and background companion jobs on SIGTERM/SIGINT, release only reservations whose turns are proven not to be running, and retain in-flight locks for the existing stranded-reservation remedies
+
 ## 1.3.2
 
 - Adopt the Prettier + ESLint toolchain (repo-wide reformat, husky pre-commit on staged files, CI format and lint gates); no behavior changes

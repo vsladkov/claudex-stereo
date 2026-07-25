@@ -32,6 +32,25 @@ import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 registerBrokerReaping();
 
+async function waitForChildExit<T>(exitPromise: Promise<T>, timeoutMs = 10000): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      exitPromise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Timed out waiting for child process exit.')),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
 test('setup and status surface stranded thread reservations on every route', (t) => {
   const repo = initializeBasicRepo();
   const binDir = makeTempDir();
@@ -708,6 +727,214 @@ test('a fresh persistent thread is reserved before its id is published', async (
   );
   assert.equal(resumed.status, 0, resumed.stderr);
 });
+
+test(
+  'SIGTERM terminalizes a background job and retains its in-flight reservation',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const repo = initializeBasicRepo();
+    const binDir = makeTempDir();
+    installFakeCodex(binDir, 'slow-turn');
+    const env = buildEnv(binDir);
+
+    const seed = run(
+      process.execPath,
+      [SCRIPT, 'plan-review', '--json', 'Signal retention target'],
+      { cwd: repo, env },
+    );
+    assert.equal(seed.status, 0, seed.stderr);
+    const threadId = JSON.parse(seed.stdout).threadId;
+
+    const launched = run(
+      process.execPath,
+      [SCRIPT, 'task', '--background', '--json', '--thread', threadId, 'signal this slow task'],
+      { cwd: repo, env },
+    );
+    assert.equal(launched.status, 0, launched.stderr);
+    const jobId = JSON.parse(launched.stdout).jobId;
+    let workerPid: number | null = null;
+    let ownedReservation: ReturnType<typeof findThreadReservation> = null;
+    t.after(async () => {
+      if (workerPid && processIsAlive(workerPid)) {
+        try {
+          process.kill(workerPid, 'SIGKILL');
+        } catch {
+          // The worker may have exited between the liveness probe and kill.
+        }
+        await waitFor(() => !processIsAlive(workerPid), { timeoutMs: 3000 }).catch(() => null);
+      }
+      if (ownedReservation) {
+        releaseThreadReservation({
+          path: ownedReservation.path,
+          token: ownedReservation.record.token,
+        });
+      }
+    });
+
+    const running = await waitFor(
+      () => {
+        const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+        const reservation = findThreadReservation(env.CODEX_HOME, threadId);
+        const turnStarts: Array<Record<string, any>> = readFakeState(binDir).turnStarts ?? [];
+        const started = turnStarts.some(
+          (entry) => entry.threadId === threadId && entry.turnId === job?.turnId,
+        );
+        if (
+          !job ||
+          job.status !== 'running' ||
+          typeof job.pid !== 'number' ||
+          !reservation ||
+          reservation.record.jobId !== jobId ||
+          !job.turnId ||
+          !started
+        ) {
+          return null;
+        }
+        return { job, reservation };
+      },
+      { timeoutMs: 10000 },
+    );
+    const runningWorkerPid = running.job.pid as number;
+    workerPid = runningWorkerPid;
+    ownedReservation = running.reservation;
+
+    process.kill(runningWorkerPid, 'SIGTERM');
+    const cancelled = await waitFor(
+      () => {
+        const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+        const fakeState = readFakeState(binDir);
+        return job?.status === 'cancelled' &&
+          job.errorMessage === 'Terminated by SIGTERM.' &&
+          !processIsAlive(workerPid) &&
+          fakeState.lastInterrupt?.threadId === threadId &&
+          fakeState.lastInterrupt?.turnId === running.job.turnId
+          ? job
+          : null;
+      },
+      { timeoutMs: 10000 },
+    );
+    assert.equal(cancelled.pid, null);
+    assert.equal(fs.existsSync(running.reservation.path), true);
+
+    const successor = run(
+      process.execPath,
+      [SCRIPT, 'task', '--thread', threadId, 'resume after the signalled worker'],
+      { cwd: repo, env },
+    );
+    assert.notEqual(successor.status, 0);
+    assert.match(successor.stderr, /appears to have crashed while reserving thread/i);
+    assert.ok(successor.stderr.includes(running.reservation.path));
+  },
+);
+
+test(
+  'foreground SIGINT terminalizes the job and retains its in-flight reservation',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const repo = initializeBasicRepo();
+    const binDir = makeTempDir();
+    installFakeCodex(binDir, 'slow-turn');
+    const env = buildEnv(binDir);
+
+    const seed = run(
+      process.execPath,
+      [SCRIPT, 'plan-review', '--json', 'Foreground signal target'],
+      { cwd: repo, env },
+    );
+    assert.equal(seed.status, 0, seed.stderr);
+    const threadId = JSON.parse(seed.stdout).threadId;
+
+    const child = spawn(
+      process.execPath,
+      [SCRIPT, 'task', '--json', '--thread', threadId, 'interrupt this foreground task'],
+      {
+        cwd: repo,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    const childExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code, signal) => resolve({ code, signal }));
+      },
+    );
+
+    let ownedReservation: ReturnType<typeof findThreadReservation> = null;
+    t.after(async () => {
+      if (child.pid && processIsAlive(child.pid)) {
+        child.kill('SIGKILL');
+        await waitForChildExit(childExit, 3000).catch(() => null);
+      }
+      if (ownedReservation) {
+        releaseThreadReservation({
+          path: ownedReservation.path,
+          token: ownedReservation.record.token,
+        });
+      }
+    });
+
+    const running = await waitFor(
+      () => {
+        const job = readCompanionState(repo).jobs.find(
+          (candidate) => candidate.status === 'running' && candidate.pid === child.pid,
+        );
+        const reservation = findThreadReservation(env.CODEX_HOME, threadId);
+        const turnStarts: Array<Record<string, any>> = readFakeState(binDir).turnStarts ?? [];
+        const started = turnStarts.some(
+          (entry) => entry.threadId === threadId && entry.turnId === job?.turnId,
+        );
+        if (
+          !job ||
+          job.threadId !== threadId ||
+          !reservation ||
+          reservation.record.jobId !== job.id ||
+          !job.turnId ||
+          !started
+        ) {
+          return null;
+        }
+        return { job, reservation };
+      },
+      { timeoutMs: 10000 },
+    );
+    ownedReservation = running.reservation;
+
+    child.kill('SIGINT');
+    const exit = await waitForChildExit(childExit);
+    assert.equal(exit.code, null, JSON.stringify({ stdout, stderr }));
+    assert.equal(exit.signal, 'SIGINT', JSON.stringify({ stdout, stderr }));
+
+    const cancelled = await waitFor(
+      () => {
+        const job = readCompanionState(repo).jobs.find(
+          (candidate) => candidate.id === running.job.id,
+        );
+        const fakeState = readFakeState(binDir);
+        return job?.status === 'cancelled' &&
+          job.errorMessage === 'Terminated by SIGINT.' &&
+          fakeState.lastInterrupt?.threadId === threadId &&
+          fakeState.lastInterrupt?.turnId === running.job.turnId
+          ? job
+          : null;
+      },
+      { timeoutMs: 10000 },
+    );
+    assert.equal(cancelled.pid, null);
+    assert.equal(fs.existsSync(running.reservation.path), true);
+  },
+);
 
 test('/stereo:cancel releases task and plan-review thread reservations', async (t) => {
   const repo = initializeBasicRepo();

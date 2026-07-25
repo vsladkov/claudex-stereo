@@ -12,6 +12,7 @@ import {
   createTrackedProgress,
   ensureCodexAvailable,
   enqueueBackgroundTask,
+  installSignalCleanup,
   renderQueuedTaskLaunch,
   runForegroundCommand,
 } from '../../workflows/companion-jobs.ts';
@@ -221,29 +222,34 @@ export async function handleTaskWorker(argv: string[]): Promise<void> {
   const workerJob = storedJob as JobRecord;
   const workerRequest = request as PersistedWorkerRequest;
 
-  const { logFile, progress } = createTrackedProgress(
-    {
-      ...workerJob,
-      workspaceRoot,
-    },
-    {
-      logFile: workerJob.logFile ?? null,
-    },
-  );
-  const runner = workerRequest.kind === 'plan-review' ? executePlanReviewRun : executeTaskRun;
-  await runTrackedJob(
-    {
-      ...workerJob,
-      workspaceRoot,
-      logFile,
-    },
-    () =>
-      runner({
-        ...workerRequest,
-        onProgress: progress,
-      }),
-    { logFile },
-  );
+  const disposeSignalCleanup = installSignalCleanup({ jobId, workspaceRoot });
+  try {
+    const { logFile, progress } = createTrackedProgress(
+      {
+        ...workerJob,
+        workspaceRoot,
+      },
+      {
+        logFile: workerJob.logFile ?? null,
+      },
+    );
+    const runner = workerRequest.kind === 'plan-review' ? executePlanReviewRun : executeTaskRun;
+    await runTrackedJob(
+      {
+        ...workerJob,
+        workspaceRoot,
+        logFile,
+      },
+      () =>
+        runner({
+          ...workerRequest,
+          onProgress: progress,
+        }),
+      { logFile },
+    );
+  } finally {
+    disposeSignalCleanup();
+  }
 }
 
 export function handleTaskResumeCandidate(argv: string[]): void {

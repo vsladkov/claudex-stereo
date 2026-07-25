@@ -31,6 +31,7 @@ export interface TurnCaptureState {
   rejectCompletion: (error: unknown) => void;
   finalTurn: Turn | null;
   completed: boolean;
+  inferredCompletion: boolean;
   finalAnswerSeen: boolean;
   pendingCollaborations: Set<string>;
   activeSubagentTurns: Set<string>;
@@ -311,6 +312,7 @@ export function createTurnCaptureState(
     rejectCompletion,
     finalTurn: null,
     completed: false,
+    inferredCompletion: false,
     finalAnswerSeen: false,
     pendingCollaborations: new Set(),
     activeSubagentTurns: new Set(),
@@ -395,6 +397,7 @@ export function scheduleInferredCompletion(state: TurnCaptureState): void {
     if (state.pendingCollaborations.size > 0 || state.activeSubagentTurns.size > 0) {
       return;
     }
+    state.inferredCompletion = true;
     completeTurn(state, null, { inferred: true });
   }, state.timer.inferredCompletionDelayMs);
   handle.unref?.();

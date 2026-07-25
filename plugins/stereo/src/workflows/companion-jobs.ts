@@ -4,6 +4,7 @@ import process from 'node:process';
 
 import { getCodexAvailability } from '../runtime/index.ts';
 import type { ProgressReporter } from '../runtime/index.ts';
+import { releaseEligibleLiveReservations } from '../runtime/reservations.ts';
 import {
   appendLogLine,
   createJobLogFile,
@@ -13,9 +14,127 @@ import {
   runTrackedJob,
 } from '../jobs/tracked-jobs.ts';
 import type { JobExecution, TrackedJob } from '../jobs/tracked-jobs.ts';
-import { generateJobId, upsertJob, writeJobFile } from '../workspace/state.ts';
+import { readStoredJob } from '../jobs/job-control.ts';
+import { generateJobId, nowIso, upsertJob, writeJobFile } from '../workspace/state.ts';
 import { COMPANION_ENTRY } from '../shared/paths.ts';
 import { outputResult } from '../shared/text.ts';
+
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+export type CompanionTerminationSignal = 'SIGTERM' | 'SIGINT';
+
+export interface SignalCleanupContext {
+  jobId: string;
+  workspaceRoot: string;
+}
+
+export interface SignalCleanupResult {
+  terminalized: boolean;
+  released: number;
+  retained: number;
+}
+
+export function terminalizeJobForSignal(
+  { jobId, workspaceRoot }: SignalCleanupContext,
+  signal: CompanionTerminationSignal,
+): boolean {
+  let storedJob = null;
+  try {
+    storedJob = readStoredJob(workspaceRoot, jobId);
+  } catch {
+    // A corrupt or concurrently replaced record still gets a minimal
+    // terminal replacement below.
+  }
+  if (storedJob && TERMINAL_JOB_STATUSES.has(storedJob.status)) {
+    return false;
+  }
+
+  const completedAt = nowIso();
+  const errorMessage = `Terminated by ${signal}.`;
+  const terminalRecord = {
+    ...(storedJob ?? { id: jobId }),
+    id: jobId,
+    status: 'cancelled',
+    phase: 'cancelled',
+    pid: null,
+    completedAt,
+    errorMessage,
+  };
+
+  let firstError: unknown = null;
+  try {
+    writeJobFile(workspaceRoot, jobId, terminalRecord);
+  } catch (error) {
+    firstError = error;
+  }
+  try {
+    upsertJob(workspaceRoot, terminalRecord);
+  } catch (error) {
+    firstError ??= error;
+  }
+  if (firstError) {
+    throw firstError;
+  }
+  return true;
+}
+
+// Exported separately from signal registration so the synchronous cleanup
+// body can be exercised without sending a signal to the test process.
+export function cleanupCompanionJobForSignal(
+  context: SignalCleanupContext,
+  signal: CompanionTerminationSignal,
+): SignalCleanupResult {
+  let terminalized = false;
+  let released = 0;
+  let retained = 0;
+  try {
+    terminalized = terminalizeJobForSignal(context, signal);
+  } catch {
+    // Reservation cleanup must still run when job bookkeeping fails.
+  }
+  try {
+    ({ released, retained } = releaseEligibleLiveReservations());
+  } catch {
+    // The caller must still re-raise the signal even if the sweep itself fails.
+  }
+  return { terminalized, released, retained };
+}
+
+export function installSignalCleanup(context: SignalCleanupContext): () => void {
+  let handlingSignal = false;
+  let disposed = false;
+  const handlers = new Map<CompanionTerminationSignal, () => void>();
+  const dispose = (): void => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    for (const [signal, handler] of handlers) {
+      process.removeListener(signal, handler);
+    }
+  };
+
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    const handler = (): void => {
+      if (handlingSignal) {
+        return;
+      }
+      handlingSignal = true;
+      try {
+        cleanupCompanionJobForSignal(context, signal);
+      } finally {
+        dispose();
+        process.kill(process.pid, signal);
+      }
+    };
+    handlers.set(signal, handler);
+    // Register unconditionally: Windows emulates SIGINT, while unsupported
+    // targeted signals continue to fall back to the stale-pid remedies.
+    process.once(signal, handler);
+  }
+
+  return dispose;
+}
 
 // Every workflow runner resolves to a JobExecution enriched with the
 // job-classification fields the CLI handlers persist.
@@ -153,12 +272,20 @@ export async function runForegroundCommand(
     logFile: options.logFile,
     stderr: !options.json,
   });
-  const execution = await runTrackedJob(job, () => runner(progress), { logFile });
-  outputResult(options.json ? execution.payload : execution.rendered, options.json);
-  if (execution.exitStatus !== 0) {
-    process.exitCode = execution.exitStatus;
+  const disposeSignalCleanup = installSignalCleanup({
+    jobId: job.id,
+    workspaceRoot: job.workspaceRoot,
+  });
+  try {
+    const execution = await runTrackedJob(job, () => runner(progress), { logFile });
+    outputResult(options.json ? execution.payload : execution.rendered, options.json);
+    if (execution.exitStatus !== 0) {
+      process.exitCode = execution.exitStatus;
+    }
+    return execution;
+  } finally {
+    disposeSignalCleanup();
   }
-  return execution;
 }
 
 export function spawnDetachedTaskWorker(cwd: string, jobId: string): ChildProcess {

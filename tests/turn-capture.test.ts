@@ -32,6 +32,7 @@ test('createTurnCaptureState seeds thread-scoped defaults', () => {
   assert.equal(state.threadLabels.size, 0);
   assert.equal(state.turnId, null);
   assert.equal(state.completed, false);
+  assert.equal(state.inferredCompletion, false);
   assert.equal(state.finalAnswerSeen, false);
   assert.equal(state.finalTurn, null);
   assert.equal(state.completionTimer, null);
@@ -299,6 +300,7 @@ test('the inferred-completion timer completes the turn exactly once', async () =
   assert.equal(fireAll(clock), 1);
   const finished = await state.completion;
   assert.equal(finished.completed, true);
+  assert.equal(finished.inferredCompletion, true);
   assert.equal(finished.finalTurn?.status, 'completed');
 
   // A late duplicate fire must not double-complete.
@@ -316,6 +318,7 @@ test('a real completion cancels the pending inferred-completion timer', () => {
 
   completeTurn(state, { id: 'turn-real', status: 'completed' } as Turn);
   assert.equal(clock.pending.length, 0, 'completeTurn must clear the debounce timer');
+  assert.equal(state.inferredCompletion, false);
   assert.equal(state.finalTurn?.id, 'turn-real');
 
   // Nothing left to fire; firing is a no-op even if a stale handle leaked.

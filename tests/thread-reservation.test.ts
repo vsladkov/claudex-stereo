@@ -14,6 +14,10 @@ import {
   releaseThreadReservationForCancelledJob,
 } from '../plugins/stereo/src/runtime/index.ts';
 import type { StrandedReservationEntry } from '../plugins/stereo/src/runtime/index.ts';
+import {
+  markLiveReservationPhase,
+  releaseEligibleLiveReservations,
+} from '../plugins/stereo/src/runtime/reservations.ts';
 import { makeTempDir } from './helpers.ts';
 
 const DEAD_PID = 2147483647;
@@ -128,6 +132,81 @@ test('thread reservations are exclusive, path-safe, and token-released', (t) => 
     ),
   );
   releaseThreadReservation(dead);
+});
+
+test('live reservations release only in pre-turn and post-turn phases', (t) => {
+  useTempCodexHome(t);
+  const preTurn = acquireThreadReservation('live-pre-turn');
+  const postTurn = acquireThreadReservation('live-post-turn');
+  const inFlight = acquireThreadReservation('live-in-flight');
+  const normallyReleased = acquireThreadReservation('live-normal-release');
+  t.after(() => {
+    for (const reservation of [preTurn, postTurn, inFlight, normallyReleased]) {
+      releaseThreadReservation(reservation);
+    }
+  });
+
+  markLiveReservationPhase(postTurn, 'post-turn');
+  markLiveReservationPhase(inFlight, 'in-flight');
+  markLiveReservationPhase({ ...preTurn }, 'post-turn');
+
+  assert.equal(releaseThreadReservation(normallyReleased).released, true);
+  assert.deepEqual(releaseEligibleLiveReservations(), { released: 2, retained: 1 });
+  assert.equal(fs.existsSync(preTurn.path), false);
+  assert.equal(fs.existsSync(postTurn.path), false);
+  assert.equal(fs.existsSync(inFlight.path), true);
+  assert.deepEqual(releaseEligibleLiveReservations(), { released: 0, retained: 1 });
+
+  assert.equal(releaseThreadReservation(inFlight).released, true);
+  assert.deepEqual(releaseEligibleLiveReservations(), { released: 0, retained: 0 });
+  assert.deepEqual(releaseEligibleLiveReservations(), { released: 0, retained: 0 });
+});
+
+test('signal-time release never unlinks a reservation replaced by another owner', (t) => {
+  useTempCodexHome(t);
+  const reservation = acquireThreadReservation('live-token-mismatch');
+  markLiveReservationPhase(reservation, 'post-turn');
+  const replacement = {
+    ...JSON.parse(fs.readFileSync(reservation.path, 'utf8')),
+    token: 'replacement-token',
+    jobId: 'replacement-job',
+  };
+  fs.writeFileSync(reservation.path, `${JSON.stringify(replacement)}\n`, 'utf8');
+  t.after(() => {
+    releaseThreadReservation({ path: reservation.path, token: replacement.token });
+    releaseThreadReservation(reservation);
+  });
+
+  assert.deepEqual(releaseEligibleLiveReservations(), { released: 0, retained: 1 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(reservation.path, 'utf8')), replacement);
+  assert.deepEqual(releaseEligibleLiveReservations(), { released: 0, retained: 1 });
+});
+
+test('signal-time release retains an eligible reservation with a foreign job id', (t) => {
+  useTempCodexHome(t);
+  const reservation = acquireThreadReservation('live-job-mismatch', {
+    jobId: 'original-job',
+  });
+  markLiveReservationPhase(reservation, 'post-turn');
+  const replacement = {
+    ...JSON.parse(fs.readFileSync(reservation.path, 'utf8')),
+    jobId: 'foreign-job',
+  };
+  fs.writeFileSync(reservation.path, `${JSON.stringify(replacement)}\n`, 'utf8');
+  t.after(() => {
+    try {
+      fs.unlinkSync(reservation.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    releaseThreadReservation(reservation);
+  });
+
+  assert.deepEqual(releaseEligibleLiveReservations(), { released: 0, retained: 1 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(reservation.path, 'utf8')), replacement);
+  assert.deepEqual(releaseEligibleLiveReservations(), { released: 0, retained: 1 });
 });
 
 test('stranded reservation scanning reconciles every readable lock and claim state', (t) => {
