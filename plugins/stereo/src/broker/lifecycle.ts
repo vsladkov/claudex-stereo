@@ -53,6 +53,18 @@ export interface TeardownBrokerSessionOptions {
   killProcess?: ((pid: number) => unknown) | null;
 }
 
+export type BrokerEndpointProbeOutcome = 'connected' | 'closed' | 'timeout';
+
+export interface ProbeSocket {
+  readonly destroyed: boolean;
+  destroy(): unknown;
+  once(event: 'connect' | 'error' | 'close', listener: () => void): unknown;
+}
+
+export interface ProbeBrokerEndpointOptions {
+  connect?: (endpoint: string) => ProbeSocket;
+}
+
 export const BROKER_SESSION_DIR_PREFIX = 'cxc-';
 
 export function createBrokerSessionDir(prefix = BROKER_SESSION_DIR_PREFIX): string {
@@ -64,21 +76,67 @@ function connectToEndpoint(endpoint: string): net.Socket {
   return net.createConnection({ path: target.path });
 }
 
-export async function waitForBrokerEndpoint(endpoint: string, timeoutMs = 2000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const ready = await new Promise<boolean>((resolve) => {
-      const socket = connectToEndpoint(endpoint);
-      socket.on('connect', () => {
-        socket.end();
-        resolve(true);
-      });
-      socket.on('error', () => resolve(false));
+export function probeBrokerEndpointOutcome(
+  endpoint: string,
+  timeoutMs = 500,
+  options: ProbeBrokerEndpointOptions = {},
+): Promise<BrokerEndpointProbeOutcome> {
+  return new Promise<BrokerEndpointProbeOutcome>((resolve) => {
+    const socket: ProbeSocket = (options.connect ?? connectToEndpoint)(endpoint);
+    let connected = false;
+    let settled = false;
+    const timeout = setTimeout(() => finish('timeout'), timeoutMs);
+
+    function finish(outcome: BrokerEndpointProbeOutcome): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+      resolve(outcome);
+    }
+
+    socket.once('connect', () => {
+      if (settled) {
+        return;
+      }
+      connected = true;
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
     });
-    if (ready) {
+    socket.once('error', () => finish('closed'));
+    socket.once('close', () => finish(connected ? 'connected' : 'closed'));
+  });
+}
+
+export async function probeBrokerEndpoint(endpoint: string, timeoutMs = 500): Promise<boolean> {
+  return (await probeBrokerEndpointOutcome(endpoint, timeoutMs)) === 'connected';
+}
+
+async function sleepUntilNextProbe(deadline: number): Promise<void> {
+  const remaining = deadline - Date.now();
+  if (remaining > 0) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(50, remaining)));
+  }
+}
+
+export async function waitForBrokerEndpoint(
+  endpoint: string,
+  timeoutMs = 2000,
+  options: ProbeBrokerEndpointOptions = {},
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    const outcome = await probeBrokerEndpointOutcome(endpoint, Math.min(500, remaining), options);
+    if (outcome === 'connected') {
       return true;
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await sleepUntilNextProbe(deadline);
   }
   return false;
 }
@@ -122,21 +180,19 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boole
   return processHasExited(pid);
 }
 
-async function waitForBrokerEndpointClosed(endpoint: string, timeoutMs: number): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const connectable = await new Promise<boolean>((resolve) => {
-      const socket = connectToEndpoint(endpoint);
-      socket.on('connect', () => {
-        socket.end();
-        resolve(true);
-      });
-      socket.on('error', () => resolve(false));
-    });
-    if (!connectable) {
+export async function waitForBrokerEndpointClosed(
+  endpoint: string,
+  timeoutMs: number,
+  options: ProbeBrokerEndpointOptions = {},
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    const outcome = await probeBrokerEndpointOutcome(endpoint, Math.min(500, remaining), options);
+    if (outcome === 'closed') {
       return true;
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await sleepUntilNextProbe(deadline);
   }
   return false;
 }

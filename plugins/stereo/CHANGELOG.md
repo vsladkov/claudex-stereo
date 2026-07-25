@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1
+
+- Bound broker endpoint probes across close-only and silent connection races, with outcome-aware readiness and teardown checks
+- Remove the superseded TypeScript migration notes
+
 ## 1.6.0
 
 - Route provider-qualified model selections such as `model@provider` with the bare model id while preserving the qualified value in job state and output

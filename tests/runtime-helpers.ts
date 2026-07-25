@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 import { afterEach } from 'node:test';
@@ -10,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 import { drainCreatedTempDirs, initGitRepo, makeTempDir, run } from './helpers.ts';
 import { reapWorkspaceBroker } from './broker-reaper.ts';
-import { parseBrokerEndpoint } from '../plugins/stereo/src/broker/endpoint.ts';
+import { probeBrokerEndpoint } from '../plugins/stereo/src/broker/lifecycle.ts';
 import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -77,14 +76,7 @@ export function withCodexHome<T>(codexHome: string, fn: () => T): T {
 }
 
 export function brokerEndpointConnectable(endpoint: string): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    const socket = net.createConnection({ path: parseBrokerEndpoint(endpoint).path });
-    socket.once('connect', () => {
-      socket.end();
-      resolve(true);
-    });
-    socket.once('error', () => resolve(false));
-  });
+  return probeBrokerEndpoint(endpoint);
 }
 
 export interface NodeRunOutcome {

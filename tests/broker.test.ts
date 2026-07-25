@@ -22,6 +22,7 @@ import {
   clearBrokerSession,
   ensureBrokerSession,
   loadBrokerSession,
+  probeBrokerEndpoint,
   saveBrokerSession,
   sendBrokerShutdown,
   sendBrokerShutdownIfIdle,
@@ -76,37 +77,6 @@ interface ShutdownOutcomeShape {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function probeBrokerEndpoint(endpoint: string, timeoutMs = 500): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    const target = parseBrokerEndpoint(endpoint);
-    const socket = net.createConnection({ path: target.path });
-    let connected = false;
-    let settled = false;
-    const timeout = setTimeout(() => finish(false), timeoutMs);
-
-    function finish(result: boolean): void {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      if (!socket.destroyed) {
-        socket.destroy();
-      }
-      resolve(result);
-    }
-
-    socket.once('connect', () => {
-      connected = true;
-      // Resolve from close, not connect, so no readiness-probe socket remains
-      // in the broker's busy set when the test mutates its ownership record.
-      socket.destroy();
-    });
-    socket.once('error', () => finish(false));
-    socket.once('close', () => finish(connected));
-  });
 }
 
 function requestBrokerShutdownBounded(endpoint: string, timeoutMs = 750): Promise<void> {

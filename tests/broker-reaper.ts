@@ -89,14 +89,20 @@ export interface LeakSweepResult {
   details: string[];
 }
 
+export interface LeakSweepOptions {
+  cwdFilter?: (brokerCwd: string) => boolean;
+}
+
 /**
  * Tmpdir-wide safety net for the suite's global teardown: kill any broker
  * whose pid file lives in a cxc-* session dir AND whose --cwd is itself under
  * os.tmpdir() (a live user session serves a real workspace and never matches).
+ * Callers running before global teardown can narrow eligibility further with
+ * cwdFilter so they never reap another concurrently running test file's broker.
  * Linux-only (/proc cmdline verification); other platforms rely on the
  * per-file afterEach reapers, which cover every leak path the suite has.
  */
-export function reapLeakedTestBrokers(): LeakSweepResult {
+export function reapLeakedTestBrokers(options: LeakSweepOptions = {}): LeakSweepResult {
   const result: LeakSweepResult = { reaped: 0, details: [] };
   if (process.platform !== 'linux') {
     return result;
@@ -136,6 +142,10 @@ export function reapLeakedTestBrokers(): LeakSweepResult {
     if (!cwdMatch || !cwdMatch[1] || !cwdMatch[1].startsWith(tmp + path.sep)) {
       continue;
     }
+    const brokerCwd = cwdMatch[1];
+    if (options.cwdFilter && !options.cwdFilter(brokerCwd)) {
+      continue;
+    }
 
     try {
       terminateProcessTree(pid);
@@ -143,7 +153,7 @@ export function reapLeakedTestBrokers(): LeakSweepResult {
       continue;
     }
     result.reaped += 1;
-    result.details.push(`pid ${pid} (cwd ${cwdMatch[1]})`);
+    result.details.push(`pid ${pid} (cwd ${brokerCwd})`);
     try {
       fs.rmSync(sessionDir, { recursive: true, force: true });
     } catch {
