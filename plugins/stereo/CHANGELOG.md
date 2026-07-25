@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.0
+
+- Add `/stereo:plan-state --open` to refresh the rendered plan as `pair-plan.md` in durable companion state and best-effort open it through the VS Code `code` CLI, with a printed-path fallback
+
 ## 1.10.0
 
 - Add `/stereo:plan-state` to render the complete stored pair plan with its verdict, review round, runtime metadata, open questions, and residual risks before implementation

@@ -14,6 +14,7 @@ const DURABLE_STATE_ROOT_DIR = 'companion-state';
 const STATE_FILE_NAME = 'state.json';
 const JOBS_DIR_NAME = 'jobs';
 const PAIR_PLAN_FILE_NAME = 'pair-plan.json';
+const PAIR_PLAN_MARKDOWN_FILE_NAME = 'pair-plan.md';
 const MAX_JOBS = 50;
 const migrationChecked = new Set<string>();
 
@@ -444,6 +445,10 @@ export function resolveJobFile(cwd: string, jobId: string): string {
 
 export function resolvePairPlanFile(cwd: string): string {
   return path.join(resolveDurableStateDir(cwd), PAIR_PLAN_FILE_NAME);
+}
+
+export function resolvePairPlanMarkdownFile(cwd: string): string {
+  return path.join(resolveDurableStateDir(cwd), PAIR_PLAN_MARKDOWN_FILE_NAME);
 }
 
 export function savePairPlanState<T>(cwd: string, record: T): T {

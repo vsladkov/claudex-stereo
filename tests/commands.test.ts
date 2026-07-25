@@ -38,7 +38,7 @@ test('every command wires the companion entry point it documents', () => {
     'adversarial-review.md': /codex-companion\.ts" adversarial-review "\$ARGUMENTS"/,
     'cancel.md': /codex-companion\.ts" cancel "\$ARGUMENTS"/,
     'implement.md': /task --background --json --write --thread/,
-    'plan-state.md': /codex-companion\.ts" plan-state/,
+    'plan-state.md': /codex-companion\.ts" plan-state \$ARGUMENTS/,
     'plan.md': /plan-review --background --json --round 1/,
     'quick.md': [
       /plan-review --background --json --round 1/,

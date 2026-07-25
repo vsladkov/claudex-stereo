@@ -34,7 +34,7 @@ async function main(fullArgv: string[]): Promise<void> {
       await handlePlanReview(argv);
       break;
     case 'plan-state':
-      handlePlanState(argv);
+      await handlePlanState(argv);
       break;
     case 'transfer':
       await handleTransfer(argv);

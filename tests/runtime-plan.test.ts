@@ -22,9 +22,57 @@ import {
   sendBrokerShutdown,
   waitForBrokerEndpoint,
 } from '../plugins/stereo/src/broker/lifecycle.ts';
-import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import {
+  resolveDurableStateDir,
+  resolvePairPlanMarkdownFile,
+  savePairPlanState,
+} from '../plugins/stereo/src/workspace/state.ts';
+import {
+  defaultPlanStateDeps,
+  handlePlanState,
+  type PlanStateDeps,
+} from '../plugins/stereo/src/cli/commands/plan.ts';
+import {
+  renderStoredPlanState,
+  type StoredPairPlanState,
+} from '../plugins/stereo/src/render/render.ts';
 
 registerBrokerReaping();
+
+async function captureStdout(runCommand: () => Promise<void>): Promise<string> {
+  let output = '';
+  const originalWrite = process.stdout.write;
+  const originalLog = console.log;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+    return true;
+  }) as typeof process.stdout.write;
+  console.log = (...values: unknown[]) => {
+    output += `${values.map(String).join(' ')}\n`;
+  };
+  try {
+    await runCommand();
+    return output;
+  } finally {
+    process.stdout.write = originalWrite;
+    console.log = originalLog;
+  }
+}
+
+function storedPlan(overrides: Partial<StoredPairPlanState> = {}): StoredPairPlanState {
+  return {
+    plan: '# Approved plan\n\nImplement the feature.',
+    threadId: 'thr_plan_state',
+    model: 'gpt-5.6-sol',
+    effort: 'max',
+    round: 2,
+    verdict: 'approve',
+    updatedAt: '2026-07-25T12:00:00.000Z',
+    openQuestions: [],
+    residualRisks: ['Manual fallback remains available.'],
+    ...overrides,
+  };
+}
 
 test('plan-review applies sol/max defaults and names a pair thread', () => {
   const repo = makeTempDir();
@@ -334,6 +382,126 @@ test('plan-state reports unavailable before any plan review has run', () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).available, false);
+});
+
+test('plan-state --open materializes and refreshes the exact rendered plan', async () => {
+  const workspace = makeTempDir();
+  const record = storedPlan();
+  savePairPlanState(workspace, record);
+  const markdownPath = resolvePairPlanMarkdownFile(workspace);
+  const openedPaths: string[] = [];
+  const deps: PlanStateDeps = {
+    openInEditor: async (filePath) => {
+      openedPaths.push(filePath);
+      return true;
+    },
+  };
+
+  const rendered = renderStoredPlanState(record);
+  const output = await captureStdout(() => handlePlanState(['--cwd', workspace, '--open'], deps));
+
+  assert.equal(fs.readFileSync(markdownPath, 'utf8'), rendered);
+  assert.deepEqual(openedPaths, [markdownPath]);
+  assert.equal(output, `${rendered}\nExported: ${markdownPath}\nOpened in VS Code.\n`);
+
+  const revisedRecord = storedPlan({
+    plan: '# Revised approved plan\n\nImplement the refreshed feature.',
+    round: 3,
+    updatedAt: '2026-07-25T12:30:00.000Z',
+  });
+  savePairPlanState(workspace, revisedRecord);
+  await captureStdout(() => handlePlanState(['--cwd', workspace, '--open'], deps));
+
+  assert.equal(fs.readFileSync(markdownPath, 'utf8'), renderStoredPlanState(revisedRecord));
+});
+
+test('plan-state --open reports the manual fallback in text and JSON', async () => {
+  const workspace = makeTempDir();
+  const record = storedPlan();
+  savePairPlanState(workspace, record);
+  const markdownPath = resolvePairPlanMarkdownFile(workspace);
+  const deps: PlanStateDeps = {
+    openInEditor: async () => false,
+  };
+
+  const rendered = renderStoredPlanState(record);
+  const textOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--open'], deps),
+  );
+  assert.equal(
+    textOutput,
+    `${rendered}\nExported: ${markdownPath}\nVS Code CLI ('code') not found - open the file manually.\n`,
+  );
+
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--open', '--json'], deps),
+  );
+  const payload = JSON.parse(jsonOutput);
+  assert.equal(payload.exportedPath, markdownPath);
+  assert.equal(payload.openedInEditor, false);
+});
+
+test('the default plan-state editor launcher observes a missing code executable', async () => {
+  const emptyPath = makeTempDir();
+  const previousPath = process.env.PATH;
+  process.env.PATH = emptyPath;
+  try {
+    assert.equal(
+      await defaultPlanStateDeps.openInEditor(path.join(emptyPath, 'pair-plan.md')),
+      false,
+    );
+  } finally {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = previousPath;
+    }
+  }
+});
+
+test('plan-state --open leaves the unavailable behavior byte-identical', async () => {
+  const workspace = makeTempDir();
+  const markdownPath = resolvePairPlanMarkdownFile(workspace);
+  let launchCount = 0;
+  const deps: PlanStateDeps = {
+    openInEditor: async () => {
+      launchCount += 1;
+      return true;
+    },
+  };
+
+  const output = await captureStdout(() => handlePlanState(['--cwd', workspace, '--open'], deps));
+
+  assert.equal(output, 'No stored plan for this repository. Run /stereo:plan first.\n');
+  assert.equal(fs.existsSync(markdownPath), false);
+  assert.equal(launchCount, 0);
+});
+
+test('plain plan-state keeps its text and JSON output byte-identical', async () => {
+  const workspace = makeTempDir();
+  const record = storedPlan();
+  savePairPlanState(workspace, record);
+  let launchCount = 0;
+  const deps: PlanStateDeps = {
+    openInEditor: async () => {
+      launchCount += 1;
+      return true;
+    },
+  };
+
+  const rendered = renderStoredPlanState(record);
+  const textOutput = await captureStdout(() => handlePlanState(['--cwd', workspace], deps));
+  assert.equal(textOutput, rendered);
+
+  const expectedPayload = { available: true, ...record };
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--json'], deps),
+  );
+  assert.equal(jsonOutput, `${JSON.stringify(expectedPayload, null, 2)}\n`);
+  const payload = JSON.parse(jsonOutput);
+  assert.equal(Object.hasOwn(payload, 'exportedPath'), false);
+  assert.equal(Object.hasOwn(payload, 'openedInEditor'), false);
+  assert.equal(launchCount, 0);
 });
 
 test('plan-review works without a git repository and omits the repository map', () => {

@@ -171,9 +171,12 @@ Shows the complete plan most recently stored by `/stereo:plan` or `/stereo:quick
 
 ```bash
 /stereo:plan-state
+/stereo:plan-state --open
 ```
 
-The command is read-only and takes no arguments. If no reviewed plan is stored for the repository, it directs you to run `/stereo:plan` first.
+Without flags, the command only renders the stored plan in the terminal. Use `--open` to refresh a `pair-plan.md` snapshot in the durable state directory and open it in VS Code through the `code` CLI. The command always prints the exported path, so you can open the file manually when `code` is unavailable.
+
+The durable state directory is normally `~/.codex/companion-state/<workspace>/`, outside the repository. A custom `CODEX_HOME` inside the repository places all durable companion state there instead. If no reviewed plan is stored for the repository, the command directs you to run `/stereo:plan` first.
 
 ### `/stereo:quick`
 

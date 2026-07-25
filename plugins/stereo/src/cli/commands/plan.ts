@@ -1,10 +1,13 @@
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+
 import {
   defaultPairEffort,
   normalizeReasoningEffort,
   normalizeRequestedModel,
   PAIR_DEFAULT_MODEL,
 } from '../../models/registry.ts';
-import { loadPairPlanState } from '../../workspace/state.ts';
+import { loadPairPlanState, resolvePairPlanMarkdownFile } from '../../workspace/state.ts';
 import {
   createCompanionJob,
   ensureCodexAvailable,
@@ -27,6 +30,38 @@ import {
   resolveCommandWorkspace,
 } from '../io.ts';
 import { shorten } from '../../shared/text.ts';
+
+export interface PlanStateDeps {
+  openInEditor: (filePath: string) => Promise<boolean>;
+}
+
+async function openInVsCode(filePath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn('code', [filePath], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    child.once('spawn', () => {
+      child.unref();
+      resolve(true);
+    });
+    child.once('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+export const defaultPlanStateDeps: PlanStateDeps = {
+  openInEditor: openInVsCode,
+};
 
 export async function handlePlanReview(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
@@ -94,14 +129,33 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
   );
 }
 
-export function handlePlanState(argv: string[]): void {
+export async function handlePlanState(
+  argv: string[],
+  deps: PlanStateDeps = defaultPlanStateDeps,
+): Promise<void> {
   const { options } = parseCommandInput(argv, {
     valueOptions: ['cwd'],
-    booleanOptions: ['json'],
+    booleanOptions: ['json', 'open'],
   });
 
   const workspaceRoot = resolveCommandWorkspace(options);
   const record = loadPairPlanState(workspaceRoot) as StoredPairPlanState | null;
   const payload = record ? { available: true, ...record } : { available: false };
-  outputCommandResult(payload, renderStoredPlanState(record), options.json);
+  const rendered = renderStoredPlanState(record);
+  if (!options.open || !record) {
+    outputCommandResult(payload, rendered, options.json);
+    return;
+  }
+
+  const exportedPath = resolvePairPlanMarkdownFile(workspaceRoot);
+  fs.writeFileSync(exportedPath, rendered, 'utf8');
+  const openedInEditor = await deps.openInEditor(exportedPath);
+  const openMessage = openedInEditor
+    ? 'Opened in VS Code.'
+    : "VS Code CLI ('code') not found - open the file manually.";
+  outputCommandResult(
+    { ...payload, exportedPath, openedInEditor },
+    `${rendered}\nExported: ${exportedPath}\n${openMessage}\n`,
+    options.json,
+  );
 }
