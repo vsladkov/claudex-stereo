@@ -75,9 +75,10 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --
 ```
 
 - After every non-terminal poll, post one progress line with phase, elapsed time, and the latest
-  progress line, then poll again.
+  progress line (the last entry of the payload's `job.progressPreview` array; it is empty once a job
+  completes), then poll again.
 - If a launch or poll prints a top-level `{"error": ...}` object, surface it and stop the loop.
-- No phase change and no new progress line for roughly 10 minutes is a stall. Ask once:
+- No phase change and no new `job.progressPreview` entry for roughly 10 minutes is a stall. Ask once:
   `Keep waiting (Recommended)` or `Cancel the review and stop`. Advancing progress is not a stall,
   regardless of total elapsed time.
 - At terminal status, fetch the stored result:
@@ -183,8 +184,9 @@ Latest unapproved review findings:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
 ```
 
-- Post phase/elapsed/latest-progress after non-terminal polls. Treat 10 minutes without a phase or
-  progress change as stalled and ask `Keep waiting (Recommended)` or
+- Post phase, elapsed time, and the latest `job.progressPreview` entry after non-terminal polls.
+  Treat 10 minutes without a phase change or a new `job.progressPreview` entry as stalled and ask
+  `Keep waiting (Recommended)` or
   `Cancel the implementation and stop`.
 - Fetch terminal output with `result <jobId> --json`. Surface top-level JSON errors.
 - If resume fails, or `touchedFiles` is empty and git shows no delta against the baseline despite

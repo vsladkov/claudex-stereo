@@ -68,8 +68,8 @@ CODEX_PAIR_IMPL
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
 ```
 
-- After each non-terminal poll, post a one-line progress note from the payload — the job's `phase`, its elapsed time, and the latest progress line — then poll again. Files often change early in the run; the later `verifying` phase is Codex running the repository's tests, not dead time.
-- If the job reports no phase change and no new progress line for roughly 10 minutes, treat it as stalled and use `AskUserQuestion` once with `Keep waiting (Recommended)` and `Cancel the implementation and stop`. Total elapsed time alone is not a stall: keep polling without interruption while phases or progress lines continue to advance.
+- After each non-terminal poll, post a one-line progress note from the payload — the job's `phase`, its elapsed time, and the latest progress line (the last entry of the payload's `job.progressPreview` array; it is empty once a job completes) — then poll again. Files often change early in the run; the later `verifying` phase is Codex running the repository's tests, not dead time.
+- If the job reports no phase change and no new `job.progressPreview` entry for roughly 10 minutes, treat it as stalled and use `AskUserQuestion` once with `Keep waiting (Recommended)` and `Cancel the implementation and stop`. Total elapsed time alone is not a stall: keep polling without interruption while phases or progress lines continue to advance.
 - Then fetch the payload with `result <jobId> --json`.
 - If the run fails on resume, or `touchedFiles` is empty and `git status` shows no delta against the baseline even though Codex claims changes, retry once as a fresh run with `task --background --json --write --fresh`, the same prompt, and a note that earlier thread context is unavailable. If there is still no change, surface it to the user.
 

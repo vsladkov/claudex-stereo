@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.1
+
+- Name `job.progressPreview` explicitly in the plan, implement, and quick poll instructions so live progress and stall detection use the correct status-payload field
+
 ## 1.9.0
 
 - Add `/stereo:quick` for small tasks: one command drafts and reviews a compact plan, moves approved plans directly into implementation, bounds the automatic plan and fix loops at two rounds, and preserves the existing dirty-worktree and never-commit safety gates

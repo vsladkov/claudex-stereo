@@ -48,9 +48,9 @@ CODEX_PAIR_PLAN
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
 ```
 
-- After each non-terminal poll, post a one-line progress note from the payload — the job's `phase`, its elapsed time, and the latest progress line — then poll again. A healthy run advances through `investigating` to `verifying`; the short windows exist so the user can watch that movement instead of staring at one silent multi-minute call.
+- After each non-terminal poll, post a one-line progress note from the payload — the job's `phase`, its elapsed time, and the latest progress line (the last entry of the payload's `job.progressPreview` array; it is empty once a job completes) — then poll again. A healthy run advances through `investigating` to `verifying`; the short windows exist so the user can watch that movement instead of staring at one silent multi-minute call.
 - If any launch or poll command prints a top-level `{"error": ...}` JSON object instead of a job payload, surface that error to the user and stop the loop - do not keep polling.
-- If the job reports no phase change and no new progress line for roughly 10 minutes, treat it as stalled and use `AskUserQuestion` once with `Keep waiting (Recommended)` and `Cancel the review and stop`. Total elapsed time alone is not a stall: keep polling without interruption while phases or progress lines continue to advance.
+- If the job reports no phase change and no new `job.progressPreview` entry for roughly 10 minutes, treat it as stalled and use `AskUserQuestion` once with `Keep waiting (Recommended)` and `Cancel the review and stop`. Total elapsed time alone is not a stall: keep polling without interruption while phases or progress lines continue to advance.
 - When the job finishes, fetch the stored result:
 
 ```bash
