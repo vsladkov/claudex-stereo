@@ -9,7 +9,7 @@ import {
   upsertJob,
   writeJobFile,
 } from '../workspace/state.ts';
-import type { JobPatch, JobRecord } from '../workspace/state.ts';
+import type { JobPatch, JobRecord, JobTokenUsage } from '../workspace/state.ts';
 
 export const SESSION_ID_ENV = 'CODEX_COMPANION_SESSION_ID';
 
@@ -31,6 +31,7 @@ export interface JobExecution {
   payload?: unknown;
   rendered?: string;
   summary?: string;
+  tokenUsage?: JobTokenUsage;
 }
 
 // A freshly created record has no status yet: the enqueue/run path assigns
@@ -266,6 +267,7 @@ export async function runTrackedJob(
         completedAt,
         result: execution.payload,
         rendered: execution.rendered,
+        ...(execution.tokenUsage ? { tokenUsage: execution.tokenUsage } : {}),
       },
       {
         id: job.id,
@@ -276,6 +278,7 @@ export async function runTrackedJob(
         phase: completionStatus === 'completed' ? 'done' : 'failed',
         pid: null,
         completedAt,
+        ...(execution.tokenUsage ? { tokenUsage: execution.tokenUsage } : {}),
       },
     );
     appendLogBlock(options.logFile ?? job.logFile ?? null, 'Final output', execution.rendered);

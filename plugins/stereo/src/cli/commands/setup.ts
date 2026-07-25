@@ -4,6 +4,7 @@ import {
   describeStrandedReservation,
   getCodexAuthStatus,
   getCodexAvailability,
+  getAccountRateLimits,
   getCodexWriteSandboxStatus,
   getSessionRuntimeStatus,
   listStrandedThreadReservations,
@@ -21,6 +22,7 @@ export interface SetupDeps {
   getCodexAvailability: typeof getCodexAvailability;
   getCodexWriteSandboxStatus: typeof getCodexWriteSandboxStatus;
   getCodexAuthStatus: typeof getCodexAuthStatus;
+  getAccountRateLimits: typeof getAccountRateLimits;
   listStrandedThreadReservations: typeof listStrandedThreadReservations;
   env?: NodeJS.ProcessEnv;
 }
@@ -30,6 +32,7 @@ export const defaultSetupDeps: SetupDeps = {
   getCodexAvailability,
   getCodexWriteSandboxStatus,
   getCodexAuthStatus,
+  getAccountRateLimits,
   listStrandedThreadReservations,
 };
 
@@ -45,6 +48,7 @@ export async function buildSetupReport(
   const codexStatus = deps.getCodexAvailability(cwd);
   const writeSandbox = codexStatus.available ? deps.getCodexWriteSandboxStatus(cwd) : null;
   const authStatus = await deps.getCodexAuthStatus(cwd);
+  const rateLimits = codexStatus.available ? await deps.getAccountRateLimits(cwd) : null;
   const config = getConfig(workspaceRoot);
   const strandedReservations = deps.listStrandedThreadReservations();
   const configuredProviders = authStatus.configuredProviders.map((provider) => ({
@@ -115,6 +119,7 @@ export async function buildSetupReport(
     codex: codexStatus,
     writeSandbox,
     auth: authStatus,
+    rateLimits,
     providers: {
       active: authStatus.provider,
       configured: configuredProviders,

@@ -29,13 +29,13 @@ import {
   spawnBrokerProcess,
   waitForBrokerEndpoint,
 } from '../plugins/stereo/src/broker/lifecycle.ts';
-import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 registerBrokerReaping();
 
 test('a task-worker bootstrap failure marks the job failed instead of leaving it queued', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   fs.mkdirSync(path.join(stateDir, 'jobs'), { recursive: true });
   fs.writeFileSync(
     path.join(stateDir, 'state.json'),
@@ -311,9 +311,92 @@ test('task --resume-last resumes the latest persisted task thread', () => {
   assert.equal(result.stdout, 'Resumed the prior run.\nFollow-up prompt accepted.\n');
 });
 
+test('task jobs persist per-job token usage separately from cumulative thread usage', () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const first = run('node', [SCRIPT, 'task', 'initial token accounting'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(first.status, 0, first.stderr);
+
+  const second = run('node', [SCRIPT, 'task', '--resume-last', 'second token accounting'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(second.status, 0, second.stderr);
+
+  const jobs = readCompanionState(repo, env).jobs.filter((job) => job.jobClass === 'task');
+  assert.equal(jobs.length, 2);
+  const newest = jobs[0]!;
+  const oldest = jobs[1]!;
+  assert.deepEqual(oldest.tokenUsage.job, {
+    totalTokens: 350,
+    inputTokens: 280,
+    cachedInputTokens: 120,
+    cacheWriteInputTokens: 15,
+    outputTokens: 70,
+    reasoningOutputTokens: 15,
+  });
+  assert.deepEqual(oldest.tokenUsage.thread, oldest.tokenUsage.job);
+  assert.deepEqual(newest.tokenUsage.job, oldest.tokenUsage.job);
+  assert.deepEqual(newest.tokenUsage.thread, {
+    totalTokens: 700,
+    inputTokens: 560,
+    cachedInputTokens: 240,
+    cacheWriteInputTokens: 30,
+    outputTokens: 140,
+    reasoningOutputTokens: 30,
+  });
+
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
+  const stored = JSON.parse(
+    fs.readFileSync(path.join(stateDir, 'jobs', `${newest.id}.json`), 'utf8'),
+  );
+  assert.deepEqual(stored.tokenUsage, newest.tokenUsage);
+
+  const status = run('node', [SCRIPT, 'status', newest.id], { cwd: repo, env });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /Tokens: job 280 in \(43% cached\) \/ 70 out/);
+  assert.match(status.stdout, /thread 560 in \/ 140 out/);
+
+  const result = run('node', [SCRIPT, 'result', newest.id], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /\nTokens: job 280 in \(43% cached\).*thread 560 in/);
+});
+
+test('task token usage includes registered subagent turns in the job aggregate', () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'with-subagent');
+  const env = buildEnv(binDir);
+
+  const result = run('node', [SCRIPT, 'task', 'challenge token accounting'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+
+  const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.jobClass === 'task');
+  assert.ok(job);
+  assert.deepEqual(job.tokenUsage.job, {
+    totalTokens: 1050,
+    inputTokens: 840,
+    cachedInputTokens: 360,
+    cacheWriteInputTokens: 45,
+    outputTokens: 210,
+    reasoningOutputTokens: 45,
+  });
+  assert.equal(job.tokenUsage.thread.totalTokens, 350);
+  assert.equal(job.tokenUsage.modelContextWindow, 258000);
+});
+
 test('task-resume-candidate returns the latest rescue thread from the current session', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -430,8 +513,12 @@ test('task --resume-last ignores running tasks from other Claude sessions', () =
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
   run('git', ['add', 'README.md'], { cwd: repo });
   run('git', ['commit', '-m', 'init'], { cwd: repo });
+  const env = {
+    ...buildEnv(binDir),
+    CODEX_COMPANION_SESSION_ID: 'sess-current',
+  };
 
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   fs.mkdirSync(path.join(stateDir, 'jobs'), { recursive: true });
   fs.writeFileSync(
     path.join(stateDir, 'state.json'),
@@ -458,10 +545,6 @@ test('task --resume-last ignores running tasks from other Claude sessions', () =
     'utf8',
   );
 
-  const env = {
-    ...buildEnv(binDir),
-    CODEX_COMPANION_SESSION_ID: 'sess-current',
-  };
   const status = run('node', [SCRIPT, 'status', '--json'], {
     cwd: repo,
     env,
@@ -608,7 +691,7 @@ test('qualified task models route bare ids to explicit providers and remain cano
   assert.equal(fakeState.lastThreadStart.modelProvider, 'myprov');
   assert.equal(fakeState.lastTurnStart.model, 'unregistered-x');
 
-  const taskJob = readCompanionState(repo).jobs.find(
+  const taskJob = readCompanionState(repo, env).jobs.find(
     (job) => job.model === 'unregistered-x@myprov',
   );
   assert.ok(taskJob);
@@ -650,13 +733,14 @@ test('task logs reasoning summaries and assistant messages to the job log', () =
   run('git', ['add', 'README.md'], { cwd: repo });
   run('git', ['commit', '-m', 'init'], { cwd: repo });
 
+  const env = buildEnv(binDir);
   const result = run('node', [SCRIPT, 'task', 'investigate the failing test'], {
     cwd: repo,
-    env: buildEnv(binDir),
+    env,
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
   const log = fs.readFileSync(state.jobs[0].logFile, 'utf8');
   assert.match(log, /Reasoning summary/);
@@ -677,13 +761,14 @@ test('task logs subagent reasoning and messages with a subagent prefix', () => {
   run('git', ['add', 'README.md'], { cwd: repo });
   run('git', ['commit', '-m', 'init'], { cwd: repo });
 
+  const env = buildEnv(binDir);
   const result = run('node', [SCRIPT, 'task', 'challenge the current design'], {
     cwd: repo,
-    env: buildEnv(binDir),
+    env,
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
   const log = fs.readFileSync(state.jobs[0].logFile, 'utf8');
   assert.match(log, /Starting subagent design-challenger via collaboration tool: wait\./);
@@ -995,10 +1080,10 @@ test('task --write --thread retries privately when the shared runtime ignores es
   assert.equal(implementation.status, 0, implementation.stderr);
   assert.match(implementation.stdout, /Handled the requested task/);
 
-  const state = readCompanionState(repo);
+  const state = readCompanionState(repo, env);
   const taskJob = state.jobs.find((job) => job.jobClass === 'task');
   assert.ok(taskJob);
-  const log = readJobLog(repo, taskJob.id);
+  const log = readJobLog(repo, taskJob.id, env);
   assert.match(log, /resumed the thread read-only; retrying the write run on a private runtime/i);
   assert.match(log, /Drained the stale shared Codex runtime/);
   assert.equal(fs.existsSync(path.join(binDir, 'fake-codex-state.json')), true);
@@ -1231,6 +1316,6 @@ test('an endpoint-pinned runtime is never drained after a private write retry', 
   assert.equal(await brokerEndpointConnectable(endpoint), true);
   assert.equal(process.kill(broker.pid!, 0), true);
 
-  const taskJob = readCompanionState(repo).jobs.find((job) => job.jobClass === 'task');
-  assert.match(readJobLog(repo, taskJob!.id), /not plugin-owned/i);
+  const taskJob = readCompanionState(repo, pinnedEnv).jobs.find((job) => job.jobClass === 'task');
+  assert.match(readJobLog(repo, taskJob!.id, pinnedEnv), /not plugin-owned/i);
 });

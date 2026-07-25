@@ -28,7 +28,7 @@ import {
   acquireThreadReservation,
   releaseThreadReservation,
 } from '../plugins/stereo/src/runtime/index.ts';
-import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 registerBrokerReaping();
 
@@ -56,7 +56,7 @@ test('setup and status surface stranded thread reservations on every route', (t)
   const binDir = makeTempDir();
   installFakeCodex(binDir);
   const env = buildEnv(binDir);
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   const jobsDir = path.join(stateDir, 'jobs');
   const jobId = 'reservation-status-job';
   const logFile = path.join(jobsDir, `${jobId}.log`);
@@ -257,7 +257,7 @@ test("session end removes only the ending session's active jobs and preserves fi
   run('git', ['add', 'README.md'], { cwd: repo });
   run('git', ['commit', '-m', 'init'], { cwd: repo });
 
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -455,7 +455,7 @@ test('stop hook logs running tasks to stderr without blocking when the review ga
   run('git', ['add', 'README.md'], { cwd: repo });
   run('git', ['commit', '-m', 'init'], { cwd: repo });
 
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -653,7 +653,7 @@ test('a resumed thread is reserved for exactly one run', async (t) => {
   await waitFor(
     () => {
       const reservation = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
       return reservation?.record.jobId === jobId && job?.turnId ? reservation : null;
     },
     { timeoutMs: 10000 },
@@ -683,7 +683,7 @@ test('a fresh persistent thread is reserved before its id is published', async (
   const jobId = JSON.parse(launched.stdout).jobId;
   const running = await waitFor(
     () => {
-      const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
       const reservation = job?.threadId
         ? findThreadReservation(env.CODEX_HOME, job.threadId)
         : null;
@@ -773,7 +773,7 @@ test(
 
     const running = await waitFor(
       () => {
-        const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+        const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
         const reservation = findThreadReservation(env.CODEX_HOME, threadId);
         const turnStarts: Array<Record<string, any>> = readFakeState(binDir).turnStarts ?? [];
         const started = turnStarts.some(
@@ -801,7 +801,7 @@ test(
     process.kill(runningWorkerPid, 'SIGTERM');
     const cancelled = await waitFor(
       () => {
-        const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+        const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
         const fakeState = readFakeState(binDir);
         return job?.status === 'cancelled' &&
           job.errorMessage === 'Terminated by SIGTERM.' &&
@@ -888,7 +888,7 @@ test(
 
     const running = await waitFor(
       () => {
-        const job = readCompanionState(repo).jobs.find(
+        const job = readCompanionState(repo, env).jobs.find(
           (candidate) => candidate.status === 'running' && candidate.pid === child.pid,
         );
         const reservation = findThreadReservation(env.CODEX_HOME, threadId);
@@ -919,7 +919,7 @@ test(
 
     const cancelled = await waitFor(
       () => {
-        const job = readCompanionState(repo).jobs.find(
+        const job = readCompanionState(repo, env).jobs.find(
           (candidate) => candidate.id === running.job.id,
         );
         const fakeState = readFakeState(binDir);
@@ -974,7 +974,9 @@ test('/stereo:cancel releases task and plan-review thread reservations', async (
   await waitFor(
     () => {
       const reservation = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === taskJobId);
+      const job = readCompanionState(repo, env).jobs.find(
+        (candidate) => candidate.id === taskJobId,
+      );
       return reservation?.record.jobId === taskJobId && job?.turnId ? reservation : null;
     },
     { timeoutMs: 10000 },
@@ -987,7 +989,7 @@ test('/stereo:cancel releases task and plan-review thread reservations', async (
   assert.equal(taskCancel.status, 0, taskCancel.stderr);
   assert.match(JSON.parse(taskCancel.stdout).reservationCleanup, /released|none-found/);
   assert.equal(findThreadReservation(env.CODEX_HOME, threadId), null);
-  assert.match(readJobLog(repo, taskJobId), /Thread reservation cleanup:/);
+  assert.match(readJobLog(repo, taskJobId, env), /Thread reservation cleanup:/);
 
   const resumed = run(
     process.execPath,
@@ -1019,7 +1021,9 @@ test('/stereo:cancel releases task and plan-review thread reservations', async (
   await waitFor(
     () => {
       const reservation = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === planJobId);
+      const job = readCompanionState(repo, env).jobs.find(
+        (candidate) => candidate.id === planJobId,
+      );
       return reservation?.record.jobId === planJobId && job?.turnId ? reservation : null;
     },
     { timeoutMs: 10000 },
@@ -1032,7 +1036,7 @@ test('/stereo:cancel releases task and plan-review thread reservations', async (
   assert.equal(planCancel.status, 0, planCancel.stderr);
   assert.match(JSON.parse(planCancel.stdout).reservationCleanup, /released|none-found/);
   assert.equal(findThreadReservation(env.CODEX_HOME, threadId), null);
-  assert.match(readJobLog(repo, planJobId), /Thread reservation cleanup:/);
+  assert.match(readJobLog(repo, planJobId, env), /Thread reservation cleanup:/);
 });
 
 test('cancel never removes a foreign thread reservation', async (t) => {
@@ -1058,7 +1062,7 @@ test('cancel never removes a foreign thread reservation', async (t) => {
   const reservation = await waitFor(
     () => {
       const lock = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
       return lock && job?.turnId ? lock : null;
     },
     { timeoutMs: 10000 },
@@ -1077,7 +1081,7 @@ test('cancel never removes a foreign thread reservation', async (t) => {
   assert.equal(cancelled.status, 0, cancelled.stderr);
   assert.equal(JSON.parse(cancelled.stdout).reservationCleanup, 'mismatch-skipped');
   assert.equal(fs.existsSync(reservation.path), true);
-  assert.match(readJobLog(repo, jobId), /mismatch-skipped/);
+  assert.match(readJobLog(repo, jobId, env), /mismatch-skipped/);
   releaseThreadReservation({
     path: reservation.path,
     token: foreignRecord.token,
@@ -1110,7 +1114,7 @@ test('SessionEnd releases reservations for the session jobs it kills', async () 
   await waitFor(
     () => {
       const lock = findThreadReservation(env.CODEX_HOME, threadId);
-      const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
       return lock && job?.turnId ? lock : null;
     },
     { timeoutMs: 10000 },
@@ -1128,7 +1132,7 @@ test('SessionEnd releases reservations for the session jobs it kills', async () 
   assert.equal(ended.status, 0, ended.stderr);
   assert.equal(findThreadReservation(env.CODEX_HOME, threadId), null);
   assert.equal(
-    readCompanionState(repo).jobs.some((job) => job.id === jobId),
+    readCompanionState(repo, env).jobs.some((job) => job.id === jobId),
     false,
   );
 });
@@ -1209,7 +1213,7 @@ test('SessionEnd leaves a busy shared broker (and its session state) running', a
   const jobId = JSON.parse(launch.stdout).jobId;
   await waitFor(
     () => {
-      const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
       return job?.turnId ? job : null;
     },
     { timeoutMs: 10000 },
@@ -1260,7 +1264,7 @@ test("SessionEnd reaps the broker after killing this session's own running job",
   const jobId = JSON.parse(launch.stdout).jobId;
   await waitFor(
     () => {
-      const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+      const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
       return job?.turnId ? job : null;
     },
     { timeoutMs: 10000 },
@@ -1281,7 +1285,7 @@ test("SessionEnd reaps the broker after killing this session's own running job",
 
   await waitFor(() => !processIsAlive(session.pid), { timeoutMs: 4000 });
   assert.equal(loadBrokerSession(repo), null, 'broker session state must be cleared');
-  const job = readCompanionState(repo).jobs.find((candidate) => candidate.id === jobId);
+  const job = readCompanionState(repo, env).jobs.find((candidate) => candidate.id === jobId);
   assert.equal(job, undefined, 'the killed job must leave the index');
 });
 

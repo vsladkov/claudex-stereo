@@ -1,4 +1,10 @@
-import type { AppServerNotification, ThreadItem, Turn } from '../protocol/app-server.ts';
+import type {
+  AppServerNotification,
+  ThreadItem,
+  ThreadTokenUsage,
+  TokenUsageBreakdown,
+  Turn,
+} from '../protocol/app-server.ts';
 import { extractThreadId, extractTurnId, shorten } from './threads.ts';
 import type { AppServerClient } from './threads.ts';
 
@@ -16,6 +22,12 @@ export interface ProgressUpdate {
 }
 
 export type ProgressReporter = (update: string | ProgressUpdate) => void;
+
+export interface CapturedTokenUsage {
+  job: TokenUsageBreakdown;
+  thread: TokenUsageBreakdown;
+  modelContextWindow: number | null;
+}
 
 export interface TurnCaptureState {
   threadId: string;
@@ -44,6 +56,9 @@ export interface TurnCaptureState {
   messages: Array<{ lifecycle: string; phase: string | null; text: string }>;
   fileChanges: FileChangeItem[];
   commandExecutions: CommandExecutionItem[];
+  tokenUsage: CapturedTokenUsage | null;
+  jobTokenUsage: TokenUsageBreakdown | null;
+  primaryThreadTokenUsage: ThreadTokenUsage | null;
   onProgress: ProgressReporter | null;
 }
 
@@ -325,8 +340,93 @@ export function createTurnCaptureState(
     messages: [],
     fileChanges: [],
     commandExecutions: [],
+    tokenUsage: null,
+    jobTokenUsage: null,
+    primaryThreadTokenUsage: null,
     onProgress: options.onProgress ?? null,
   };
+}
+
+const TOKEN_USAGE_FIELDS = [
+  'totalTokens',
+  'inputTokens',
+  'cachedInputTokens',
+  'cacheWriteInputTokens',
+  'outputTokens',
+  'reasoningOutputTokens',
+] as const satisfies readonly (keyof TokenUsageBreakdown)[];
+
+function isTokenUsageBreakdown(value: unknown): value is TokenUsageBreakdown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return TOKEN_USAGE_FIELDS.every(
+    (field) =>
+      typeof record[field] === 'number' &&
+      Number.isFinite(record[field]) &&
+      (record[field] as number) >= 0,
+  );
+}
+
+function addTokenUsage(
+  current: TokenUsageBreakdown | null,
+  sample: TokenUsageBreakdown,
+): TokenUsageBreakdown {
+  return {
+    totalTokens: (current?.totalTokens ?? 0) + sample.totalTokens,
+    inputTokens: (current?.inputTokens ?? 0) + sample.inputTokens,
+    cachedInputTokens: (current?.cachedInputTokens ?? 0) + sample.cachedInputTokens,
+    cacheWriteInputTokens: (current?.cacheWriteInputTokens ?? 0) + sample.cacheWriteInputTokens,
+    outputTokens: (current?.outputTokens ?? 0) + sample.outputTokens,
+    reasoningOutputTokens: (current?.reasoningOutputTokens ?? 0) + sample.reasoningOutputTokens,
+  };
+}
+
+function recordTokenUsage(state: TurnCaptureState, params: unknown): void {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    return;
+  }
+  const notification = params as {
+    threadId?: unknown;
+    turnId?: unknown;
+    tokenUsage?: unknown;
+  };
+  if (
+    typeof notification.threadId !== 'string' ||
+    typeof notification.turnId !== 'string' ||
+    state.threadTurnIds.get(notification.threadId) !== notification.turnId
+  ) {
+    return;
+  }
+  const usage = notification.tokenUsage as Partial<ThreadTokenUsage> | null | undefined;
+  if (
+    !usage ||
+    !isTokenUsageBreakdown(usage.last) ||
+    !isTokenUsageBreakdown(usage.total) ||
+    (usage.modelContextWindow !== null &&
+      (typeof usage.modelContextWindow !== 'number' ||
+        !Number.isFinite(usage.modelContextWindow) ||
+        usage.modelContextWindow < 0))
+  ) {
+    return;
+  }
+
+  state.jobTokenUsage = addTokenUsage(state.jobTokenUsage, usage.last);
+  if (notification.threadId === state.threadId) {
+    state.primaryThreadTokenUsage = {
+      total: usage.total,
+      last: usage.last,
+      modelContextWindow: usage.modelContextWindow,
+    };
+  }
+  if (state.jobTokenUsage && state.primaryThreadTokenUsage) {
+    state.tokenUsage = {
+      job: state.jobTokenUsage,
+      thread: state.primaryThreadTokenUsage.total,
+      modelContextWindow: state.primaryThreadTokenUsage.modelContextWindow,
+    };
+  }
 }
 
 export function clearCompletionTimer(state: TurnCaptureState): void {
@@ -542,6 +642,9 @@ export function applyTurnNotification(
             }
           : {},
       );
+      break;
+    case 'thread/tokenUsage/updated':
+      recordTokenUsage(state, message.params);
       break;
     case 'item/started':
       recordItem(state, message.params.item, 'started', message.params.threadId ?? null);

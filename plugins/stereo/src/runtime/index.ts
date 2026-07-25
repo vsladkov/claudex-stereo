@@ -7,6 +7,8 @@ export { getCodexAuthStatus } from './auth.ts';
 export type { CodexAuthStatus } from './auth.ts';
 export { getCodexWriteSandboxStatus } from './sandbox-probe.ts';
 export type { WriteSandboxStatus } from './sandbox-probe.ts';
+export { getAccountRateLimits } from './rate-limits.ts';
+export type { AccountRateLimits } from './rate-limits.ts';
 export {
   acquireThreadReservation,
   describeStrandedReservation,
@@ -25,6 +27,11 @@ export {
   findLatestTaskThread,
 } from './threads.ts';
 export { looksLikeVerificationCommand } from './turn-capture.ts';
-export type { ProgressReporter, ProgressUpdate, TurnCaptureState } from './turn-capture.ts';
+export type {
+  CapturedTokenUsage,
+  ProgressReporter,
+  ProgressUpdate,
+  TurnCaptureState,
+} from './turn-capture.ts';
 export { interruptAppServerTurn, runAppServerReview, runAppServerTurn } from './turn-runner.ts';
 export type { AppServerReviewResult, AppServerTurnResult } from './turn-runner.ts';

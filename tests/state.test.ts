@@ -5,10 +5,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makeTempDir } from './helpers.ts';
+import { loadBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
+import { buildSingleJobSnapshot } from '../plugins/stereo/src/jobs/job-control.ts';
 import {
   loadState,
+  loadPairPlanState,
+  resolveDurableStateDir,
   resolveJobFile,
   resolveJobLogFile,
+  resolvePairPlanFile,
   resolveStateDir,
   resolveStateFile,
   saveState,
@@ -16,13 +21,22 @@ import {
 } from '../plugins/stereo/src/workspace/state.ts';
 import type { JobRecord } from '../plugins/stereo/src/workspace/state.ts';
 
-test('resolveStateDir uses a temp-backed per-workspace directory', () => {
+test('resolveStateDir uses the temp fallback when CLAUDE_PLUGIN_DATA is absent', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const previousPluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+  delete process.env.CLAUDE_PLUGIN_DATA;
 
-  assert.equal(stateDir.startsWith(os.tmpdir()), true);
-  assert.match(path.basename(stateDir), /.+-[a-f0-9]{16}$/);
-  assert.match(stateDir, new RegExp(`^${os.tmpdir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  try {
+    const stateDir = resolveStateDir(workspace);
+    assert.equal(stateDir.startsWith(path.join(os.tmpdir(), 'codex-companion')), true);
+    assert.match(path.basename(stateDir), /.+-[a-f0-9]{16}$/);
+  } finally {
+    if (previousPluginDataDir == null) {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    } else {
+      process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
+    }
+  }
 });
 
 test('resolveStateDir uses CLAUDE_PLUGIN_DATA when it is provided', () => {
@@ -47,6 +61,288 @@ test('resolveStateDir uses CLAUDE_PLUGIN_DATA when it is provided', () => {
       process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
     }
   }
+});
+
+test('durable state is rooted in CODEX_HOME while broker state remains plugin-scoped', () => {
+  const workspace = makeTempDir();
+  const pluginDataDir = makeTempDir();
+  const codexHome = makeTempDir();
+  const previousPluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CLAUDE_PLUGIN_DATA = pluginDataDir;
+  process.env.CODEX_HOME = codexHome;
+
+  try {
+    assert.equal(resolveStateDir(workspace).startsWith(path.join(pluginDataDir, 'state')), true);
+    assert.equal(
+      resolveDurableStateDir(workspace).startsWith(path.join(codexHome, 'companion-state')),
+      true,
+    );
+    assert.equal(resolveStateFile(workspace).startsWith(resolveDurableStateDir(workspace)), true);
+    assert.equal(
+      resolveJobFile(workspace, 'job-1').startsWith(resolveDurableStateDir(workspace)),
+      true,
+    );
+    assert.equal(
+      resolvePairPlanFile(workspace).startsWith(resolveDurableStateDir(workspace)),
+      true,
+    );
+  } finally {
+    if (previousPluginDataDir == null) {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    } else {
+      process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
+    }
+    if (previousCodexHome == null) {
+      delete process.env.CODEX_HOME;
+    } else {
+      process.env.CODEX_HOME = previousCodexHome;
+    }
+  }
+});
+
+function withStateHomes<T>(pluginDataDir: string, codexHome: string, fn: () => T): T {
+  const previousPluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CLAUDE_PLUGIN_DATA = pluginDataDir;
+  process.env.CODEX_HOME = codexHome;
+  try {
+    return fn();
+  } finally {
+    if (previousPluginDataDir == null) {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    } else {
+      process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
+    }
+    if (previousCodexHome == null) {
+      delete process.env.CODEX_HOME;
+    } else {
+      process.env.CODEX_HOME = previousCodexHome;
+    }
+  }
+}
+
+function writeLegacyWorkspace(
+  workspace: string,
+  options: { jobId?: string; stateSummary?: string } = {},
+): {
+  legacyDir: string;
+  legacyJobFile: string;
+  legacyLogFile: string;
+  legacyPairPlanFile: string;
+} {
+  const jobId = options.jobId ?? 'legacy-job';
+  const legacyDir = resolveStateDir(workspace);
+  const legacyJobsDir = path.join(legacyDir, 'jobs');
+  const legacyJobFile = path.join(legacyJobsDir, `${jobId}.json`);
+  const legacyLogFile = path.join(legacyJobsDir, `${jobId}.log`);
+  const legacyPairPlanFile = path.join(legacyDir, 'pair-plan.json');
+  fs.mkdirSync(legacyJobsDir, { recursive: true });
+  fs.writeFileSync(legacyLogFile, '[2026-07-25T12:00:00.000Z] legacy progress\n', 'utf8');
+  fs.writeFileSync(
+    legacyJobFile,
+    `${JSON.stringify(
+      {
+        id: jobId,
+        status: 'failed',
+        summary: options.stateSummary ?? 'Legacy job',
+        logFile: legacyLogFile,
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    legacyPairPlanFile,
+    `${JSON.stringify({ plan: 'Approved legacy plan', threadId: 'thr_legacy' }, null, 2)}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(legacyDir, 'state.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: true },
+        jobs: [
+          {
+            id: jobId,
+            status: 'failed',
+            summary: options.stateSummary ?? 'Legacy job',
+            logFile: legacyLogFile,
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  return { legacyDir, legacyJobFile, legacyLogFile, legacyPairPlanFile };
+}
+
+test('legacy state migrates jobs, logs, pair plan, and rewritten absolute log paths', () => {
+  const workspace = makeTempDir();
+  const pluginDataDir = makeTempDir();
+  const codexHome = makeTempDir();
+
+  withStateHomes(pluginDataDir, codexHome, () => {
+    const legacy = writeLegacyWorkspace(workspace);
+    const durableDir = resolveDurableStateDir(workspace);
+    const durableJobFile = path.join(durableDir, 'jobs', 'legacy-job.json');
+    const durableLogFile = path.join(durableDir, 'jobs', 'legacy-job.log');
+    fs.writeFileSync(
+      path.join(legacy.legacyDir, 'broker.json'),
+      `${JSON.stringify({ endpoint: '/tmp/legacy-broker.sock', pid: 123 })}\n`,
+      'utf8',
+    );
+
+    const state = loadState(workspace);
+
+    assert.equal(state.config.stopReviewGate, true);
+    assert.equal(state.jobs[0]?.logFile, durableLogFile);
+    assert.equal(JSON.parse(fs.readFileSync(durableJobFile, 'utf8')).logFile, durableLogFile);
+    assert.equal(
+      fs.readFileSync(durableLogFile, 'utf8'),
+      '[2026-07-25T12:00:00.000Z] legacy progress\n',
+    );
+    assert.deepEqual(loadPairPlanState(workspace), {
+      plan: 'Approved legacy plan',
+      threadId: 'thr_legacy',
+    });
+    assert.equal(fs.existsSync(legacy.legacyJobFile), true);
+    assert.equal(fs.existsSync(legacy.legacyLogFile), true);
+    assert.equal(fs.existsSync(legacy.legacyPairPlanFile), true);
+    assert.equal(loadBrokerSession(workspace)?.pid, 123);
+
+    // Simulate the plugin-data wipe that follows an uninstall. Durable state
+    // and its rewritten log references remain usable.
+    fs.rmSync(legacy.legacyDir, { recursive: true });
+    assert.equal(loadState(workspace).jobs[0]?.logFile, durableLogFile);
+    assert.equal(
+      fs.readFileSync(durableLogFile, 'utf8'),
+      '[2026-07-25T12:00:00.000Z] legacy progress\n',
+    );
+    assert.deepEqual(
+      buildSingleJobSnapshot(workspace, 'legacy-job', {
+        maxProgressLines: 20,
+      }).job.progressPreview,
+      ['legacy progress'],
+    );
+    assert.deepEqual(loadPairPlanState(workspace), {
+      plan: 'Approved legacy plan',
+      threadId: 'thr_legacy',
+    });
+    assert.equal(loadBrokerSession(workspace), null);
+  });
+});
+
+test('legacy migration ignores legacy data when durable state already exists', () => {
+  const workspace = makeTempDir();
+  const pluginDataDir = makeTempDir();
+  const codexHome = makeTempDir();
+
+  withStateHomes(pluginDataDir, codexHome, () => {
+    writeLegacyWorkspace(workspace, { stateSummary: 'Legacy summary' });
+    const durableDir = resolveDurableStateDir(workspace);
+    fs.mkdirSync(path.join(durableDir, 'jobs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(durableDir, 'state.json'),
+      `${JSON.stringify(
+        {
+          version: 1,
+          config: { stopReviewGate: false },
+          jobs: [{ id: 'durable-job', status: 'completed', summary: 'Durable summary' }],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+
+    const state = loadState(workspace);
+    assert.deepEqual(
+      state.jobs.map((job) => job.id),
+      ['durable-job'],
+    );
+    assert.equal(state.jobs[0]?.summary, 'Durable summary');
+  });
+});
+
+test('legacy migration retries after a JSON transform failure and handles each workspace once', () => {
+  const workspaceA = makeTempDir();
+  const workspaceB = makeTempDir();
+  const pluginDataDir = makeTempDir();
+  const codexHome = makeTempDir();
+
+  withStateHomes(pluginDataDir, codexHome, () => {
+    const legacyA = writeLegacyWorkspace(workspaceA, { jobId: 'job-a' });
+    writeLegacyWorkspace(workspaceB, { jobId: 'job-b' });
+    fs.writeFileSync(legacyA.legacyJobFile, '{', 'utf8');
+
+    assert.deepEqual(loadState(workspaceA).jobs, []);
+    assert.equal(fs.existsSync(path.join(resolveDurableStateDir(workspaceA), 'state.json')), false);
+
+    fs.writeFileSync(
+      legacyA.legacyJobFile,
+      `${JSON.stringify(
+        {
+          id: 'job-a',
+          status: 'failed',
+          logFile: legacyA.legacyLogFile,
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+
+    assert.deepEqual(
+      loadState(workspaceA).jobs.map((job) => job.id),
+      ['job-a'],
+    );
+    assert.deepEqual(
+      loadState(workspaceB).jobs.map((job) => job.id),
+      ['job-b'],
+    );
+  });
+});
+
+test('legacy migration never clobbers a per-job file created by a v1.7 writer', () => {
+  const workspace = makeTempDir();
+  const pluginDataDir = makeTempDir();
+  const codexHome = makeTempDir();
+
+  withStateHomes(pluginDataDir, codexHome, () => {
+    writeLegacyWorkspace(workspace);
+    const durableDir = resolveDurableStateDir(workspace);
+    const durableJobFile = path.join(durableDir, 'jobs', 'legacy-job.json');
+    const liveContents = `${JSON.stringify(
+      { id: 'legacy-job', status: 'running', summary: 'Live v1.7 writer' },
+      null,
+      2,
+    )}\n`;
+    fs.mkdirSync(path.dirname(durableJobFile), { recursive: true });
+    fs.writeFileSync(durableJobFile, liveContents, 'utf8');
+
+    loadState(workspace);
+
+    assert.equal(fs.readFileSync(durableJobFile, 'utf8'), liveContents);
+  });
+});
+
+test('missing legacy and durable state loads a fresh default', () => {
+  const workspace = makeTempDir();
+  const pluginDataDir = makeTempDir();
+  const codexHome = makeTempDir();
+
+  withStateHomes(pluginDataDir, codexHome, () => {
+    assert.deepEqual(loadState(workspace), {
+      version: 1,
+      config: { stopReviewGate: false },
+      jobs: [],
+    });
+  });
 });
 
 test('state index strips request payloads from legacy, updated, and new jobs', () => {

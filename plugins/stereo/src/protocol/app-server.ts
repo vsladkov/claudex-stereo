@@ -11,8 +11,10 @@ import type {
   ExternalAgentConfigImportParams,
   ExternalAgentConfigImportResponse,
   GetAccountParams,
+  GetAccountRateLimitsResponse,
   GetAccountResponse,
   MigrationDetails,
+  RateLimitSnapshot,
   ReviewDelivery,
   ReviewStartParams,
   ReviewStartResponse,
@@ -28,6 +30,8 @@ import type {
   ThreadSetNameResponse,
   ThreadStartParams as RawThreadStartParams,
   ThreadStartResponse,
+  ThreadTokenUsage,
+  TokenUsageBreakdown,
   Turn,
   TurnInterruptParams,
   TurnInterruptResponse,
@@ -40,11 +44,13 @@ export type {
   ClientInfo,
   ConfigReadResponse,
   ExternalAgentConfigImportParams,
+  GetAccountRateLimitsResponse,
   GetAccountResponse,
   InitializeCapabilities,
   InitializeParams,
   InitializeResponse,
   MigrationDetails,
+  RateLimitSnapshot,
   ReviewDelivery,
   ReviewStartResponse,
   ReviewTarget,
@@ -55,6 +61,8 @@ export type {
   ThreadListResponse,
   ThreadResumeResponse,
   ThreadStartResponse,
+  ThreadTokenUsage,
+  TokenUsageBreakdown,
   Turn,
   TurnInterruptParams,
   TurnStartParams,
@@ -77,6 +85,7 @@ export interface CodexAppServerClientOptions {
 export interface AppServerMethodMap {
   initialize: { params: InitializeParams; result: InitializeResponse };
   'account/read': { params: GetAccountParams; result: GetAccountResponse };
+  'account/rateLimits/read': { params: undefined; result: GetAccountRateLimitsResponse };
   'config/read': { params: ConfigReadParams; result: ConfigReadResponse };
   'externalAgentConfig/import': {
     params: ExternalAgentConfigImportParams;

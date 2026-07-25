@@ -46,9 +46,161 @@ test('createTurnCaptureState seeds thread-scoped defaults', () => {
   assert.deepEqual(state.messages, []);
   assert.deepEqual(state.fileChanges, []);
   assert.deepEqual(state.commandExecutions, []);
+  assert.equal(state.tokenUsage, null);
+  assert.equal(state.jobTokenUsage, null);
+  assert.equal(state.primaryThreadTokenUsage, null);
   assert.equal(state.pendingCollaborations.size, 0);
   assert.equal(state.activeSubagentTurns.size, 0);
   assert.ok(state.completion instanceof Promise);
+});
+
+function usageBreakdown(
+  totalTokens: number,
+  inputTokens: number,
+  outputTokens: number,
+  cachedInputTokens = 0,
+  reasoningOutputTokens = 0,
+) {
+  return {
+    totalTokens,
+    inputTokens,
+    cachedInputTokens,
+    cacheWriteInputTokens: 0,
+    outputTokens,
+    reasoningOutputTokens,
+  };
+}
+
+test('token usage sums eligible completion samples across primary and subagent turns', () => {
+  const state = createTurnCaptureState('thread-root');
+  applyTurnNotification(
+    state,
+    notification({
+      method: 'turn/started',
+      params: { threadId: 'thread-root', turn: { id: 'turn-root' } },
+    }),
+  );
+
+  applyTurnNotification(
+    state,
+    notification({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-root',
+        turnId: 'turn-root',
+        tokenUsage: {
+          last: usageBreakdown(100, 80, 20, 20, 5),
+          total: usageBreakdown(100, 80, 20, 20, 5),
+          modelContextWindow: 258000,
+        },
+      },
+    }),
+  );
+  applyTurnNotification(
+    state,
+    notification({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-root',
+        turnId: 'turn-root',
+        tokenUsage: {
+          last: usageBreakdown(250, 200, 50, 100, 10),
+          total: usageBreakdown(350, 280, 70, 120, 15),
+          modelContextWindow: 258000,
+        },
+      },
+    }),
+  );
+
+  applyTurnNotification(
+    state,
+    notification({
+      method: 'thread/started',
+      params: { thread: { id: 'thread-sub', name: 'challenger' } },
+    }),
+  );
+  applyTurnNotification(
+    state,
+    notification({
+      method: 'turn/started',
+      params: { threadId: 'thread-sub', turn: { id: 'turn-sub' } },
+    }),
+  );
+  applyTurnNotification(
+    state,
+    notification({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-sub',
+        turnId: 'turn-sub',
+        tokenUsage: {
+          last: usageBreakdown(300, 240, 60, 40, 20),
+          total: usageBreakdown(300, 240, 60, 40, 20),
+          modelContextWindow: 128000,
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(state.tokenUsage, {
+    job: usageBreakdown(650, 520, 130, 160, 35),
+    thread: usageBreakdown(350, 280, 70, 120, 15),
+    modelContextWindow: 258000,
+  });
+});
+
+test('token usage excludes replay, foreign-turn, and malformed samples', () => {
+  const state = createTurnCaptureState('thread-root');
+  applyTurnNotification(
+    state,
+    notification({
+      method: 'turn/started',
+      params: { threadId: 'thread-root', turn: { id: 'turn-current' } },
+    }),
+  );
+  const valid = {
+    method: 'thread/tokenUsage/updated',
+    params: {
+      threadId: 'thread-root',
+      turnId: 'turn-current',
+      tokenUsage: {
+        last: usageBreakdown(100, 80, 20),
+        total: usageBreakdown(100, 80, 20),
+        modelContextWindow: 258000,
+      },
+    },
+  };
+  applyTurnNotification(state, notification(valid));
+  applyTurnNotification(
+    state,
+    notification({
+      ...valid,
+      params: { ...valid.params, turnId: 'turn-previous' },
+    }),
+  );
+  applyTurnNotification(
+    state,
+    notification({
+      ...valid,
+      params: { ...valid.params, turnId: undefined },
+    }),
+  );
+  applyTurnNotification(
+    state,
+    notification({
+      ...valid,
+      params: {
+        ...valid.params,
+        tokenUsage: { ...valid.params.tokenUsage, last: { inputTokens: 'bad' } },
+      },
+    }),
+  );
+
+  assert.deepEqual(state.tokenUsage, {
+    job: usageBreakdown(100, 80, 20),
+    thread: usageBreakdown(100, 80, 20),
+    modelContextWindow: 258000,
+  });
 });
 
 test('a final answer updates lastAgentMessage only on the completed lifecycle', (t) => {

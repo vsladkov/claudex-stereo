@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { drainCreatedTempDirs, initGitRepo, makeTempDir, run } from './helpers.ts';
 import { reapWorkspaceBroker } from './broker-reaper.ts';
 import { probeBrokerEndpoint } from '../plugins/stereo/src/broker/lifecycle.ts';
-import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -146,12 +146,30 @@ export interface CompanionStateFile {
   [key: string]: any;
 }
 
-export function readCompanionState(cwd: string): CompanionStateFile {
-  return JSON.parse(fs.readFileSync(path.join(resolveStateDir(cwd), 'state.json'), 'utf8'));
+export function resolveCompanionStateDir(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const codexHome = env.CODEX_HOME;
+  assert.ok(codexHome, 'Expected CODEX_HOME when resolving durable companion state.');
+  return resolveDurableStateDir(cwd, path.resolve(codexHome));
 }
 
-export function readJobLog(cwd: string, jobId: string): string {
-  const state = readCompanionState(cwd);
+export function readCompanionState(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): CompanionStateFile {
+  return JSON.parse(
+    fs.readFileSync(path.join(resolveCompanionStateDir(cwd, env), 'state.json'), 'utf8'),
+  );
+}
+
+export function readJobLog(
+  cwd: string,
+  jobId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const state = readCompanionState(cwd, env);
   const job = state.jobs.find((candidate) => candidate.id === jobId);
   assert.ok(job, `Expected job ${jobId} in companion state.`);
   return fs.readFileSync(job.logFile, 'utf8');

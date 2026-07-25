@@ -28,7 +28,12 @@ import {
 } from './threads.ts';
 import type { AppServerClient, BrokerMismatch } from './threads.ts';
 import { captureTurn, emitProgress } from './turn-capture.ts';
-import type { CommandExecutionItem, FileChangeItem, ProgressReporter } from './turn-capture.ts';
+import type {
+  CapturedTokenUsage,
+  CommandExecutionItem,
+  FileChangeItem,
+  ProgressReporter,
+} from './turn-capture.ts';
 
 export function cleanCodexStderr(stderr: string): string {
   return stderr
@@ -148,6 +153,7 @@ export interface AppServerReviewResult {
   turn: Turn | null;
   error: unknown;
   stderr: string;
+  tokenUsage?: CapturedTokenUsage;
 }
 
 export async function runAppServerReview(
@@ -212,6 +218,7 @@ export async function runAppServerReview(
       turn: turnState.finalTurn,
       error: turnState.error,
       stderr: cleanCodexStderr(client.stderr),
+      ...(turnState.tokenUsage ? { tokenUsage: turnState.tokenUsage } : {}),
     };
   });
 }
@@ -243,6 +250,7 @@ export interface AppServerTurnResult {
   fileChanges: FileChangeItem[];
   touchedFiles: string[];
   commandExecutions: CommandExecutionItem[];
+  tokenUsage?: CapturedTokenUsage;
 }
 
 export async function runAppServerTurn(
@@ -367,6 +375,7 @@ export async function runAppServerTurn(
           fileChanges: turnState.fileChanges,
           touchedFiles: collectTouchedFiles(turnState.fileChanges),
           commandExecutions: turnState.commandExecutions,
+          ...(turnState.tokenUsage ? { tokenUsage: turnState.tokenUsage } : {}),
         };
       } catch (error) {
         if (acquiredInThisCallback && reservation) {

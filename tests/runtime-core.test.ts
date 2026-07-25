@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 
 import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
+import { reapWorkspaceBroker } from './broker-reaper.ts';
 import { initGitRepo, makeTempDir, run } from './helpers.ts';
 import {
   ROOT,
@@ -21,7 +22,7 @@ import { loadBrokerSession, saveBrokerSession } from '../plugins/stereo/src/brok
 import type { BrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import {
   resolveJobFile,
-  resolveStateDir,
+  resolveDurableStateDir,
   upsertJob,
   writeJobFile,
 } from '../plugins/stereo/src/workspace/state.ts';
@@ -75,9 +76,31 @@ test('setup reports ready when fake codex is installed and authenticated', () =>
   assert.equal(payload.ready, true);
   assert.match(payload.codex.detail, /advanced runtime available/);
   assert.equal(payload.sessionRuntime.mode, 'direct');
+  assert.equal(payload.rateLimits.planType, 'plus');
+  assert.equal(payload.rateLimits.primary.usedPercent, 37);
   if (process.platform !== 'win32') {
     assert.equal(payload.writeSandbox.available, true);
   }
+});
+
+test('setup omits rate limits when the app-server method is unsupported', () => {
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'rate-limits-fail');
+  const env = buildEnv(binDir);
+
+  const jsonResult = run('node', [SCRIPT, 'setup', '--json'], {
+    cwd: ROOT,
+    env,
+  });
+  assert.equal(jsonResult.status, 0, jsonResult.stderr);
+  assert.equal(JSON.parse(jsonResult.stdout).rateLimits, null);
+
+  const renderedResult = run('node', [SCRIPT, 'setup'], {
+    cwd: ROOT,
+    env,
+  });
+  assert.equal(renderedResult.status, 0, renderedResult.stderr);
+  assert.doesNotMatch(renderedResult.stdout, /\nRate limits:\n/);
 });
 
 test('setup reports a blocked write sandbox', { skip: process.platform === 'win32' }, () => {
@@ -483,14 +506,17 @@ test('review logs reasoning summaries and review output to the job log', () => {
   run('git', ['commit', '-m', 'init'], { cwd: repo });
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello again\n');
 
+  const env = buildEnv(binDir);
   const result = run('node', [SCRIPT, 'review'], {
     cwd: repo,
-    env: buildEnv(binDir),
+    env,
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   const state = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
+  assert.equal(state.jobs[0].tokenUsage.job.totalTokens, 350);
+  assert.deepEqual(state.jobs[0].tokenUsage.job, state.jobs[0].tokenUsage.thread);
   const log = fs.readFileSync(state.jobs[0].logFile, 'utf8');
   assert.match(log, /Reasoning summary/);
   assert.match(log, /Reviewed the changed files and checked the likely regression paths/);
@@ -615,7 +641,10 @@ test('status shows a provider-qualified model for an active background task', as
   await waitFor(
     () => {
       const state = JSON.parse(
-        fs.readFileSync(path.join(resolveStateDir(repo), 'state.json'), 'utf8'),
+        fs.readFileSync(
+          path.join(resolveDurableStateDir(repo, env.CODEX_HOME), 'state.json'),
+          'utf8',
+        ),
       );
       return state.jobs.find(
         (job: Record<string, unknown>) => job.id === jobId && job.status === 'running',
@@ -689,7 +718,7 @@ test('foreground task status and result retain the provider-qualified model', ()
 
 test('status shows phases, hints, and the latest finished job', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -865,7 +894,7 @@ test('status shows phases, hints, and the latest finished job', () => {
 
 test('status without a job id only shows jobs from the current Claude session', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -940,7 +969,7 @@ test('status without a job id only shows jobs from the current Claude session', 
 
 test('status preserves adversarial review kind labels', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -1013,7 +1042,7 @@ test('status preserves adversarial review kind labels', () => {
 
 test('status --wait times out cleanly when a job is still active', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -1077,7 +1106,7 @@ test('status --wait times out cleanly when a job is still active', () => {
 
 test('status treats a truncated legacy job file as an unknown model', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
   fs.writeFileSync(path.join(jobsDir, 'task-truncated.json'), '{"request":', 'utf8');
@@ -1125,13 +1154,14 @@ test('result falls back to index data when the stored job file is unreadable', (
   });
   assert.equal(task.status, 0, task.stderr);
 
-  const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), 'state.json'), 'utf8'));
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
   const job = state.jobs.find(
     (candidate: Record<string, unknown>) => candidate.jobClass === 'task',
   );
   assert.ok(job);
   const jobId = job.id as string;
-  const jobFile = resolveJobFile(repo, jobId);
+  const jobFile = path.join(stateDir, 'jobs', `${jobId}.json`);
 
   const control = run('node', [SCRIPT, 'result', jobId, '--json'], {
     cwd: repo,
@@ -1171,7 +1201,7 @@ test('result falls back to index data when the stored job file is unreadable', (
 
 test('result returns the stored output for the latest finished job by default', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -1236,7 +1266,7 @@ test('result returns the stored output for the latest finished job by default', 
 
 test('result without a job id prefers the latest finished job from the current Claude session', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -1361,7 +1391,7 @@ test('result for a finished write-capable task returns the raw Codex final respo
 
 test('cancel stops an active background job and marks it cancelled', async (t) => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -1456,7 +1486,7 @@ test('cancel stops an active background job and marks it cancelled', async (t) =
 
 test('cancel degrades to index data when the stored job file is corrupt', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -1529,7 +1559,7 @@ test('cancel degrades to index data when the stored job file is corrupt', () => 
 test('handleCancel dependency injection preserves interrupt, kill, and release order', async () => {
   const workspace = makeTempDir();
   const jobId = 'task-di-cancel';
-  const logFile = path.join(resolveStateDir(workspace), 'jobs', `${jobId}.log`);
+  const logFile = path.join(resolveDurableStateDir(workspace), 'jobs', `${jobId}.log`);
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.writeFileSync(logFile, '', 'utf8');
   const job = {
@@ -1669,7 +1699,7 @@ test('handleTaskWorker dependency injection dispatches task and plan-review requ
 
 test('cancel without a job id ignores active jobs from other Claude sessions', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -1728,7 +1758,7 @@ test('cancel without a job id ignores active jobs from other Claude sessions', (
 
 test('cancel with a job id can still target an active job from another Claude session', () => {
   const workspace = makeTempDir();
-  const stateDir = resolveStateDir(workspace);
+  const stateDir = resolveDurableStateDir(workspace);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
 
@@ -1799,7 +1829,7 @@ test('cancel sends turn interrupt to the shared app-server before killing a brok
   const jobId = launchPayload.jobId;
   assert.ok(jobId);
 
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   const runningJob = await waitFor(
     () => {
       const state = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
@@ -1845,10 +1875,13 @@ test('cancel sends turn interrupt to the shared app-server before killing a brok
   assert.equal(cleanup.status, 0, cleanup.stderr);
 });
 
-test('setup reuses an existing shared app-server without starting another one', () => {
+test('setup preserves an existing shared broker while probing rate limits privately', (t) => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   const fakeStatePath = path.join(binDir, 'fake-codex-state.json');
+  t.after(async () => {
+    await reapWorkspaceBroker(repo);
+  });
 
   installFakeCodex(binDir);
   initGitRepo(repo);
@@ -1869,15 +1902,18 @@ test('setup reuses an existing shared app-server without starting another one', 
   if (!brokerSession) {
     return;
   }
+  const appServerStartsBefore = JSON.parse(fs.readFileSync(fakeStatePath, 'utf8')).appServerStarts;
 
   const setup = run('node', [SCRIPT, 'setup', '--json'], {
     cwd: repo,
     env,
   });
   assert.equal(setup.status, 0, setup.stderr);
+  assert.equal(JSON.parse(setup.stdout).sessionRuntime.mode, 'shared');
 
   const fakeState = JSON.parse(fs.readFileSync(fakeStatePath, 'utf8'));
-  assert.equal(fakeState.appServerStarts, 1);
+  assert.equal(fakeState.appServerStarts, appServerStartsBefore + 1);
+  assert.deepEqual(loadBrokerSession(repo), brokerSession);
 
   const cleanup = run('node', [SESSION_HOOK, 'SessionEnd'], {
     cwd: repo,

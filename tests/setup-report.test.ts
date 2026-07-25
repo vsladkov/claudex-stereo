@@ -35,7 +35,11 @@ function authStatus(overrides: Partial<CodexAuthStatus> = {}): CodexAuthStatus {
   };
 }
 
-function setupDeps(auth: CodexAuthStatus, env: NodeJS.ProcessEnv = {}): SetupDeps {
+function setupDeps(
+  auth: CodexAuthStatus,
+  env: NodeJS.ProcessEnv = {},
+  rateLimits: Awaited<ReturnType<SetupDeps['getAccountRateLimits']>> = null,
+): SetupDeps {
   return {
     binaryAvailable: () => AVAILABLE,
     getCodexAvailability: () => AVAILABLE,
@@ -44,10 +48,32 @@ function setupDeps(auth: CodexAuthStatus, env: NodeJS.ProcessEnv = {}): SetupDep
       detail: 'workspace-write sandbox launches',
     }),
     getCodexAuthStatus: async () => auth,
+    getAccountRateLimits: async () => rateLimits,
     listStrandedThreadReservations: () => [],
     env,
   };
 }
+
+test('setup includes available account rate limits and omits unavailable snapshots', async () => {
+  const snapshot = {
+    limitId: 'codex',
+    limitName: 'Codex',
+    primary: { usedPercent: 37, windowDurationMins: 300, resetsAt: 1785000000 },
+    secondary: null,
+    credits: null,
+    individualLimit: null,
+    spendControlReached: false,
+    planType: 'plus' as const,
+    rateLimitReachedType: null,
+  };
+  const report = await buildSetupReport(makeTempDir(), [], setupDeps(authStatus(), {}, snapshot));
+  assert.deepEqual(report.rateLimits, snapshot);
+  assert.match(renderSetupReport(report), /\nRate limits:\n/);
+
+  const unavailable = await buildSetupReport(makeTempDir(), [], setupDeps(authStatus()));
+  assert.equal(unavailable.rateLimits, null);
+  assert.doesNotMatch(renderSetupReport(unavailable), /\nRate limits:\n/);
+});
 
 test('OpenAI-only setup reports the default provider with one optional alias summary', async () => {
   const report = await buildSetupReport(makeTempDir(), [], setupDeps(authStatus()));

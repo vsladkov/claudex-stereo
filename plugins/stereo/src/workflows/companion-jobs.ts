@@ -149,6 +149,9 @@ export interface CompanionExecution extends JobExecution {
   jobClass: string;
   targetLabel?: string;
   write?: boolean;
+  // Kept explicit at this workflow boundary so tracked-job persistence cannot
+  // accidentally drop the capture's per-job/cumulative-thread accounting.
+  tokenUsage?: JobExecution['tokenUsage'];
 }
 
 export interface CompanionJob extends TrackedJob {

@@ -77,6 +77,9 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
 
 ## Runtime invariants worth knowing before editing
 
+- Durable workspace state belongs under `CODEX_HOME/companion-state`; only the
+  install-scoped `broker.json` stays under `CLAUDE_PLUGIN_DATA` so stale-code
+  brokers lose their ownership record during upgrades.
 - The workspace broker is **shared by every session in the same directory**.
   SessionEnd kills its own jobs first, then sends a guarded ifIdle shutdown;
   a busy answer with nothing killed means another session owns it — leave it.

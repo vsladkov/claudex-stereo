@@ -335,6 +335,9 @@ export function spawnBrokerProcess({
 }
 
 function resolveBrokerStateFile(cwd: string): string {
+  // broker.json is intentionally ephemeral and tied to the plugin install:
+  // durable workspace data uses resolveDurableStateDir, but an upgrade must
+  // discard this old-code broker record so the next command starts fresh.
   return path.join(resolveStateDir(cwd), BROKER_STATE_FILE);
 }
 

@@ -64,6 +64,76 @@ function buildTurn(id, status = "inProgress", error = null) {
   return { id, status, items: [], error };
 }
 
+function emptyTokenUsage() {
+  return {
+    totalTokens: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0
+  };
+}
+
+function addTokenUsage(total, sample) {
+  return {
+    totalTokens: total.totalTokens + sample.totalTokens,
+    inputTokens: total.inputTokens + sample.inputTokens,
+    cachedInputTokens: total.cachedInputTokens + sample.cachedInputTokens,
+    cacheWriteInputTokens: total.cacheWriteInputTokens + sample.cacheWriteInputTokens,
+    outputTokens: total.outputTokens + sample.outputTokens,
+    reasoningOutputTokens: total.reasoningOutputTokens + sample.reasoningOutputTokens
+  };
+}
+
+function buildTokenUsageNotifications(threadId, turnId, multiplier = 1) {
+  const state = loadState();
+  const thread = ensureThread(state, threadId);
+  let total = thread.tokenUsage || emptyTokenUsage();
+  const samples = [
+    {
+      totalTokens: 100 * multiplier,
+      inputTokens: 80 * multiplier,
+      cachedInputTokens: 20 * multiplier,
+      cacheWriteInputTokens: 5 * multiplier,
+      outputTokens: 20 * multiplier,
+      reasoningOutputTokens: 5 * multiplier
+    },
+    {
+      totalTokens: 250 * multiplier,
+      inputTokens: 200 * multiplier,
+      cachedInputTokens: 100 * multiplier,
+      cacheWriteInputTokens: 10 * multiplier,
+      outputTokens: 50 * multiplier,
+      reasoningOutputTokens: 10 * multiplier
+    }
+  ];
+  const notifications = samples.map((last) => {
+    total = addTokenUsage(total, last);
+    return {
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId,
+        turnId,
+        tokenUsage: {
+          total: { ...total },
+          last,
+          modelContextWindow: 258000
+        }
+      }
+    };
+  });
+  thread.tokenUsage = total;
+  saveState(state);
+  return notifications;
+}
+
+function emitTokenUsage(threadId, turnId, multiplier = 1) {
+  for (const notification of buildTokenUsageNotifications(threadId, turnId, multiplier)) {
+    send(notification);
+  }
+}
+
 function sandboxPolicy(requested) {
   if (requested === "workspace-write") {
     return {
@@ -144,6 +214,33 @@ function buildConfigReadResult() {
   }
 }
 
+function buildAccountRateLimitsResult() {
+  const rateLimits = {
+    limitId: "codex",
+    limitName: "Codex",
+    primary: {
+      usedPercent: 37,
+      windowDurationMins: 300,
+      resetsAt: 1785000000
+    },
+    secondary: {
+      usedPercent: 12,
+      windowDurationMins: 10080,
+      resetsAt: 1785500000
+    },
+    credits: null,
+    individualLimit: null,
+    spendControlReached: false,
+    planType: "plus",
+    rateLimitReachedType: null
+  };
+  return {
+    rateLimits,
+    rateLimitsByLimitId: { codex: rateLimits },
+    rateLimitResetCredits: null
+  };
+}
+
 function send(message) {
   process.stdout.write(JSON.stringify(message) + "\\n");
 }
@@ -195,6 +292,7 @@ function saveImportLedger(ledger) {
 function emitTurnCompleted(threadId, turnId, item) {
   const items = Array.isArray(item) ? item : [item];
   send({ method: "turn/started", params: { threadId, turn: buildTurn(turnId) } });
+  emitTokenUsage(threadId, turnId);
   for (const entry of items) {
     if (entry && entry.started) {
       send({ method: "item/started", params: { threadId, turnId, item: entry.started } });
@@ -383,6 +481,17 @@ rl.on("line", (line) => {
 
       case "account/read":
         send({ id: message.id, result: buildAccountReadResult() });
+        break;
+
+      case "account/rateLimits/read":
+        if (BEHAVIOR === "rate-limits-fail") {
+          send({
+            id: message.id,
+            error: { code: -32601, message: "Unsupported method: account/rateLimits/read" }
+          });
+        } else {
+          send({ id: message.id, result: buildAccountRateLimitsResult() });
+        }
         break;
 
       case "config/read":
@@ -589,6 +698,7 @@ rl.on("line", (line) => {
 	          // must still complete via thread-scoped notifications.
 	          send({ id: message.id, result: {} });
 	          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+	          emitTokenUsage(thread.id, turnId);
 	          send({
 	            method: "item/completed",
 	            params: {
@@ -603,10 +713,11 @@ rl.on("line", (line) => {
 
 	        if (BEHAVIOR === "fast-turn") {
 	          const fastPayload = taskPayload(prompt, false);
-	          const lines = [
-	            { id: message.id, result: { turn: buildTurn(turnId) } },
-	            { method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } },
-	            {
+		          const lines = [
+		            { id: message.id, result: { turn: buildTurn(turnId) } },
+		            { method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } },
+		            ...buildTokenUsageNotifications(thread.id, turnId),
+		            {
 	              method: "item/completed",
 	              params: {
 	                threadId: thread.id,
@@ -654,6 +765,7 @@ rl.on("line", (line) => {
 
           send({ method: "thread/started", params: { thread: { ...buildThread(subThreadRecord), name: "design-challenger", agentNickname: "design-challenger" } } });
           send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+          emitTokenUsage(thread.id, turnId);
           send({
             method: "item/started",
             params: {
@@ -686,6 +798,7 @@ rl.on("line", (line) => {
             });
           }
           send({ method: "turn/started", params: { threadId: subThread.id, turn: buildTurn(subTurnId) } });
+          emitTokenUsage(subThread.id, subTurnId, 2);
           send({
             method: "item/completed",
             params: {
@@ -798,6 +911,7 @@ rl.on("line", (line) => {
 	              return;
 	            }
 	            interruptibleTurns.delete(turnId);
+	            emitTokenUsage(thread.id, turnId);
 	            for (const entry of items) {
 	              if (entry && entry.completed) {
 	                send({ method: "item/completed", params: { threadId: thread.id, turnId, item: entry.completed } });
@@ -818,8 +932,9 @@ rl.on("line", (line) => {
 		            if (!interruptibleTurns.has(turnId)) {
 		              return;
 		            }
-		            interruptibleTurns.delete(turnId);
-		            for (const entry of items) {
+			            interruptibleTurns.delete(turnId);
+			            emitTokenUsage(thread.id, turnId);
+			            for (const entry of items) {
 		              if (entry && entry.completed) {
 		                send({ method: "item/completed", params: { threadId: thread.id, turnId, item: entry.completed } });
 		              }

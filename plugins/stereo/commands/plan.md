@@ -50,7 +50,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --
 
 - After each non-terminal poll, post a one-line progress note from the payload — the job's `phase`, its elapsed time, and the latest progress line — then poll again. A healthy run advances through `investigating` to `verifying`; the short windows exist so the user can watch that movement instead of staring at one silent multi-minute call.
 - If any launch or poll command prints a top-level `{"error": ...}` JSON object instead of a job payload, surface that error to the user and stop the loop - do not keep polling.
-- After roughly 20 minutes of polling with no terminal status, use `AskUserQuestion` once with `Keep waiting (Recommended)` and `Cancel the review and stop`.
+- If the job reports no phase change and no new progress line for roughly 10 minutes, treat it as stalled and use `AskUserQuestion` once with `Keep waiting (Recommended)` and `Cancel the review and stop`. Total elapsed time alone is not a stall: keep polling without interruption while phases or progress lines continue to advance.
 - When the job finishes, fetch the stored result:
 
 ```bash

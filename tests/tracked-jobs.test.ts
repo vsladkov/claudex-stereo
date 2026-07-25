@@ -46,6 +46,25 @@ test('runTrackedJob persists completed state for a successful runner', async () 
     payload: { done: true },
     rendered: '# Done\n',
     summary: 'All good.',
+    tokenUsage: {
+      job: {
+        totalTokens: 350,
+        inputTokens: 280,
+        cachedInputTokens: 120,
+        cacheWriteInputTokens: 15,
+        outputTokens: 70,
+        reasoningOutputTokens: 15,
+      },
+      thread: {
+        totalTokens: 700,
+        inputTokens: 560,
+        cachedInputTokens: 240,
+        cacheWriteInputTokens: 30,
+        outputTokens: 140,
+        reasoningOutputTokens: 30,
+      },
+      modelContextWindow: 258000,
+    },
   }));
 
   assert.equal(execution.exitStatus, 0);
@@ -55,12 +74,15 @@ test('runTrackedJob persists completed state for a successful runner', async () 
   assert.equal(stored.pid, null);
   assert.equal(stored.threadId, 'thread-1');
   assert.deepEqual(stored.result, { done: true });
+  assert.equal(stored.tokenUsage?.job.totalTokens, 350);
+  assert.equal(stored.tokenUsage?.thread.totalTokens, 700);
 
   const indexed = listJobs(workspace).find((job) => job.id === 'job-ok');
   assert.ok(indexed);
   assert.equal(indexed.status, 'completed');
   assert.equal(indexed.summary, 'All good.');
   assert.equal(indexed.pid, null);
+  assert.deepEqual(indexed.tokenUsage, stored.tokenUsage);
 });
 
 test('runTrackedJob persists failed state for a nonzero exit status', async () => {

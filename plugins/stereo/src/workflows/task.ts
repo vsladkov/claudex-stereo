@@ -231,6 +231,7 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
     exitStatus: result.status,
     threadId: result.threadId,
     turnId: result.turnId,
+    ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
     payload,
     rendered,
     summary: firstMeaningfulLine(

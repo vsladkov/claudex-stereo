@@ -25,6 +25,7 @@ export interface RenderableJob {
   progressPreview?: string[] | null;
   model?: string | null;
   modelDisplay?: string | null;
+  tokenUsage?: unknown;
 }
 
 export interface ParsedResultLike {
@@ -76,6 +77,7 @@ export interface StoredJobLike {
   model?: unknown;
   request?: unknown;
   result?: StoredJobResultLike | null;
+  tokenUsage?: unknown;
 }
 
 export interface SetupProviderAlias {
@@ -100,6 +102,7 @@ export interface SetupRenderReport {
   codex: { detail: string };
   writeSandbox?: { available: boolean | null; detail: string } | null;
   auth: { detail: string };
+  rateLimits?: unknown;
   providers: {
     active: string | null;
     configured: SetupConfiguredProvider[];
@@ -110,6 +113,22 @@ export interface SetupRenderReport {
   reviewGateEnabled?: boolean | null;
   actionsTaken: string[];
   nextSteps: string[];
+}
+
+interface RateLimitWindowLike {
+  usedPercent?: unknown;
+  windowDurationMins?: unknown;
+  resetsAt?: unknown;
+}
+
+interface RateLimitSnapshotLike {
+  limitId?: unknown;
+  limitName?: unknown;
+  primary?: unknown;
+  secondary?: unknown;
+  planType?: unknown;
+  spendControlReached?: unknown;
+  rateLimitReachedType?: unknown;
 }
 
 export interface StatusRenderReport {
@@ -396,6 +415,79 @@ function formatCodexResumeCommand(job: RenderableJob | null | undefined): string
   return `codex resume ${job.threadId}`;
 }
 
+function finiteNonnegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function formatCompactTokenCount(value: number): string {
+  const units = [
+    { threshold: 1_000_000_000, suffix: 'G' },
+    { threshold: 1_000_000, suffix: 'M' },
+    { threshold: 1_000, suffix: 'K' },
+  ];
+  for (const unit of units) {
+    if (value < unit.threshold) {
+      continue;
+    }
+    const scaled = value / unit.threshold;
+    const precision = scaled >= 10 ? 0 : 1;
+    return `${scaled.toFixed(precision).replace(/\.0$/, '')}${unit.suffix}`;
+  }
+  return String(Math.round(value));
+}
+
+function formatUsageBreakdown(value: unknown, includeCache = false): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const usage = value as Record<string, unknown>;
+  const input = finiteNonnegativeNumber(usage.inputTokens);
+  const cachedInput = finiteNonnegativeNumber(usage.cachedInputTokens);
+  const output = finiteNonnegativeNumber(usage.outputTokens);
+  const reasoning = finiteNonnegativeNumber(usage.reasoningOutputTokens);
+  const total = finiteNonnegativeNumber(usage.totalTokens);
+  const parts: string[] = [];
+  if (input !== null) {
+    let inputText = `${formatCompactTokenCount(input)} in`;
+    if (includeCache && cachedInput !== null && input > 0) {
+      inputText += ` (${Math.round((cachedInput / input) * 100)}% cached)`;
+    }
+    parts.push(inputText);
+  }
+  if (output !== null) {
+    let outputText = `${formatCompactTokenCount(output)} out`;
+    if (reasoning !== null && reasoning > 0) {
+      outputText += ` (${formatCompactTokenCount(reasoning)} reasoning)`;
+    }
+    parts.push(outputText);
+  }
+  if (parts.length === 0 && total !== null) {
+    parts.push(`${formatCompactTokenCount(total)} total`);
+  }
+  return parts.length > 0 ? parts.join(' / ') : null;
+}
+
+export function formatTokenUsage(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const usage = value as Record<string, unknown>;
+  const job = formatUsageBreakdown(usage.job, true);
+  const thread = formatUsageBreakdown(usage.thread);
+  const context = finiteNonnegativeNumber(usage.modelContextWindow);
+  const segments: string[] = [];
+  if (job) {
+    segments.push(`job ${job}`);
+  }
+  if (thread) {
+    segments.push(`thread ${thread}`);
+  }
+  if (context !== null) {
+    segments.push(`context ${formatCompactTokenCount(context)}`);
+  }
+  return segments.length > 0 ? `Tokens: ${segments.join(' · ')}` : null;
+}
+
 function appendActiveJobsTable(lines: string[], jobs: RenderableJob[]): void {
   lines.push('Active jobs:');
   lines.push(
@@ -441,6 +533,10 @@ function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailO
   }
   if (job.threadId) {
     lines.push(`  Codex session ID: ${job.threadId}`);
+  }
+  const tokenUsage = formatTokenUsage(job.tokenUsage);
+  if (tokenUsage) {
+    lines.push(`  ${tokenUsage}`);
   }
   const resumeCommand = formatCodexResumeCommand(job);
   if (resumeCommand) {
@@ -504,6 +600,113 @@ function appendStrandedReservationWarnings(
   lines.push('');
 }
 
+function formatRateLimitDuration(minutesValue: unknown): string | null {
+  const minutes = finiteNonnegativeNumber(minutesValue);
+  if (minutes === null) {
+    return null;
+  }
+  if (minutes >= 1440 && minutes % 1440 === 0) {
+    return `${minutes / 1440}d`;
+  }
+  if (minutes >= 60 && minutes % 60 === 0) {
+    return `${minutes / 60}h`;
+  }
+  return `${minutes}m`;
+}
+
+function formatRateLimitReset(value: unknown): string | null {
+  const epochSeconds = finiteNonnegativeNumber(value);
+  if (epochSeconds === null) {
+    return null;
+  }
+  const date = new Date(epochSeconds * 1000);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function formatRateLimitWindow(label: string, value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const window = value as RateLimitWindowLike;
+  const usedPercent = finiteNonnegativeNumber(window.usedPercent);
+  if (usedPercent === null) {
+    return null;
+  }
+  const hints: string[] = [];
+  const duration = formatRateLimitDuration(window.windowDurationMins);
+  const reset = formatRateLimitReset(window.resetsAt);
+  if (duration) {
+    hints.push(`${duration} window`);
+  }
+  if (reset) {
+    hints.push(`resets ${reset}`);
+  }
+  return `- ${label}: ${usedPercent}% used${hints.length > 0 ? ` (${hints.join(', ')})` : ''}`;
+}
+
+function rateLimitSnapshotLabel(value: RateLimitSnapshotLike, fallback: string): string {
+  const limitName = typeof value.limitName === 'string' ? value.limitName.trim() : '';
+  const limitId = typeof value.limitId === 'string' ? value.limitId.trim() : '';
+  return limitName || limitId || fallback;
+}
+
+function appendRateLimitSnapshot(
+  lines: string[],
+  value: unknown,
+  fallbackLabel: string,
+  showPlan: boolean,
+): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return;
+  }
+  const snapshot = value as RateLimitSnapshotLike;
+  const label = rateLimitSnapshotLabel(snapshot, fallbackLabel);
+  if (showPlan && typeof snapshot.planType === 'string' && snapshot.planType) {
+    lines.push(`- Plan: ${snapshot.planType}`);
+  }
+  const primary = formatRateLimitWindow(`${label} primary`, snapshot.primary);
+  const secondary = formatRateLimitWindow(`${label} secondary`, snapshot.secondary);
+  if (primary) {
+    lines.push(primary);
+  }
+  if (secondary) {
+    lines.push(secondary);
+  }
+  if (snapshot.spendControlReached === true) {
+    lines.push(`- Warning: ${label} spend control has been reached.`);
+  }
+  if (typeof snapshot.rateLimitReachedType === 'string' && snapshot.rateLimitReachedType.trim()) {
+    lines.push(`- Warning: ${label} limit reached (${snapshot.rateLimitReachedType}).`);
+  }
+}
+
+function appendRateLimits(lines: string[], value: unknown): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return;
+  }
+  const start = lines.length;
+  lines.push('Rate limits:');
+  appendRateLimitSnapshot(lines, value, 'Account', true);
+  const byLimitId = (value as { rateLimitsByLimitId?: unknown }).rateLimitsByLimitId;
+  if (byLimitId && typeof byLimitId === 'object' && !Array.isArray(byLimitId)) {
+    const primaryLimitId =
+      typeof (value as RateLimitSnapshotLike).limitId === 'string'
+        ? (value as RateLimitSnapshotLike).limitId
+        : '';
+    for (const [limitId, snapshot] of Object.entries(byLimitId)) {
+      if (limitId === primaryLimitId) {
+        continue;
+      }
+      appendRateLimitSnapshot(lines, snapshot, limitId, false);
+    }
+  }
+  if (lines.length === start + 1) {
+    lines.splice(start, 1);
+    return;
+  }
+  lines.push('');
+}
+
 export function renderSetupReport(report: SetupRenderReport): string {
   const configuredProviderLines = report.providers.configured.map((provider) => {
     const aliases = report.providers.aliases
@@ -547,6 +750,8 @@ export function renderSetupReport(report: SetupRenderReport): string {
     `- review gate: ${report.reviewGateEnabled ? 'enabled' : 'disabled'}`,
     '',
   ];
+
+  appendRateLimits(lines, report.rateLimits);
 
   if (report.actionsTaken.length > 0) {
     lines.push('Actions taken:');
@@ -892,9 +1097,18 @@ function fencedBlock(text: string, lang = 'text'): string[] {
   return [`${fence}${lang}`, String(text ?? ''), fence];
 }
 
-function withResultFooter(text: string, threadId: string | null, modelDisplay: string): string {
+function withResultFooter(
+  text: string,
+  threadId: string | null,
+  modelDisplay: string,
+  tokenUsage: unknown,
+): string {
   const output = text.endsWith('\n') ? text : `${text}\n`;
   const footer = [`Model: ${modelDisplay}`];
+  const tokenUsageLine = formatTokenUsage(tokenUsage);
+  if (tokenUsageLine) {
+    footer.push(tokenUsageLine);
+  }
   if (threadId) {
     footer.push(`Codex session ID: ${threadId}`);
     footer.push(`Resume in Codex: codex resume ${threadId}`);
@@ -918,7 +1132,12 @@ export function renderStoredJobResult(
   const threadId = storedJob?.threadId ?? job.threadId ?? null;
   const modelDisplay = job.modelDisplay ?? formatJobModel(resolveJobModel(job, storedJob));
   const renderWithFooter = (text: string): string =>
-    withResultFooter(appendStoredJobWarning(text, warning), threadId, modelDisplay);
+    withResultFooter(
+      appendStoredJobWarning(text, warning),
+      threadId,
+      modelDisplay,
+      storedJob?.tokenUsage ?? job.tokenUsage,
+    );
   const taskClass = storedJob?.jobClass ?? job.jobClass ?? null;
   if (taskClass === 'task' && storedJob?.rendered) {
     return renderWithFooter(storedJob.rendered);

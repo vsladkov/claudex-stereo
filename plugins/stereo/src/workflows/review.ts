@@ -123,6 +123,7 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
       exitStatus: result.status,
       threadId: result.threadId,
       turnId: result.turnId,
+      ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
       payload,
       rendered,
       summary: firstMeaningfulLine(result.reviewText, `${reviewName} completed.`),
@@ -171,6 +172,7 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
     exitStatus: result.status,
     threadId: result.threadId,
     turnId: result.turnId,
+    ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
     payload,
     rendered: renderReviewResult(parsed, {
       reviewLabel: reviewName,

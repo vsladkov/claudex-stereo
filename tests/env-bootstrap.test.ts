@@ -13,9 +13,8 @@ const STATE_MODULE_URL = pathToFileURL(
   path.join(ROOT, 'plugins', 'stereo', 'src', 'workspace', 'state.ts'),
 ).href;
 
-test('preload strips leaked plugin variables', () => {
+test('preload strips leaked session variables', () => {
   const expression = [
-    'CLAUDE_PLUGIN_DATA',
     'CODEX_COMPANION_SESSION_ID',
     'CODEX_COMPANION_TRANSCRIPT_PATH',
     'CLAUDE_ENV_FILE',
@@ -39,27 +38,46 @@ test('preload strips leaked plugin variables', () => {
   );
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), 'unset,unset,unset,unset,unset');
+  assert.equal(result.stdout.trim(), 'unset,unset,unset,unset');
 });
 
-test('parent and child resolve the same state root under a polluted launcher', () => {
+test('preload always replaces leaked state homes with isolated temp directories', () => {
+  const expression =
+    'JSON.stringify({ pluginData: process.env.CLAUDE_PLUGIN_DATA, codexHome: process.env.CODEX_HOME })';
+  const leakedPluginData = path.join(os.tmpdir(), 'developer-plugin-data');
+  const leakedCodexHome = path.join(os.tmpdir(), 'developer-codex-home');
+  const result = run(process.execPath, ['--require', BOOTSTRAP, '-p', expression], {
+    env: {
+      ...process.env,
+      CLAUDE_PLUGIN_DATA: leakedPluginData,
+      CODEX_HOME: leakedCodexHome,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const isolated = JSON.parse(result.stdout);
+  assert.equal(
+    isolated.pluginData.startsWith(path.join(os.tmpdir(), 'stereo-test-plugin-data-')),
+    true,
+  );
+  assert.equal(
+    isolated.codexHome.startsWith(path.join(os.tmpdir(), 'stereo-test-codex-home-')),
+    true,
+  );
+  assert.notEqual(isolated.pluginData, leakedPluginData);
+  assert.notEqual(isolated.codexHome, leakedCodexHome);
+});
+
+test('spawned CLI children inherit the test process plugin-data root', () => {
   const workspace = makeTempDir();
   const parentStateDir = resolveStateDir(workspace);
   const expression = `const { resolveStateDir } = await import(${JSON.stringify(STATE_MODULE_URL)}); console.log(resolveStateDir(${JSON.stringify(workspace)}));`;
-  const result = run(
-    process.execPath,
-    ['--require', BOOTSTRAP, '--input-type=module', '-e', expression],
-    {
-      env: {
-        ...process.env,
-        CLAUDE_PLUGIN_DATA: '/tmp/poll',
-      },
-    },
-  );
+  const result = run(process.execPath, ['--input-type=module', '-e', expression], {
+    env: { ...process.env },
+  });
 
   assert.equal(result.status, 0, result.stderr);
   const childStateDir = result.stdout.trim();
-  assert.equal(childStateDir.startsWith(os.tmpdir()), true);
-  assert.equal(childStateDir.startsWith(path.join('/tmp/poll', 'state')), false);
+  assert.equal(childStateDir.startsWith(path.join(process.env.CLAUDE_PLUGIN_DATA!, 'state')), true);
   assert.equal(childStateDir, parentStateDir);
 });

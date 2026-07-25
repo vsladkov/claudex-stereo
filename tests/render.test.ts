@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  formatTokenUsage,
   renderJobStatusReport,
   renderPlanReviewResult,
   renderReviewResult,
@@ -10,6 +11,26 @@ import {
   renderStoredJobResult,
   renderTaskResult,
 } from '../plugins/stereo/src/render/render.ts';
+
+const tokenUsage = {
+  job: {
+    totalTokens: 58000,
+    inputTokens: 46000,
+    cachedInputTokens: 37260,
+    cacheWriteInputTokens: 0,
+    outputTokens: 12000,
+    reasoningOutputTokens: 0,
+  },
+  thread: {
+    totalTokens: 1333000,
+    inputTokens: 1200000,
+    cachedInputTokens: 900000,
+    cacheWriteInputTokens: 0,
+    outputTokens: 133000,
+    reasoningOutputTokens: 12000,
+  },
+  modelContextWindow: 258000,
+};
 
 const runningStatusJob = {
   id: 'task-running',
@@ -106,6 +127,34 @@ test('renderJobStatusReport includes timestamps in verbose output', () => {
   assert.match(output, / {2}Completed: 2026-07-20T07:31:10\.000Z/);
 });
 
+test('token usage formatting labels job and cumulative thread figures separately', () => {
+  assert.equal(
+    formatTokenUsage(tokenUsage),
+    'Tokens: job 46K in (81% cached) / 12K out · thread 1.2M in / 133K out (12K reasoning) · context 258K',
+  );
+  assert.equal(formatTokenUsage(null), null);
+  assert.equal(formatTokenUsage({ job: {}, thread: {} }), null);
+});
+
+test('job status and stored results render token usage without changing legacy records', () => {
+  const job = { ...completedStatusJob, tokenUsage };
+  assert.match(
+    renderJobStatusReport(job),
+    / {2}Tokens: job 46K in \(81% cached\).*thread 1\.2M in.*context 258K/,
+  );
+
+  const result = renderStoredJobResult(job, {
+    jobClass: 'review',
+    threadId: 'thr_complete',
+    rendered: 'Reviewed the change.\n',
+    tokenUsage,
+  });
+  assert.match(
+    result,
+    /Model: gpt-5\.6-sol\nTokens: job 46K in \(81% cached\).*context 258K\nCodex session ID:/,
+  );
+});
+
 test('renderSetupReport prints the active and configured provider key status', () => {
   const output = renderSetupReport({
     ready: true,
@@ -137,6 +186,42 @@ test('renderSetupReport prints the active and configured provider key status', (
 
   assert.match(output, /- Model provider: openai \(default\)/);
   assert.match(output, /- Custom provider moonshot \(kimi → kimi-k3\): MOONSHOT_API_KEY set/);
+});
+
+test('renderSetupReport renders sparse rate-limit windows and warnings defensively', () => {
+  const output = renderSetupReport({
+    ready: true,
+    node: { detail: 'v24' },
+    npm: { detail: '11' },
+    codex: { detail: 'codex-cli' },
+    auth: { detail: 'ChatGPT login active' },
+    providers: {
+      active: 'openai',
+      configured: [],
+      aliases: [],
+    },
+    sessionRuntime: { label: 'direct startup' },
+    rateLimits: {
+      limitId: 'codex',
+      limitName: 'Codex',
+      planType: 'plus',
+      primary: {
+        usedPercent: 37,
+        windowDurationMins: 300,
+        resetsAt: 1785000000,
+      },
+      spendControlReached: true,
+      rateLimitReachedType: 'rate_limit_reached',
+    },
+    actionsTaken: [],
+    nextSteps: [],
+  });
+
+  assert.match(output, /\nRate limits:\n/);
+  assert.match(output, /- Plan: plus/);
+  assert.match(output, /- Codex primary: 37% used \(5h window, resets /);
+  assert.match(output, /- Warning: Codex spend control has been reached\./);
+  assert.match(output, /- Warning: Codex limit reached \(rate_limit_reached\)\./);
 });
 
 test('renderReviewResult degrades gracefully when JSON is missing required review fields', () => {

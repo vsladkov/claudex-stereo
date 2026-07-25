@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.0
+
+- Keep workspace config, job records and logs, and approved pair-plan state under `CODEX_HOME/companion-state` so state written by 1.7.0 and later survives plugin reinstalls; non-wiping upgrades migrate older state once
+- Surface per-job and cumulative-thread token usage in detailed status and stored results, and show available account rate limits during setup
+- Ask before waiting only when pair-workflow progress has actually stalled, instead of interrupting healthy long-running jobs based on total elapsed time
+- Note: upgrading from 1.6.x or earlier via uninstall/reinstall still loses the old plugin-data state one final time because uninstall removes it before 1.7.0 migration code can run
+
 ## 1.6.1
 
 - Bound broker endpoint probes across close-only and silent connection races, with outcome-aware readiness and teardown checks

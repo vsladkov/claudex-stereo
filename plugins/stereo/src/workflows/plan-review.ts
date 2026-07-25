@@ -137,6 +137,7 @@ export async function executePlanReviewRun(
     exitStatus: result.status,
     threadId: result.threadId,
     turnId: result.turnId,
+    ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
     payload,
     rendered: renderPlanReviewResult(parsed, { round, reasoningSummary: result.reasoningSummary }),
     summary:

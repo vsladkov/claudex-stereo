@@ -19,7 +19,7 @@ import {
   sendBrokerShutdown,
   waitForBrokerEndpoint,
 } from '../plugins/stereo/src/broker/lifecycle.ts';
-import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 registerBrokerReaping();
 
@@ -346,13 +346,14 @@ test('plan-review --background enqueues a detached worker and stores structured 
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
   run('git', ['add', 'README.md'], { cwd: repo });
   run('git', ['commit', '-m', 'init'], { cwd: repo });
+  const env = buildEnv(binDir);
 
   const launched = run(
     'node',
     [SCRIPT, 'plan-review', '--background', '--json', 'Plan under background review'],
     {
       cwd: repo,
-      env: buildEnv(binDir),
+      env,
     },
   );
 
@@ -361,7 +362,7 @@ test('plan-review --background enqueues a detached worker and stores structured 
   assert.equal(launchPayload.status, 'queued');
   assert.match(launchPayload.jobId, /^plan-/);
 
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   const stateAfterLaunch = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
   const indexedAfterLaunch = stateAfterLaunch.jobs.find(
     (job: Record<string, any>) => job.id === launchPayload.jobId,

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { makeTempDir, initGitRepo, run } from './helpers.ts';
 import { drainCreatedTempDirs } from './helpers.ts';
 import { reapWorkspaceBroker } from './broker-reaper.ts';
-import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
 import {
   evaluateStopReview,
   parseStopReviewOutput,
@@ -75,7 +75,7 @@ const STOP_HOOK = path.join(ROOT, 'plugins', 'stereo', 'scripts', 'stop-review-g
 const IS_WINDOWS = process.platform === 'win32';
 
 function seedRunningJob(repo: string, sessionId: string): void {
-  const stateDir = resolveStateDir(repo);
+  const stateDir = resolveDurableStateDir(repo);
   const jobsDir = path.join(stateDir, 'jobs');
   fs.mkdirSync(jobsDir, { recursive: true });
   const runningLog = path.join(jobsDir, 'task-running.log');
