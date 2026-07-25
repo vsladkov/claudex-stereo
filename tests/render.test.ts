@@ -9,6 +9,7 @@ import {
   renderSetupReport,
   renderStatusReport,
   renderStoredJobResult,
+  renderStoredPlanState,
   renderTaskResult,
 } from '../plugins/stereo/src/render/render.ts';
 
@@ -428,6 +429,55 @@ test('renderStoredJobResult tolerates a malformed legacy request while resolving
   );
 
   assert.equal(output, 'Legacy task output.\n\nModel: -\n');
+});
+
+test('renderStoredPlanState renders metadata, lists, and the stored plan verbatim', () => {
+  const plan = '# Plan\n\n```ts\nconst enabled = true;\n```\n';
+
+  assert.equal(
+    renderStoredPlanState({
+      verdict: 'approve',
+      round: 3,
+      updatedAt: '2026-07-25T17:00:00.000Z',
+      model: 'gpt-5.6-sol',
+      effort: 'max',
+      threadId: 'thr_plan',
+      openQuestions: ['Keep the compatibility alias?'],
+      residualRisks: ['Legacy records still lack schema validation.'],
+      plan,
+    }),
+    'Stored plan (verdict: approve, round 3, updated 2026-07-25T17:00:00.000Z)\nModel: gpt-5.6-sol@max · Thread: thr_plan\nOpen questions:\n- Keep the compatibility alias?\nResidual risks:\n- Legacy records still lack schema validation.\n\n---\n\n# Plan\n\n```ts\nconst enabled = true;\n```\n',
+  );
+});
+
+test('renderStoredPlanState reports empty question and risk lists', () => {
+  assert.equal(
+    renderStoredPlanState({
+      verdict: 'approve',
+      round: 1,
+      openQuestions: [],
+      residualRisks: [],
+      plan: '# Compact plan\n',
+    }),
+    'Stored plan (verdict: approve, round 1)\nOpen questions: none\nResidual risks: none\n\n---\n\n# Compact plan\n',
+  );
+});
+
+test('renderStoredPlanState degrades gracefully when plan text and metadata are absent', () => {
+  assert.equal(
+    renderStoredPlanState({
+      openQuestions: 'not an array',
+      residualRisks: [null, ''],
+    }),
+    'Stored plan (verdict: unknown)\nOpen questions: none\nResidual risks: none\n\n---\n\n(plan text missing)\n',
+  );
+});
+
+test('renderStoredPlanState preserves the unavailable message byte-for-byte', () => {
+  assert.equal(
+    renderStoredPlanState(null),
+    'No stored plan for this repository. Run /stereo:plan first.\n',
+  );
 });
 
 test('renderPlanReviewResult orders findings by severity and lists revision guidance', () => {

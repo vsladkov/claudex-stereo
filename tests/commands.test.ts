@@ -15,12 +15,13 @@ function read(relativePath: string): string {
 // sentences preserved stale text (a pinned README example once asserted a
 // model name that no longer existed) while taxing every legitimate edit.
 
-test('the command surface is exactly the eleven stereo commands', () => {
+test('the command surface is exactly the twelve stereo commands', () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, 'commands')).sort();
   assert.deepEqual(commandFiles, [
     'adversarial-review.md',
     'cancel.md',
     'implement.md',
+    'plan-state.md',
     'plan.md',
     'quick.md',
     'rescue.md',
@@ -37,6 +38,7 @@ test('every command wires the companion entry point it documents', () => {
     'adversarial-review.md': /codex-companion\.ts" adversarial-review "\$ARGUMENTS"/,
     'cancel.md': /codex-companion\.ts" cancel "\$ARGUMENTS"/,
     'implement.md': /task --background --json --write --thread/,
+    'plan-state.md': /codex-companion\.ts" plan-state/,
     'plan.md': /plan-review --background --json --round 1/,
     'quick.md': [
       /plan-review --background --json --round 1/,
@@ -63,6 +65,7 @@ test('directly-wired commands disable model invocation of the command file', () 
     'adversarial-review.md',
     'cancel.md',
     'implement.md',
+    'plan-state.md',
     'plan.md',
     'quick.md',
     'result.md',

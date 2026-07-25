@@ -17,6 +17,8 @@ import {
   executePlanReviewRun,
   normalizePlanReviewRound,
 } from '../../workflows/plan-review.ts';
+import { renderStoredPlanState } from '../../render/render.ts';
+import type { StoredPairPlanState } from '../../render/render.ts';
 import {
   outputCommandResult,
   parseCommandInput,
@@ -92,16 +94,6 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
   );
 }
 
-// The stored pair-plan record as far as the plan-state summary reads it.
-interface StoredPairPlanState {
-  round?: number | null;
-  verdict?: string | null;
-  threadId?: string | null;
-  openQuestions?: unknown[] | null;
-  residualRisks?: unknown[] | null;
-  [key: string]: unknown;
-}
-
 export function handlePlanState(argv: string[]): void {
   const { options } = parseCommandInput(argv, {
     valueOptions: ['cwd'],
@@ -111,8 +103,5 @@ export function handlePlanState(argv: string[]): void {
   const workspaceRoot = resolveCommandWorkspace(options);
   const record = loadPairPlanState(workspaceRoot) as StoredPairPlanState | null;
   const payload = record ? { available: true, ...record } : { available: false };
-  const rendered = record
-    ? `Stored plan found (round ${record.round ?? '?'}, verdict: ${record.verdict ?? 'unknown'}, thread: ${record.threadId ?? 'unknown'}, open questions: ${record.openQuestions?.length ?? 0}, residual risks: ${record.residualRisks?.length ?? 0}).\n`
-    : 'No stored plan for this repository. Run /stereo:plan first.\n';
-  outputCommandResult(payload, rendered, options.json);
+  outputCommandResult(payload, renderStoredPlanState(record), options.json);
 }

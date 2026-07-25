@@ -29,7 +29,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 
 - If `available` is `false`, stop and tell the user to run `/stereo:plan` first.
 - If `verdict` is not `approve`, use `AskUserQuestion` once with `Run /stereo:plan first (Recommended)`, `Implement the unapproved plan anyway`, and `Stop here`.
-- Show the user a one-line recap of what will be implemented: the plan summary, the round count, and the `updatedAt` timestamp. If the stored plan carries `residualRisks`, mention there are documented non-blocking residuals that will be listed in the final report. If the plan looks stale relative to recent repo changes, say so before continuing.
+- Show the user a one-line recap of what will be implemented: the plan summary, the round count, and the `updatedAt` timestamp. If the stored plan carries `residualRisks`, mention there are documented non-blocking residuals that will be listed in the final report. If the plan looks stale relative to recent repo changes, say so before continuing. Mention that `/stereo:plan-state` renders the full stored plan document if the user wants to read it before continuing.
 - Check the worktree with `git status --porcelain=v1 --untracked-files=all` and record `git rev-parse HEAD` plus the list of already-dirty paths as the baseline.
 - If the worktree is dirty, use `AskUserQuestion` once with `Stop so I can commit or stash first (Recommended)` and `Continue with a dirty worktree`.
 - If the stop-time review gate is enabled, mention that finishing this command triggers one extra Codex review and that `/stereo:setup --disable-review-gate` avoids it during long pair sessions.

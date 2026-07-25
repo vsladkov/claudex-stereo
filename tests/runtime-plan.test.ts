@@ -277,6 +277,18 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(planPayload.threadId, threadId);
   assert.match(planPayload.plan, /Revised plan draft/);
 
+  const renderedPlanState = run('node', [SCRIPT, 'plan-state'], {
+    cwd: repo,
+    env: buildEnv(binDir),
+  });
+  assert.equal(renderedPlanState.status, 0, renderedPlanState.stderr);
+  assert.match(
+    renderedPlanState.stdout,
+    /^Stored plan \(verdict: needs-revision, round 2, updated [^)]+\)\n/,
+  );
+  assert.ok(renderedPlanState.stdout.includes(`Model: gpt-5.6-sol@max · Thread: ${threadId}\n`));
+  assert.match(renderedPlanState.stdout, /\n---\n\nRevised plan draft\n$/);
+
   // A malformed round must not clobber the last good stored plan state.
   // Stop the standing broker first so the swapped fixture is actually spawned,
   // and wait until the endpoint stops answering (the dying broker could still

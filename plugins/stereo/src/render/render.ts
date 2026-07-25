@@ -46,6 +46,19 @@ export interface PlanReviewRenderMeta {
   reasoningSummary?: string[] | null;
 }
 
+export interface StoredPairPlanState {
+  plan?: unknown;
+  threadId?: unknown;
+  model?: unknown;
+  effort?: unknown;
+  round?: unknown;
+  verdict?: unknown;
+  updatedAt?: unknown;
+  openQuestions?: unknown;
+  residualRisks?: unknown;
+  [key: string]: unknown;
+}
+
 export interface NativeReviewRenderResult {
   status?: number | null;
   stdout: string;
@@ -581,6 +594,74 @@ function appendReasoningSection(
   for (const section of reasoningSummary) {
     lines.push(`- ${section}`);
   }
+}
+
+function storedPlanMetadataValue(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return value.trim() || null;
+  }
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : null;
+}
+
+function storedPlanList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+    .map((entry) => entry.trim());
+}
+
+export function renderStoredPlanState(record: StoredPairPlanState | null): string {
+  if (!record) {
+    return 'No stored plan for this repository. Run /stereo:plan first.\n';
+  }
+
+  const verdict = storedPlanMetadataValue(record.verdict) ?? 'unknown';
+  const round = storedPlanMetadataValue(record.round);
+  const updatedAt = storedPlanMetadataValue(record.updatedAt);
+  const headerParts = [`verdict: ${verdict}`];
+  if (round) {
+    headerParts.push(`round ${round}`);
+  }
+  if (updatedAt) {
+    headerParts.push(`updated ${updatedAt}`);
+  }
+
+  const lines = [`Stored plan (${headerParts.join(', ')})`];
+  const model = storedPlanMetadataValue(record.model);
+  const effort = storedPlanMetadataValue(record.effort);
+  const threadId = storedPlanMetadataValue(record.threadId);
+  const runtimeParts: string[] = [];
+  if (model) {
+    runtimeParts.push(`Model: ${model}${effort ? `@${effort}` : ''}`);
+  } else if (effort) {
+    runtimeParts.push(`Effort: ${effort}`);
+  }
+  if (threadId) {
+    runtimeParts.push(`Thread: ${threadId}`);
+  }
+  if (runtimeParts.length > 0) {
+    lines.push(runtimeParts.join(' · '));
+  }
+
+  const openQuestions = storedPlanList(record.openQuestions);
+  if (openQuestions.length === 0) {
+    lines.push('Open questions: none');
+  } else {
+    lines.push('Open questions:', ...openQuestions.map((question) => `- ${question}`));
+  }
+
+  const residualRisks = storedPlanList(record.residualRisks);
+  if (residualRisks.length === 0) {
+    lines.push('Residual risks: none');
+  } else {
+    lines.push('Residual risks:', ...residualRisks.map((risk) => `- ${risk}`));
+  }
+
+  const plan = typeof record.plan === 'string' ? record.plan : '(plan text missing)';
+  const output = `${lines.join('\n')}\n\n---\n\n${plan}`;
+  return output.endsWith('\n') ? output : `${output}\n`;
 }
 
 function appendStrandedReservationWarnings(

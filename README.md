@@ -14,6 +14,7 @@ they already have.
 - `/stereo:review` for a normal read-only Codex review
 - `/stereo:adversarial-review` for a steerable challenge review
 - `/stereo:plan` and `/stereo:implement` for a dual-model pair workflow: Claude plans and reviews, Codex critiques the plan and writes the code
+- `/stereo:plan-state` to read the latest reviewed plan before implementation
 - `/stereo:quick` for the same pair workflow in one command when the task is small
 - `/stereo:rescue`, `/stereo:transfer`, `/stereo:status`, `/stereo:result`, and `/stereo:cancel` to delegate work, hand off sessions, and manage background jobs
 
@@ -149,6 +150,8 @@ Planning is read-only: nothing is implemented until you run [`/stereo:implement`
 
 Implements the plan approved by [`/stereo:plan`](#codexplan). Codex writes the code in the same Codex thread that reviewed the plan (workspace-write sandbox), then Claude reviews the diff, runs the tests it can find, and sends numbered fix lists back to Codex until the implementation is accepted.
 
+Use [`/stereo:plan-state`](#stereoplan-state) to read the complete stored plan, its review metadata, open questions, and residual risks before starting implementation.
+
 The fix loop is capped at 4 rounds by default; use `--max-fix-rounds <n>` to change the cap, and `--fresh` to start a new Codex thread instead of resuming the stored one. The final report lists the plan's stored `residualRisks` (documented non-blocking hazards with suggested follow-up plans). Nothing is committed; you review and commit the result yourself.
 
 Examples:
@@ -161,6 +164,16 @@ Examples:
 
 > [!WARNING]
 > The pair workflow runs multiple Codex calls at `max` effort and iterates until accepted by default, which can take a long time and consume usage limits quickly. Start from a clean worktree, bound the loops with `--max-plan-rounds`/`--max-fix-rounds` if you want a budget, and consider `/stereo:setup --disable-review-gate` during long pair sessions.
+
+### `/stereo:plan-state`
+
+Shows the complete plan most recently stored by `/stereo:plan` or `/stereo:quick`, together with its verdict, review round, model and Codex thread, update time, open questions, and residual risks.
+
+```bash
+/stereo:plan-state
+```
+
+The command is read-only and takes no arguments. If no reviewed plan is stored for the repository, it directs you to run `/stereo:plan` first.
 
 ### `/stereo:quick`
 

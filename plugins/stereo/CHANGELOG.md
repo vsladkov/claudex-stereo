@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.10.0
+
+- Add `/stereo:plan-state` to render the complete stored pair plan with its verdict, review round, runtime metadata, open questions, and residual risks before implementation
+
 ## 1.9.1
 
 - Name `job.progressPreview` explicitly in the plan, implement, and quick poll instructions so live progress and stall detection use the correct status-payload field
