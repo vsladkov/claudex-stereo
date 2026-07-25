@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.0
+
+- Add `/stereo:quick` for small tasks: one command drafts and reviews a compact plan, moves approved plans directly into implementation, bounds the automatic plan and fix loops at two rounds, and preserves the existing dirty-worktree and never-commit safety gates
+
 ## 1.8.0
 
 - Surface live diff statistics and plan-step updates from active Codex turns in existing job logs and nonterminal status progress previews, with registered-turn filtering and change-only emission

@@ -15,13 +15,14 @@ function read(relativePath: string): string {
 // sentences preserved stale text (a pinned README example once asserted a
 // model name that no longer existed) while taxing every legitimate edit.
 
-test('the command surface is exactly the ten stereo commands', () => {
+test('the command surface is exactly the eleven stereo commands', () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, 'commands')).sort();
   assert.deepEqual(commandFiles, [
     'adversarial-review.md',
     'cancel.md',
     'implement.md',
     'plan.md',
+    'quick.md',
     'rescue.md',
     'result.md',
     'review.md',
@@ -32,11 +33,15 @@ test('the command surface is exactly the ten stereo commands', () => {
 });
 
 test('every command wires the companion entry point it documents', () => {
-  const wiring: Record<string, RegExp> = {
+  const wiring: Record<string, RegExp | RegExp[]> = {
     'adversarial-review.md': /codex-companion\.ts" adversarial-review "\$ARGUMENTS"/,
     'cancel.md': /codex-companion\.ts" cancel "\$ARGUMENTS"/,
     'implement.md': /task --background --json --write --thread/,
     'plan.md': /plan-review --background --json --round 1/,
+    'quick.md': [
+      /plan-review --background --json --round 1/,
+      /task --background --json --write --thread/,
+    ],
     'rescue.md': /task-resume-candidate --json/,
     'result.md': /codex-companion\.ts" result "\$ARGUMENTS"/,
     'review.md': /codex-companion\.ts" review "\$ARGUMENTS"/,
@@ -44,10 +49,12 @@ test('every command wires the companion entry point it documents', () => {
     'status.md': /codex-companion\.ts" status "\$ARGUMENTS"/,
     'transfer.md': /codex-companion\.ts" transfer "\$ARGUMENTS"/,
   };
-  for (const [file, token] of Object.entries(wiring)) {
+  for (const [file, required] of Object.entries(wiring)) {
     const source = read(path.join('commands', file));
     assert.match(source, /codex-companion\.ts/, `${file} must reference the companion entry point`);
-    assert.match(source, token, `${file} runtime wiring drifted`);
+    for (const token of Array.isArray(required) ? required : [required]) {
+      assert.match(source, token, `${file} runtime wiring drifted`);
+    }
   }
 });
 
@@ -57,6 +64,7 @@ test('directly-wired commands disable model invocation of the command file', () 
     'cancel.md',
     'implement.md',
     'plan.md',
+    'quick.md',
     'result.md',
     'review.md',
     'status.md',
@@ -66,7 +74,7 @@ test('directly-wired commands disable model invocation of the command file', () 
   }
 });
 
-test('plan and implement keep the pair-workflow loop mechanics', () => {
+test('plan, implement, and quick keep the pair-workflow loop mechanics', () => {
   const plan = read('commands/plan.md');
   assert.match(plan, /status <jobId> --wait --timeout-ms 90000 --json/);
   assert.match(plan, /plan-review --background --json --thread <threadId> --round <n>/);
@@ -77,6 +85,13 @@ test('plan and implement keep the pair-workflow loop mechanics', () => {
   assert.match(implement, /status <jobId> --wait --timeout-ms 90000 --json/);
   assert.match(implement, /<<'CODEX_PAIR_IMPL'/);
   assert.match(implement, /<<'CODEX_PAIR_FIX'/);
+
+  const quick = read('commands/quick.md');
+  assert.match(quick, /plan-state --json/);
+  assert.match(quick, /status <jobId> --wait --timeout-ms 90000 --json/);
+  assert.match(quick, /<<'CODEX_PAIR_PLAN'/);
+  assert.match(quick, /<<'CODEX_PAIR_IMPL'/);
+  assert.match(quick, /<<'CODEX_PAIR_FIX'/);
 });
 
 test('rescue routes through the subagent transport, never Skill recursion', () => {

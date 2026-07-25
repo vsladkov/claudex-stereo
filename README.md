@@ -14,6 +14,7 @@ they already have.
 - `/stereo:review` for a normal read-only Codex review
 - `/stereo:adversarial-review` for a steerable challenge review
 - `/stereo:plan` and `/stereo:implement` for a dual-model pair workflow: Claude plans and reviews, Codex critiques the plan and writes the code
+- `/stereo:quick` for the same pair workflow in one command when the task is small
 - `/stereo:rescue`, `/stereo:transfer`, `/stereo:status`, `/stereo:result`, and `/stereo:cancel` to delegate work, hand off sessions, and manage background jobs
 
 ## Requirements
@@ -161,6 +162,21 @@ Examples:
 > [!WARNING]
 > The pair workflow runs multiple Codex calls at `max` effort and iterates until accepted by default, which can take a long time and consume usage limits quickly. Start from a clean worktree, bound the loops with `--max-plan-rounds`/`--max-fix-rounds` if you want a budget, and consider `/stereo:setup --disable-review-gate` during long pair sessions.
 
+### `/stereo:quick`
+
+Runs the complete pair workflow in one command for a small, single-feature task. Claude explores the repository and drafts a compact plan, Codex reviews it, and an approved plan moves directly into implementation without another user command. Claude then reviews the delta, runs the tests it can identify, and sends any required fix rounds back to Codex.
+
+Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the plan cap you can keep iterating in the same Codex thread, implement the reviewed but unapproved plan with its findings carried forward, or stop. Dirty worktrees and exhausted fix rounds still produce explicit safety gates. If the task needs a plan longer than roughly 120 lines or crosses multiple features or subsystems, quick stops before review and directs you to [`/stereo:plan`](#codexplan).
+
+Use `--model` and `--effort` to override the pair defaults:
+
+```bash
+/stereo:quick fix the retry delay calculation
+/stereo:quick --model terra --effort high add a validation check
+```
+
+The latest reviewed plan is stored normally, so an interrupted approved run can resume with `/stereo:implement`. Nothing is committed or pushed.
+
 ### `/stereo:rescue`
 
 Hands a task to Codex through the `stereo:codex-rescue` subagent.
@@ -289,6 +305,12 @@ When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted
 
 ```bash
 /stereo:rescue investigate why the build is failing in CI
+```
+
+### Small Fix, One Command
+
+```bash
+/stereo:quick fix the retry delay calculation
 ```
 
 ### Plan Together, Then Let Codex Build
