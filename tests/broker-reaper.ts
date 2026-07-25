@@ -70,7 +70,7 @@ export async function reapWorkspaceBroker(cwd: string): Promise<boolean> {
     pidFile: session.pidFile,
     logFile: session.logFile,
     sessionDir: session.sessionDir,
-    pid: Number.isFinite(pid) ? pid : null,
+    pid: Number.isFinite(pid) && pid > 0 ? pid : null,
     killProcess: (target: number) => terminateProcessTree(target),
   });
   return true;

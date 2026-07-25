@@ -7,12 +7,28 @@ import {
 import { terminateProcessTree } from '../../platform/process.ts';
 import { readStoredJob, resolveCancelableJob } from '../../jobs/job-control.ts';
 import { appendLogLine } from '../../jobs/tracked-jobs.ts';
-import { nowIso, upsertJob, writeJobFile } from '../../workspace/state.ts';
+import { nowIso, resolveJobFile, upsertJob, writeJobFile } from '../../workspace/state.ts';
 import type { JobRecord } from '../../workspace/state.ts';
 import { renderCancelReport } from '../../render/render.ts';
 import { outputCommandResult, parseCommandInput, resolveCommandCwd } from '../io.ts';
 
-export async function handleCancel(argv: string[]): Promise<void> {
+export interface CancelDeps {
+  interruptAppServerTurn: typeof interruptAppServerTurn;
+  terminateProcessTree: typeof terminateProcessTree;
+  releaseThreadReservationForCancelledJob: typeof releaseThreadReservationForCancelledJob;
+  env?: NodeJS.ProcessEnv;
+}
+
+export const defaultCancelDeps: CancelDeps = {
+  interruptAppServerTurn,
+  terminateProcessTree,
+  releaseThreadReservationForCancelledJob,
+};
+
+export async function handleCancel(
+  argv: string[],
+  deps: CancelDeps = defaultCancelDeps,
+): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ['cwd'],
     booleanOptions: ['json'],
@@ -20,14 +36,26 @@ export async function handleCancel(argv: string[]): Promise<void> {
 
   const cwd = resolveCommandCwd(options);
   const reference = positionals[0] ?? '';
-  const { workspaceRoot, job } = resolveCancelableJob(cwd, reference, { env: process.env });
-  const existing: Partial<JobRecord> = readStoredJob(workspaceRoot, job.id) ?? {};
+  const { workspaceRoot, job } = resolveCancelableJob(cwd, reference, {
+    env: deps.env ?? process.env,
+  });
+  const jobFile = resolveJobFile(workspaceRoot, job.id);
+  let existing: Partial<JobRecord>;
+  let storedJobWarning: string | null = null;
+  try {
+    existing = readStoredJob(workspaceRoot, job.id) ?? {};
+  } catch (error) {
+    existing = {};
+    const message = error instanceof Error ? error.message : String(error);
+    storedJobWarning = `Stored job file is unreadable: ${jobFile} (${message}). Cancelling with index data only.`;
+    appendLogLine(job.logFile, storedJobWarning);
+  }
   const threadId = existing.threadId ?? job.threadId ?? null;
   const requestThreadId =
     (existing.request as { threadId?: string | null } | null | undefined)?.threadId ?? null;
   const turnId = existing.turnId ?? job.turnId ?? null;
 
-  const interrupt = await interruptAppServerTurn(cwd, { threadId, turnId });
+  const interrupt = await deps.interruptAppServerTurn(cwd, { threadId, turnId });
   if (interrupt.attempted) {
     appendLogLine(
       job.logFile,
@@ -38,8 +66,8 @@ export async function handleCancel(argv: string[]): Promise<void> {
   }
 
   const cancelledPid = job.pid ?? Number.NaN;
-  terminateProcessTree(cancelledPid);
-  const reservationCleanup = await releaseThreadReservationForCancelledJob({
+  deps.terminateProcessTree(cancelledPid);
+  const reservationCleanup = await deps.releaseThreadReservationForCancelledJob({
     threadId,
     requestThreadId,
     jobId: job.id,
@@ -84,7 +112,8 @@ export async function handleCancel(argv: string[]): Promise<void> {
     turnInterruptAttempted: interrupt.attempted,
     turnInterrupted: interrupt.interrupted,
     reservationCleanup: reservationCleanup.status,
+    ...(storedJobWarning ? { storedJobWarning } : {}),
   };
 
-  outputCommandResult(payload, renderCancelReport(nextJob), options.json);
+  outputCommandResult(payload, renderCancelReport(nextJob, storedJobWarning), options.json);
 }

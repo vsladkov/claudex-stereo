@@ -19,7 +19,14 @@ import {
 } from './runtime-helpers.ts';
 import { loadBrokerSession, saveBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import type { BrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
-import { resolveJobFile, resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import {
+  resolveJobFile,
+  resolveStateDir,
+  upsertJob,
+  writeJobFile,
+} from '../plugins/stereo/src/workspace/state.ts';
+import { handleCancel, type CancelDeps } from '../plugins/stereo/src/cli/commands/cancel.ts';
+import { handleTaskWorker, type TaskWorkerDeps } from '../plugins/stereo/src/cli/commands/task.ts';
 
 registerBrokerReaping();
 
@@ -1445,6 +1452,219 @@ test('cancel stops an active background job and marks it cancelled', async (t) =
   const stored = JSON.parse(fs.readFileSync(jobFile, 'utf8'));
   assert.equal(stored.status, 'cancelled');
   assert.match(fs.readFileSync(logFile, 'utf8'), /Cancelled by user/);
+});
+
+test('cancel degrades to index data when the stored job file is corrupt', () => {
+  const workspace = makeTempDir();
+  const stateDir = resolveStateDir(workspace);
+  const jobsDir = path.join(stateDir, 'jobs');
+  fs.mkdirSync(jobsDir, { recursive: true });
+
+  const jobs = ['task-corrupt-json', 'task-corrupt-text'].map((id, index) => {
+    const logFile = path.join(jobsDir, `${id}.log`);
+    fs.writeFileSync(logFile, '', 'utf8');
+    fs.writeFileSync(resolveJobFile(workspace, id), '{', 'utf8');
+    return {
+      id,
+      status: 'running',
+      title: 'Codex Task',
+      jobClass: 'task',
+      summary: `Corrupt stored job ${index + 1}`,
+      pid: null,
+      logFile,
+      createdAt: `2026-03-18T15:3${index}:00.000Z`,
+      updatedAt: `2026-03-18T15:3${index}:01.000Z`,
+    };
+  });
+  fs.writeFileSync(
+    path.join(stateDir, 'state.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs,
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  const jsonCancel = run(process.execPath, [SCRIPT, 'cancel', 'task-corrupt-json', '--json'], {
+    cwd: workspace,
+  });
+  assert.equal(jsonCancel.status, 0, jsonCancel.stderr);
+  const jsonPayload = JSON.parse(jsonCancel.stdout);
+  assert.equal(jsonPayload.status, 'cancelled');
+  assert.match(
+    jsonPayload.storedJobWarning,
+    new RegExp(
+      `^Stored job file is unreadable: ${resolveJobFile(workspace, 'task-corrupt-json').replace(
+        /[.*+?^${}()|[\]\\]/g,
+        '\\$&',
+      )} \\(.+\\)\\. Cancelling with index data only\\.$`,
+    ),
+  );
+
+  const textCancel = run(process.execPath, [SCRIPT, 'cancel', 'task-corrupt-text'], {
+    cwd: workspace,
+  });
+  assert.equal(textCancel.status, 0, textCancel.stderr);
+  assert.match(textCancel.stdout, /Warnings:\n- Stored job file is unreadable:/);
+  assert.match(textCancel.stdout, /Cancelling with index data only\./);
+
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
+  assert.deepEqual(
+    state.jobs.map((job: Record<string, unknown>) => job.status),
+    ['cancelled', 'cancelled'],
+  );
+  for (const job of jobs) {
+    const log = fs.readFileSync(job.logFile, 'utf8');
+    assert.match(log, /Stored job file is unreadable:/);
+    assert.match(log, /Thread reservation cleanup: none-found/);
+    assert.match(log, /Cancelled by user/);
+  }
+});
+
+test('handleCancel dependency injection preserves interrupt, kill, and release order', async () => {
+  const workspace = makeTempDir();
+  const jobId = 'task-di-cancel';
+  const logFile = path.join(resolveStateDir(workspace), 'jobs', `${jobId}.log`);
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  fs.writeFileSync(logFile, '', 'utf8');
+  const job = {
+    id: jobId,
+    status: 'running',
+    title: 'Codex Task',
+    jobClass: 'task',
+    pid: 4242,
+    threadId: 'thr-index',
+    turnId: 'turn-index',
+    logFile,
+    createdAt: '2026-03-18T15:30:00.000Z',
+    updatedAt: '2026-03-18T15:30:01.000Z',
+  };
+  writeJobFile(workspace, jobId, {
+    ...job,
+    threadId: 'thr-stored',
+    turnId: 'turn-stored',
+    request: { threadId: 'thr-request' },
+  });
+  upsertJob(workspace, job);
+
+  const calls: string[] = [];
+  const deps: CancelDeps = {
+    env: { ...process.env, CODEX_COMPANION_SESSION_ID: 'sess-di' },
+    interruptAppServerTurn: async (cwd, target) => {
+      calls.push('interrupt');
+      assert.equal(cwd, workspace);
+      assert.deepEqual(target, { threadId: 'thr-stored', turnId: 'turn-stored' });
+      return {
+        attempted: true,
+        interrupted: true,
+        transport: 'fake',
+        detail: 'interrupted',
+      };
+    },
+    terminateProcessTree: (pid) => {
+      calls.push('kill');
+      assert.equal(pid, 4242);
+      return { attempted: true, delivered: true, method: 'kill' };
+    },
+    releaseThreadReservationForCancelledJob: async (identity) => {
+      calls.push('release');
+      assert.deepEqual(identity, {
+        threadId: 'thr-stored',
+        requestThreadId: 'thr-request',
+        jobId,
+        pid: 4242,
+      });
+      return { released: true, status: 'released' };
+    },
+  };
+
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    await handleCancel(['--cwd', workspace, '--json', jobId], deps);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(calls, ['interrupt', 'kill', 'release']);
+  const stored = JSON.parse(fs.readFileSync(resolveJobFile(workspace, jobId), 'utf8'));
+  assert.equal(stored.status, 'cancelled');
+});
+
+test('handleTaskWorker dependency injection dispatches task and plan-review requests', async () => {
+  const workspace = makeTempDir();
+  const seedWorker = (id: string, request: Record<string, unknown>) => {
+    const job = {
+      id,
+      status: 'queued',
+      title: 'Queued worker',
+      jobClass: 'task',
+      workspaceRoot: workspace,
+      request,
+      createdAt: '2026-03-18T15:30:00.000Z',
+      updatedAt: '2026-03-18T15:30:01.000Z',
+    };
+    writeJobFile(workspace, id, job);
+    upsertJob(workspace, job);
+  };
+  seedWorker('task-worker-di', {
+    cwd: workspace,
+    prompt: 'run the task branch',
+  });
+  seedWorker('plan-worker-di', {
+    kind: 'plan-review',
+    cwd: workspace,
+    plan: 'Review this plan.',
+    round: 1,
+  });
+
+  const calls: string[] = [];
+  const deps: TaskWorkerDeps = {
+    runTrackedJob: async (_job, runner) => {
+      calls.push('tracked');
+      return runner();
+    },
+    executeTaskRun: async (request) => {
+      calls.push('task');
+      assert.equal(request.prompt, 'run the task branch');
+      assert.equal(typeof request.onProgress, 'function');
+      return {
+        exitStatus: 0,
+        threadId: 'thr-task',
+        turnId: null,
+        payload: {},
+        rendered: 'task\n',
+        summary: 'task',
+        jobTitle: 'Codex Task',
+        jobClass: 'task',
+      };
+    },
+    executePlanReviewRun: async (request) => {
+      calls.push('plan');
+      assert.equal(request.plan, 'Review this plan.');
+      assert.equal(typeof request.onProgress, 'function');
+      return {
+        exitStatus: 0,
+        threadId: 'thr-plan',
+        turnId: null,
+        payload: {},
+        rendered: 'plan\n',
+        summary: 'plan',
+        jobTitle: 'Codex Plan Review',
+        jobClass: 'review',
+      };
+    },
+  };
+
+  await handleTaskWorker(['--cwd', workspace, '--job-id', 'task-worker-di'], deps);
+  await handleTaskWorker(['--cwd', workspace, '--job-id', 'plan-worker-di'], deps);
+
+  assert.deepEqual(calls, ['tracked', 'task', 'tracked', 'plan']);
 });
 
 test('cancel without a job id ignores active jobs from other Claude sessions', () => {

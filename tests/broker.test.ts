@@ -19,6 +19,7 @@ import {
 } from '../plugins/stereo/src/broker/endpoint.ts';
 import { BROKER_BUSY_RPC_CODE } from '../plugins/stereo/src/transport/app-server-client.ts';
 import {
+  clearBrokerSession,
   ensureBrokerSession,
   loadBrokerSession,
   saveBrokerSession,
@@ -75,6 +76,65 @@ interface ShutdownOutcomeShape {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function probeBrokerEndpoint(endpoint: string, timeoutMs = 500): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const target = parseBrokerEndpoint(endpoint);
+    const socket = net.createConnection({ path: target.path });
+    let connected = false;
+    let settled = false;
+    const timeout = setTimeout(() => finish(false), timeoutMs);
+
+    function finish(result: boolean): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+      resolve(result);
+    }
+
+    socket.once('connect', () => {
+      connected = true;
+      // Resolve from close, not connect, so no readiness-probe socket remains
+      // in the broker's busy set when the test mutates its ownership record.
+      socket.destroy();
+    });
+    socket.once('error', () => finish(false));
+    socket.once('close', () => finish(connected));
+  });
+}
+
+function requestBrokerShutdownBounded(endpoint: string, timeoutMs = 750): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const target = parseBrokerEndpoint(endpoint);
+    const socket = net.createConnection({ path: target.path });
+    let settled = false;
+    const timeout = setTimeout(finish, timeoutMs);
+
+    function finish(): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+      resolve();
+    }
+
+    socket.once('connect', () => {
+      socket.write(`${JSON.stringify({ id: 1, method: 'broker/shutdown', params: {} })}\n`);
+    });
+    socket.once('data', finish);
+    socket.once('error', finish);
+    socket.once('close', finish);
+  });
 }
 
 function processIsAlive(pid: number | undefined): boolean {
@@ -301,7 +361,13 @@ async function initializeClient(client: JsonlClient): Promise<void> {
 async function startBroker(
   t: TestContext,
   behavior = 'review-ok',
-  options: { cwd?: string; binDir?: string; saveState?: boolean } = {},
+  options: {
+    cwd?: string;
+    binDir?: string;
+    saveState?: boolean;
+    managedByWorkspaceRecord?: boolean;
+    selfCheckMs?: number;
+  } = {},
 ) {
   const cwd = options.cwd ?? makeTempDir('broker-workspace-');
   const binDir = options.binDir ?? makeTempDir('broker-bin-');
@@ -310,7 +376,12 @@ async function startBroker(
   const pidFile = path.join(sessionDir, 'broker.pid');
   const logFile = path.join(sessionDir, 'broker.log');
   installFakeCodex(binDir, behavior);
-  const env = buildEnv(binDir);
+  const env = {
+    ...buildEnv(binDir),
+    ...(options.selfCheckMs
+      ? { CODEX_COMPANION_BROKER_SELF_CHECK_MS: String(options.selfCheckMs) }
+      : {}),
+  };
   const child = spawnBrokerProcess({
     scriptPath: BROKER_SCRIPT,
     cwd,
@@ -318,10 +389,8 @@ async function startBroker(
     pidFile,
     logFile,
     env,
+    managedByWorkspaceRecord: options.managedByWorkspaceRecord,
   });
-  assert.equal(await waitForBrokerEndpoint(endpoint, 4000), true);
-  await delay(25);
-
   const session = {
     endpoint,
     pid: child.pid!,
@@ -329,13 +398,9 @@ async function startBroker(
     logFile,
     sessionDir,
   };
-  if (options.saveState) {
-    saveBrokerSession(cwd, session);
-  }
-
   t.after(async () => {
     if (processIsAlive(child.pid)) {
-      await sendBrokerShutdown(endpoint).catch(() => {});
+      await requestBrokerShutdownBounded(endpoint);
       await waitFor(() => !processIsAlive(child.pid), { timeoutMs: 3000 }).catch(() => {});
     }
     // Graceful shutdown can be refused (busy broker) or lost; never leave
@@ -345,6 +410,24 @@ async function startBroker(
     }
   });
 
+  // Owned self-checks can use a shortened interval in tests, so publish their
+  // ownership record before waiting for the first readiness connection.
+  if (options.saveState && options.managedByWorkspaceRecord) {
+    saveBrokerSession(cwd, session);
+  }
+  if (options.managedByWorkspaceRecord) {
+    await waitFor(() => probeBrokerEndpoint(endpoint, 250), {
+      timeoutMs: 4000,
+      intervalMs: 25,
+    });
+  } else {
+    assert.equal(await waitForBrokerEndpoint(endpoint, 4000), true);
+  }
+  await delay(25);
+  if (options.saveState && !options.managedByWorkspaceRecord) {
+    saveBrokerSession(cwd, session);
+  }
+
   return {
     cwd,
     binDir,
@@ -353,6 +436,92 @@ async function startBroker(
     ...session,
   };
 }
+
+test('an owned idle broker survives matching checks and exits after its record is replaced', async (t) => {
+  const broker = await startBroker(t, 'review-ok', {
+    saveState: true,
+    managedByWorkspaceRecord: true,
+    selfCheckMs: 75,
+  });
+  const target = parseBrokerEndpoint(broker.endpoint);
+  t.after(() => clearBrokerSession(broker.cwd));
+  await delay(300);
+  assert.equal(processIsAlive(broker.child.pid), true);
+  assert.equal(loadBrokerSession(broker.cwd)?.endpoint, broker.endpoint);
+  assert.equal(fs.existsSync(broker.pidFile), true);
+  if (target.kind === 'unix') {
+    assert.equal(fs.existsSync(target.path), true);
+  }
+  assert.equal(await probeBrokerEndpoint(broker.endpoint), true);
+  await delay(100);
+  assert.equal(processIsAlive(broker.child.pid), true);
+  saveBrokerSession(broker.cwd, {
+    endpoint: `${broker.endpoint}-replacement`,
+    pid: null,
+    pidFile: `${broker.pidFile}.replacement`,
+    logFile: `${broker.logFile}.replacement`,
+    sessionDir: `${broker.sessionDir}-replacement`,
+  });
+  await waitFor(() => !processIsAlive(broker.child.pid), { timeoutMs: 3000 });
+  assert.equal(await probeBrokerEndpoint(broker.endpoint), false);
+  assert.equal(fs.existsSync(broker.pidFile), false);
+  if (target.kind === 'unix') {
+    assert.equal(fs.existsSync(target.path), false);
+  }
+  assert.match(
+    fs.readFileSync(broker.logFile, 'utf8'),
+    /broker self-check: workspace record no longer points here; exiting idle broker/,
+  );
+});
+
+test('an owned broker waits for a slow turn to drain before reacting to a wiped record', async (t) => {
+  const broker = await startBroker(t, 'slow-turn', {
+    saveState: true,
+    managedByWorkspaceRecord: true,
+    selfCheckMs: 75,
+  });
+  const owner = createJsonlClient(broker.endpoint);
+  t.after(() => owner.close());
+  await initializeClient(owner);
+
+  const started = await owner.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  const threadId = started.result.thread.id;
+  const turn = await owner.request('turn/start', {
+    threadId,
+    input: [{ type: 'text', text: 'finish before self-check shutdown', text_elements: [] }],
+  });
+  assert.equal(turn.error, undefined);
+  await owner.waitForNotification(
+    (message) => message.method === 'turn/started' && message.params?.threadId === threadId,
+  );
+
+  clearBrokerSession(broker.cwd);
+  await delay(350);
+  assert.equal(processIsAlive(broker.child.pid), true);
+
+  await owner.waitForNotification(
+    (message) => message.method === 'turn/completed' && message.params?.threadId === threadId,
+  );
+  owner.close();
+  await owner.closed;
+  await waitFor(() => !processIsAlive(broker.child.pid), { timeoutMs: 3000 });
+  assert.equal(await waitForBrokerEndpoint(broker.endpoint, 150), false);
+});
+
+test('an unmanaged record-less broker ignores the self-check interval setting', async (t) => {
+  const broker = await startBroker(t, 'review-ok', {
+    selfCheckMs: 50,
+  });
+
+  assert.equal(loadBrokerSession(broker.cwd), null);
+  await delay(250);
+  assert.equal(processIsAlive(broker.child.pid), true);
+  assert.equal(await waitForBrokerEndpoint(broker.endpoint, 150), true);
+});
 
 test('a client that vanishes mid-turn gets its turn interrupted and the broker recovers', async (t) => {
   const broker = await startBroker(t, 'slow-turn');

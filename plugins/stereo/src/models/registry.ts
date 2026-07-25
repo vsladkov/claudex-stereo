@@ -46,22 +46,39 @@ export function registryEntryForModel(resolvedModel: string): ModelEntry | null 
   return ENTRIES_BY_MODEL.get(resolvedModel) ?? null;
 }
 
+export function parseQualifiedModel(model: string): {
+  model: string;
+  modelProvider: string | null;
+} {
+  const separator = model.indexOf('@');
+  if (separator === -1) {
+    return { model, modelProvider: null };
+  }
+
+  const bareModel = model.slice(0, separator);
+  const modelProvider = model.slice(separator + 1);
+  if (!bareModel || !modelProvider || /[@\s]/.test(modelProvider)) {
+    throw new Error(`Unsupported model "${model}". Use <model> or <model>@<provider>.`);
+  }
+  return { model: bareModel, modelProvider };
+}
+
 export function defaultPairEffort(resolvedModel: string): ReasoningEffort | null {
+  const { model } = parseQualifiedModel(resolvedModel);
   // Registry rows are authoritative: adding a provider model (kimi, qwen,
   // deepseek, glm, ...) with its own default effort is a one-row change.
-  const entry = registryEntryForModel(resolvedModel);
+  const entry = registryEntryForModel(model);
   if (entry) {
     return entry.defaultPairEffort;
   }
   // Raw OpenAI model strings fall back to the family rule. Unknown
   // third-party models omit effort because their accepted knobs vary.
   const inMaxFamily =
-    resolvedModel === PAIR_MAX_EFFORT_MODEL_FAMILY ||
-    resolvedModel.startsWith(`${PAIR_MAX_EFFORT_MODEL_FAMILY}-`);
+    model === PAIR_MAX_EFFORT_MODEL_FAMILY || model.startsWith(`${PAIR_MAX_EFFORT_MODEL_FAMILY}-`);
   if (inMaxFamily) {
     return PAIR_DEFAULT_EFFORT;
   }
-  return resolvedModel.startsWith('gpt-') ? PAIR_MODEL_OVERRIDE_EFFORT : null;
+  return model.startsWith('gpt-') ? PAIR_MODEL_OVERRIDE_EFFORT : null;
 }
 
 export function modelProviderFor(resolvedModel: string): string | null {
@@ -76,7 +93,9 @@ export function normalizeRequestedModel(model: unknown): string | null {
   if (!normalized) {
     return null;
   }
-  return MODEL_ALIASES.get(normalized.toLowerCase()) ?? normalized;
+  const qualified = parseQualifiedModel(normalized);
+  const resolvedModel = MODEL_ALIASES.get(qualified.model.toLowerCase()) ?? qualified.model;
+  return qualified.modelProvider ? `${resolvedModel}@${qualified.modelProvider}` : resolvedModel;
 }
 
 export function normalizeReasoningEffort(effort: unknown): ReasoningEffort | null {

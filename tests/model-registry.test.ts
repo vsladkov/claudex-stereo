@@ -7,6 +7,7 @@ import {
   modelProviderFor,
   normalizeReasoningEffort,
   normalizeRequestedModel,
+  parseQualifiedModel,
   registryEntryForModel,
 } from '../plugins/stereo/src/models/registry.ts';
 
@@ -36,6 +37,12 @@ test('normalizeRequestedModel passes unknown models through with original casing
   assert.equal(normalizeRequestedModel('  my-local-model  '), 'my-local-model');
 });
 
+test('normalizeRequestedModel resolves only the model side of qualified selections', () => {
+  assert.equal(normalizeRequestedModel('kimi@custom'), 'kimi-k3@custom');
+  assert.equal(normalizeRequestedModel(' SOL@azure '), 'gpt-5.6-sol@azure');
+  assert.equal(normalizeRequestedModel('Unregistered-X@my-provider'), 'Unregistered-X@my-provider');
+});
+
 test('normalizeRequestedModel returns null for null and empty input', () => {
   assert.equal(normalizeRequestedModel(null), null);
   assert.equal(normalizeRequestedModel(undefined), null);
@@ -50,6 +57,9 @@ test('defaultPairEffort preserves OpenAI defaults and omits effort for unknown n
   assert.equal(defaultPairEffort('gpt-5.5'), 'xhigh');
   assert.equal(defaultPairEffort('gpt-5.3-codex-spark'), 'xhigh');
   assert.equal(defaultPairEffort('some-chat-model'), null);
+  assert.equal(defaultPairEffort('gpt-5.6-custom@azure'), 'max');
+  assert.equal(defaultPairEffort('gpt-5.5@azure'), 'xhigh');
+  assert.equal(defaultPairEffort('some-chat-model@local'), null);
 });
 
 test('defaultPairEffort enforces the family prefix boundary', () => {
@@ -112,4 +122,35 @@ test('provider models omit pair effort and route exact registered model ids', ()
 
   assert.equal(modelProviderFor('some-chat-model'), null);
   assert.equal(modelProviderFor('kimi-k3-custom'), null);
+});
+
+test('parseQualifiedModel splits explicit providers and preserves unqualified ids', () => {
+  assert.deepEqual(parseQualifiedModel('unregistered-x'), {
+    model: 'unregistered-x',
+    modelProvider: null,
+  });
+  assert.deepEqual(parseQualifiedModel('unregistered-x@myprov'), {
+    model: 'unregistered-x',
+    modelProvider: 'myprov',
+  });
+
+  const registrySelection = parseQualifiedModel('kimi-k3');
+  assert.equal(
+    registrySelection.modelProvider ?? modelProviderFor(registrySelection.model),
+    'moonshot',
+  );
+  const overrideSelection = parseQualifiedModel('kimi-k3@custom');
+  assert.equal(
+    overrideSelection.modelProvider ?? modelProviderFor(overrideSelection.model),
+    'custom',
+  );
+});
+
+test('parseQualifiedModel rejects malformed qualified selections', () => {
+  for (const model of ['@p', 'm@', 'm@a@b', 'm@a b']) {
+    assert.throws(
+      () => parseQualifiedModel(model),
+      new Error(`Unsupported model "${model}". Use <model> or <model>@<provider>.`),
+    );
+  }
 });

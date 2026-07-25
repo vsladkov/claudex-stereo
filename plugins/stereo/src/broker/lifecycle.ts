@@ -32,6 +32,7 @@ export interface SpawnBrokerProcessOptions {
   pidFile: string;
   logFile: string;
   env?: NodeJS.ProcessEnv;
+  managedByWorkspaceRecord?: boolean;
 }
 
 export interface EnsureBrokerSessionOptions {
@@ -250,18 +251,28 @@ export function spawnBrokerProcess({
   pidFile,
   logFile,
   env = process.env,
+  managedByWorkspaceRecord = false,
 }: SpawnBrokerProcessOptions): ChildProcess {
   const logFd = fs.openSync(logFile, 'a');
-  const child = spawn(
-    process.execPath,
-    [scriptPath, 'serve', '--endpoint', endpoint, '--cwd', cwd, '--pid-file', pidFile],
-    {
-      cwd,
-      env,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-    },
-  );
+  const brokerArgv = [
+    scriptPath,
+    'serve',
+    '--endpoint',
+    endpoint,
+    '--cwd',
+    cwd,
+    '--pid-file',
+    pidFile,
+  ];
+  if (managedByWorkspaceRecord) {
+    brokerArgv.push('--workspace-record-owned');
+  }
+  const child = spawn(process.execPath, brokerArgv, {
+    cwd,
+    env,
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+  });
   child.unref();
   fs.closeSync(logFd);
   return child;
@@ -343,6 +354,7 @@ export async function ensureBrokerSession(
     pidFile,
     logFile,
     env: options.env ?? process.env,
+    managedByWorkspaceRecord: true,
   });
 
   const ready = await waitForBrokerEndpoint(endpoint, options.timeoutMs ?? 2000);
@@ -383,9 +395,9 @@ export function teardownBrokerSession({
   pid = null,
   killProcess = null,
 }: TeardownBrokerSessionOptions): void {
-  if (Number.isFinite(pid) && killProcess) {
+  if (typeof pid === 'number' && Number.isInteger(pid) && pid > 0 && killProcess) {
     try {
-      killProcess(pid as number);
+      killProcess(pid);
     } catch {
       // Ignore missing or already-exited broker processes.
     }

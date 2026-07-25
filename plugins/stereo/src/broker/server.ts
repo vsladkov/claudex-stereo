@@ -16,8 +16,10 @@ import {
   threadReservationPath,
 } from '../workspace/thread-lock-io.ts';
 import { parseBrokerEndpoint } from './endpoint.ts';
+import { loadBrokerSession } from './lifecycle.ts';
 
 const STREAMING_METHODS = new Set(['turn/start', 'review/start', 'thread/compact/start']);
+const DEFAULT_BROKER_SELF_CHECK_MS = 60_000;
 
 // Client requests arrive as raw JSON lines; only the routing-relevant fields
 // are typed, everything else passes through untouched.
@@ -202,12 +204,13 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   const [subcommand, ...argv] = fullArgv;
   if (subcommand !== 'serve') {
     throw new Error(
-      'Usage: node scripts/app-server-broker.ts serve --endpoint <value> [--cwd <path>] [--pid-file <path>]',
+      'Usage: node scripts/app-server-broker.ts serve --endpoint <value> [--cwd <path>] [--pid-file <path>] [--workspace-record-owned]',
     );
   }
 
   const { options } = parseArgs(argv, {
     valueOptions: ['cwd', 'pid-file', 'endpoint'],
+    booleanOptions: ['workspace-record-owned'],
   });
 
   if (!options.endpoint) {
@@ -218,6 +221,15 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   const endpoint = String(options.endpoint);
   const listenTarget = parseBrokerEndpoint(endpoint);
   const pidFile = options['pid-file'] ? path.resolve(options['pid-file'] as string) : null;
+  const managedByWorkspaceRecord = Boolean(options['workspace-record-owned']);
+  let brokerSelfCheckMs: number | null = null;
+  if (managedByWorkspaceRecord) {
+    const configuredInterval = Number(process.env.CODEX_COMPANION_BROKER_SELF_CHECK_MS);
+    brokerSelfCheckMs =
+      Number.isFinite(configuredInterval) && configuredInterval > 0
+        ? configuredInterval
+        : DEFAULT_BROKER_SELF_CHECK_MS;
+  }
   writePidFile(pidFile);
 
   const appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
@@ -258,6 +270,8 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   let shuttingDown = false;
   let shutdownPromise: Promise<void> | null = null;
   let serverClosePromise: Promise<void> | null = null;
+  let brokerSelfCheckTimer: ReturnType<typeof setInterval> | null = null;
+  let brokerRecordMismatchCount = 0;
   const sockets = new Set<net.Socket>();
 
   function captureThreadLockIdentities(
@@ -479,6 +493,10 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
     server: net.Server,
     options: { destroySockets?: boolean } = {},
   ): Promise<void> {
+    if (brokerSelfCheckTimer) {
+      clearInterval(brokerSelfCheckTimer);
+      brokerSelfCheckTimer = null;
+    }
     shuttingDown = true;
     closeListener(server);
     if (shutdownPromise) {
@@ -827,6 +845,44 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
       } catch {
         // Best-effort hardening; the 0700 session dir remains the primary guard.
       }
+    }
+
+    if (brokerSelfCheckMs != null) {
+      brokerSelfCheckTimer = setInterval(() => {
+        if (shuttingDown) {
+          return;
+        }
+        if (
+          sockets.size > 0 ||
+          activeRequestSocket ||
+          inFlightStream ||
+          activeStream ||
+          orphanedTurn
+        ) {
+          return;
+        }
+
+        if (loadBrokerSession(cwd)?.endpoint === endpoint) {
+          brokerRecordMismatchCount = 0;
+          return;
+        }
+        brokerRecordMismatchCount += 1;
+        if (brokerRecordMismatchCount < 2) {
+          return;
+        }
+
+        process.stderr.write(
+          `broker self-check: workspace record no longer points here; exiting idle broker ${process.pid}\n`,
+        );
+        void (async () => {
+          try {
+            await shutdown(server);
+          } finally {
+            process.exit(0);
+          }
+        })();
+      }, brokerSelfCheckMs);
+      brokerSelfCheckTimer.unref();
     }
   });
 }

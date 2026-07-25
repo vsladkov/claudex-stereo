@@ -962,7 +962,7 @@ export function renderStoredJobResult(
   return renderWithFooter(`${lines.join('\n').trimEnd()}\n`);
 }
 
-export function renderCancelReport(job: RenderableJob): string {
+export function renderCancelReport(job: RenderableJob, warning?: string | null): string {
   const lines = ['# Codex Cancel', '', `Cancelled ${job.id}.`, ''];
 
   if (job.title) {
@@ -973,5 +973,5 @@ export function renderCancelReport(job: RenderableJob): string {
   }
   lines.push('- Check `/stereo:status` for the updated queue.');
 
-  return `${lines.join('\n').trimEnd()}\n`;
+  return appendStoredJobWarning(`${lines.join('\n').trimEnd()}\n`, warning);
 }

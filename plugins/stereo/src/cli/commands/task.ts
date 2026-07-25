@@ -39,6 +39,18 @@ import {
 // plan-review request distinguished by its optional kind marker.
 type PersistedWorkerRequest = TaskRunRequest & PlanReviewRunRequest & { kind?: string };
 
+export interface TaskWorkerDeps {
+  runTrackedJob: typeof runTrackedJob;
+  executeTaskRun: typeof executeTaskRun;
+  executePlanReviewRun: typeof executePlanReviewRun;
+}
+
+export const defaultTaskWorkerDeps: TaskWorkerDeps = {
+  runTrackedJob,
+  executeTaskRun,
+  executePlanReviewRun,
+};
+
 function buildTaskJob(
   workspaceRoot: string,
   taskMetadata: TaskRunMetadata,
@@ -163,7 +175,10 @@ export async function handleTask(argv: string[]): Promise<void> {
   );
 }
 
-export async function handleTaskWorker(argv: string[]): Promise<void> {
+export async function handleTaskWorker(
+  argv: string[],
+  deps: TaskWorkerDeps = defaultTaskWorkerDeps,
+): Promise<void> {
   const { options } = parseCommandInput(argv, {
     valueOptions: ['cwd', 'job-id'],
   });
@@ -233,8 +248,9 @@ export async function handleTaskWorker(argv: string[]): Promise<void> {
         logFile: workerJob.logFile ?? null,
       },
     );
-    const runner = workerRequest.kind === 'plan-review' ? executePlanReviewRun : executeTaskRun;
-    await runTrackedJob(
+    const runner =
+      workerRequest.kind === 'plan-review' ? deps.executePlanReviewRun : deps.executeTaskRun;
+    await deps.runTrackedJob(
       {
         ...workerJob,
         workspaceRoot,

@@ -3,6 +3,36 @@ import assert from 'node:assert/strict';
 
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 
+test('terminateProcessTree rejects non-positive, non-integer, and non-finite pids', () => {
+  for (const pid of [0, -1, 12.5, Number.NaN]) {
+    let killCalls = 0;
+    let runCommandCalls = 0;
+
+    for (const platform of ['linux', 'win32'] as const) {
+      const outcome = terminateProcessTree(pid, {
+        platform,
+        runCommandImpl() {
+          runCommandCalls += 1;
+          throw new Error('runCommandImpl must not run for an invalid pid');
+        },
+        killImpl() {
+          killCalls += 1;
+          throw new Error('killImpl must not run for an invalid pid');
+        },
+      });
+
+      assert.deepEqual(outcome, {
+        attempted: false,
+        delivered: false,
+        method: null,
+      });
+    }
+
+    assert.equal(runCommandCalls, 0);
+    assert.equal(killCalls, 0);
+  }
+});
+
 test('terminateProcessTree uses taskkill on Windows', () => {
   let captured = null;
   const outcome = terminateProcessTree(1234, {

@@ -125,7 +125,7 @@ export function terminateProcessTree(
   pid: number,
   options: TerminateProcessTreeOptions = {},
 ): TerminationOutcome {
-  if (!Number.isFinite(pid)) {
+  if (!Number.isInteger(pid) || pid <= 0) {
     return { attempted: false, delivered: false, method: null };
   }
 

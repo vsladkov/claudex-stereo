@@ -6,7 +6,7 @@ import type {
   Turn,
   TurnStartParams,
 } from '../protocol/app-server.ts';
-import { modelProviderFor } from '../models/registry.ts';
+import { modelProviderFor, parseQualifiedModel } from '../models/registry.ts';
 import { BROKER_ENDPOINT_ENV, CodexAppServerClient } from '../transport/app-server-client.ts';
 import { loadBrokerSession } from '../broker/lifecycle.ts';
 import { getCodexAvailability } from './availability.ts';
@@ -160,12 +160,15 @@ export async function runAppServerReview(
       'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
     );
   }
-  const modelProvider = options.model ? modelProviderFor(options.model) : null;
+  const { model: bareModel, modelProvider: explicitModelProvider } = options.model
+    ? parseQualifiedModel(options.model)
+    : { model: options.model, modelProvider: null };
+  const modelProvider = explicitModelProvider ?? (bareModel ? modelProviderFor(bareModel) : null);
 
   return withAppServer(cwd, async (client) => {
     emitProgress(options.onProgress, 'Starting Codex review thread.', 'starting');
     const thread = await startThread(client, cwd, {
-      model: options.model,
+      model: bareModel,
       modelProvider,
       sandbox: 'read-only',
       ephemeral: true,
@@ -252,7 +255,10 @@ export async function runAppServerTurn(
       'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
     );
   }
-  const modelProvider = options.model ? modelProviderFor(options.model) : null;
+  const { model: bareModel, modelProvider: explicitModelProvider } = options.model
+    ? parseQualifiedModel(options.model)
+    : { model: options.model, modelProvider: null };
+  const modelProvider = explicitModelProvider ?? (bareModel ? modelProviderFor(bareModel) : null);
 
   const reservationMeta = {
     jobId: options.jobId ?? null,
@@ -276,7 +282,7 @@ export async function runAppServerTurn(
             'starting',
           );
           const response = await resumeThread(client, options.resumeThreadId, cwd, {
-            model: options.model,
+            model: bareModel,
             modelProvider,
             sandbox: options.sandbox,
             ephemeral: false,
@@ -305,7 +311,7 @@ export async function runAppServerTurn(
         } else {
           emitProgress(options.onProgress, 'Starting Codex task thread.', 'starting');
           const response = await startThread(client, cwd, {
-            model: options.model,
+            model: bareModel,
             modelProvider,
             sandbox: options.sandbox,
             ephemeral: options.persistThread ? false : true,
@@ -338,7 +344,7 @@ export async function runAppServerTurn(
             return client.request('turn/start', {
               threadId,
               input: buildTurnInput(prompt),
-              model: options.model ?? null,
+              model: bareModel ?? null,
               effort: options.effort ?? null,
               outputSchema: (options.outputSchema ?? null) as TurnStartParams['outputSchema'],
             });

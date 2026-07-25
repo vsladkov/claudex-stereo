@@ -566,6 +566,8 @@ test('task forwards model selection and reasoning effort to app-server turn/star
 
   assert.equal(result.status, 0, result.stderr);
   const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(fakeState.lastThreadStart.model, 'gpt-5.3-codex-spark');
+  assert.equal(fakeState.lastThreadStart.modelProvider, 'openai');
   assert.equal(fakeState.lastTurnStart.model, 'gpt-5.3-codex-spark');
   assert.equal(fakeState.lastTurnStart.effort, 'low');
 
@@ -582,6 +584,61 @@ test('task forwards model selection and reasoning effort to app-server turn/star
   const maxState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(maxState.lastTurnStart.model, 'gpt-5.3-codex-spark');
   assert.equal(maxState.lastTurnStart.effort, 'max');
+});
+
+test('qualified task models route bare ids to explicit providers and remain canonical in job output', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+  run('git', ['add', 'README.md'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  const env = buildEnv(binDir);
+
+  const task = run(
+    process.execPath,
+    [SCRIPT, 'task', '--model', 'unregistered-x@myprov', 'exercise provider routing'],
+    { cwd: repo, env },
+  );
+  assert.equal(task.status, 0, task.stderr);
+
+  const fakeState = readFakeState(binDir);
+  assert.equal(fakeState.lastThreadStart.model, 'unregistered-x');
+  assert.equal(fakeState.lastThreadStart.modelProvider, 'myprov');
+  assert.equal(fakeState.lastTurnStart.model, 'unregistered-x');
+
+  const taskJob = readCompanionState(repo).jobs.find(
+    (job) => job.model === 'unregistered-x@myprov',
+  );
+  assert.ok(taskJob);
+
+  const status = run(process.execPath, [SCRIPT, 'status', taskJob.id, '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(status.status, 0, status.stderr);
+  const statusPayload = JSON.parse(status.stdout);
+  assert.equal(statusPayload.job.model, 'unregistered-x@myprov');
+  assert.equal(statusPayload.job.modelDisplay, 'unregistered-x@myprov');
+
+  const result = run(process.execPath, [SCRIPT, 'result', taskJob.id], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /\nModel: unregistered-x@myprov\n/);
+
+  const override = run(
+    process.execPath,
+    [SCRIPT, 'task', '--model', 'kimi@custom', 'override the registry provider'],
+    { cwd: repo, env },
+  );
+  assert.equal(override.status, 0, override.stderr);
+  const overrideState = readFakeState(binDir);
+  assert.equal(overrideState.lastThreadStart.model, 'kimi-k3');
+  assert.equal(overrideState.lastThreadStart.modelProvider, 'custom');
+  assert.equal(overrideState.lastTurnStart.model, 'kimi-k3');
 });
 
 test('task logs reasoning summaries and assistant messages to the job log', () => {

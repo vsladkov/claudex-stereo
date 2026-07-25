@@ -81,6 +81,10 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   SessionEnd kills its own jobs first, then sends a guarded ifIdle shutdown;
   a busy answer with nothing killed means another session owns it — leave it.
   Never reintroduce an unconditional kill.
+- A broker spawned for a workspace record self-checks that record only while
+  idle and exits after two mismatches, so plugin-data removal is self-healing
+  once the broker becomes idle.
+  Endpoint-pinned and manually spawned record-less brokers never self-check.
 - A client that dies mid-turn is handled by the broker (interrupt + short
   grace gate); clients fall back to a direct app-server on busy rejections.
 - The `--json` error contract: failures print `{"error": message}` on stdout

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0
+
+- Route provider-qualified model selections such as `model@provider` with the bare model id while preserving the qualified value in job state and output
+- Add injectable dependency seams for cancel and detached task-worker command handlers
+- Continue cancellation from index data when a stored job file is unreadable, with explicit log, text, and JSON warnings
+- Let idle workspace-record-owned brokers self-terminate after their ownership record is removed or replaced, while leaving record-less brokers untouched
+- Make failed plan-review retries round-aware so later rounds retain their required thread context
+
 ## 1.5.0
 
 - Recover turns whose broker client disconnects before the streaming start response, including fast completions and detached reviews, without installing dead socket ownership

@@ -60,7 +60,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" result <jobId> --json
 - Read `storedJob.result`: `.threadId` (save it as the pair thread id), `.model` and `.effort` (the resolved values), `.result.verdict`, `.result.findings`, `.result.revision_instructions`, `.result.open_questions`, `.result.residual_risks`, and `.parseError`.
 - Update the saved pair thread id from every round's payload - after a failed-resume retry the thread id changes.
 - If `parseError` is set, resubmit the same plan and round once with `--thread <threadId>`. If it fails again, show the raw output and use `AskUserQuestion` with `Stop and treat the plan as unapproved` and `Continue revising anyway`.
-- If the job status is `failed` (for example the thread is no longer resumable), retry the same round once without `--thread` - the plan is self-contained, so a fresh thread loses nothing. Surface the error if it persists.
+- If the job status is `failed`, recover according to the round: for round 1, retry once without `--thread` on a fresh thread; for round >1, retry once on the same `--thread <threadId>`. If that retry also fails, restart the loop as round 1 without the old thread id, carrying the accumulated `## Reviewer responses` inside the full plan text. Surface the error if the fresh round-1 restart still fails.
 - On `needs-revision`: address every finding with exactly one of three moves, then resubmit.
   1. Change the plan to fix it.
   2. Rebut it under a `## Reviewer responses` section with concrete evidence.
