@@ -42,12 +42,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background
 CODEX_PAIR_PLAN
 ```
 
-- Parse the launch JSON for `jobId`, then poll until the job leaves `queued`/`running`, passing a Bash `timeout` of 600000 for each poll call:
+- Parse the launch JSON for `jobId`, then poll until the job leaves `queued`/`running`, passing a Bash `timeout` of 120000 for each poll call:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 540000 --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
 ```
 
+- After each non-terminal poll, post a one-line progress note from the payload — the job's `phase`, its elapsed time, and the latest progress line — then poll again. A healthy run advances through `investigating` to `verifying`; the short windows exist so the user can watch that movement instead of staring at one silent multi-minute call.
 - If any launch or poll command prints a top-level `{"error": ...}` JSON object instead of a job payload, surface that error to the user and stop the loop - do not keep polling.
 - After roughly 20 minutes of polling with no terminal status, use `AskUserQuestion` once with `Keep waiting (Recommended)` and `Cancel the review and stop`.
 - When the job finishes, fetch the stored result:

@@ -38,4 +38,5 @@ Output rules:
 - Present the final setup output to the user.
 - If installation was skipped, present the original setup output.
 - If Codex is installed but not authenticated, preserve the guidance to run `!codex login`.
+- Preserve the provider section verbatim when present: the active provider, each configured provider's key status, per-alias readiness, and any provider next steps. Exact environment-variable names matter.
 - Always preserve stranded-reservation next steps with their exact file paths.

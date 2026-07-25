@@ -11,6 +11,8 @@ Codex writes the code in the same thread that reviewed the plan (by default `gpt
 Raw slash-command arguments:
 `$ARGUMENTS`
 
+Treat user-supplied `--model` and `--effort` values as overrides; otherwise use the stored values, but when the effective effort is null, omit the `--effort` flag entirely. In the templates below, `<effortArg>` means `--effort <effectiveEffort>` when non-null and nothing otherwise.
+
 Scope of the result-handling rules:
 
 - This command is a deliberate, user-invoked iterative workflow.
@@ -38,7 +40,7 @@ Phase 1 - Codex implements:
 - Embed the full stored plan text verbatim from `plan-state`, and use the stored `model`/`effort` unless the user overrode them.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <threadId> --model <storedModel> --effort <storedEffort> <<'CODEX_PAIR_IMPL'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <threadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
 <task>
 Implement the approved plan below in this repository. You reviewed and approved this plan earlier in this thread.
 
@@ -63,9 +65,10 @@ CODEX_PAIR_IMPL
 - Poll exactly like `/stereo:plan`, with a Bash `timeout` of 600000 per poll call:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 540000 --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
 ```
 
+- After each non-terminal poll, post a one-line progress note from the payload — the job's `phase`, its elapsed time, and the latest progress line — then poll again. Files often change early in the run; the later `verifying` phase is Codex running the repository's tests, not dead time.
 - Then fetch the payload with `result <jobId> --json`.
 - If the run fails on resume, or `touchedFiles` is empty and `git status` shows no delta against the baseline even though Codex claims changes, retry once as a fresh run with `task --background --json --write --fresh`, the same prompt, and a note that earlier thread context is unavailable. If there is still no change, surface it to the user.
 
@@ -78,7 +81,7 @@ Phase 2 - Claude reviews and iterates:
 - Otherwise write a numbered fix list - for each issue: file and line, what is wrong, and what correct looks like - and send it to the same thread:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <threadId> --model <storedModel> --effort <storedEffort> <<'CODEX_PAIR_FIX'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <threadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_FIX'
 <task>
 Fix the review findings below in this repository. Keep all other behavior unchanged.
 

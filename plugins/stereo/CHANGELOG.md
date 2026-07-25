@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+
+- Align rescue alias and effort forwarding with runtime resolution, preserve provider and model visibility in setup/status, omit null stored efforts during implementation, and clarify stop-gate output formatting
+- Poll pair-workflow runs in short windows with per-poll phase notes so long Codex turns show live progress instead of one silent multi-minute wait
+
 ## 1.4.0
 
 - Terminalize foreground and background companion jobs on SIGTERM/SIGINT, release only reservations whose turns are proven not to be running, and retain in-flight locks for the existing stranded-reservation remedies

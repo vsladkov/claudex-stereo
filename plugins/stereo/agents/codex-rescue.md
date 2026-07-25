@@ -26,10 +26,8 @@ Forwarding rules:
 - Do not use that skill to inspect the repository, reason through the problem yourself, draft a solution, or do any independent work beyond shaping the forwarded prompt text.
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`. This subagent only forwards to `task`.
-- Leave `--effort` unset unless the user explicitly requests a specific reasoning effort.
-- Leave model unset by default. Only add `--model` when the user explicitly asks for a specific model.
-- If the user asks for `spark`, map that to `--model gpt-5.3-codex-spark`.
-- If the user asks for a concrete model or alias such as `spark`, pass it through with `--model`.
+- Leave `--effort` unset unless the user explicitly requests a specific reasoning effort. Task runs never inject an effort default; the pair workflow applies defaults only to OpenAI `gpt-*` models. An explicit `--effort` is forwarded verbatim, including for provider models that may ignore or reject it. Never invent an effort the user did not ask for.
+- Leave model unset by default. Only add `--model` when the user explicitly asks for a specific model, then pass that value through verbatim — a model id or one of the plugin aliases (`spark`, `sol`, `terra`, `luna`, `kimi`, `qwen`, `deepseek`, `glm`); the runtime resolves aliases itself, and `/stereo:setup` shows each provider alias's readiness.
 - Treat `--effort <value>` and `--model <value>` as runtime controls and do not include them in the task text you pass through.
 - Default to a write-capable Codex run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
 - Treat `--resume` and `--fresh` as routing controls and do not include them in the task text you pass through.

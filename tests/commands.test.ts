@@ -68,13 +68,13 @@ test('directly-wired commands disable model invocation of the command file', () 
 
 test('plan and implement keep the pair-workflow loop mechanics', () => {
   const plan = read('commands/plan.md');
-  assert.match(plan, /status <jobId> --wait --timeout-ms 540000 --json/);
+  assert.match(plan, /status <jobId> --wait --timeout-ms 90000 --json/);
   assert.match(plan, /plan-review --background --json --thread <threadId> --round <n>/);
   assert.match(plan, /<<'CODEX_PAIR_PLAN'/);
 
   const implement = read('commands/implement.md');
   assert.match(implement, /plan-state --json/);
-  assert.match(implement, /status <jobId> --wait --timeout-ms 540000 --json/);
+  assert.match(implement, /status <jobId> --wait --timeout-ms 90000 --json/);
   assert.match(implement, /<<'CODEX_PAIR_IMPL'/);
   assert.match(implement, /<<'CODEX_PAIR_FIX'/);
 });
