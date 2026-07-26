@@ -79,6 +79,17 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
+function normalizeStoredPlanRound(round: unknown): number {
+  if (round == null || String(round).trim() === '') {
+    return 1;
+  }
+  const parsed = Number(String(round).trim());
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Unsupported stored-plan round "${round}". Use a non-negative integer.`);
+  }
+  return parsed;
+}
+
 export async function handlePlanReview(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ['model', 'effort', 'cwd', 'plan-file', 'thread', 'round'],
@@ -203,7 +214,7 @@ export function handlePlanStore(argv: string[]): void {
     threadId: null,
     model: null,
     effort: null,
-    round: normalizePlanReviewRound(options.round),
+    round: normalizeStoredPlanRound(options.round),
     verdict,
     summary: optionalString(options.summary),
     openQuestions: stringArray(options['open-question']),

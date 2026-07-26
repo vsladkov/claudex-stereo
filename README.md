@@ -67,7 +67,7 @@ If Codex is installed but not logged in yet, run:
 After install, you should see:
 
 - the slash commands listed below
-- the `stereo:codex-rescue` and four mixed-model workflow helper subagents in `/agents`
+- the `stereo:codex-rescue` and five mixed-model workflow helper subagents in `/agents`
 
 One simple first run is:
 
@@ -78,6 +78,37 @@ One simple first run is:
 ```
 
 ## Usage
+
+### Workflow taxonomy
+
+Stereo's pair workflow is organized at four levels:
+
+| Term  | Meaning                                            | Surface                                                                               |
+| ----- | -------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Step  | One unit of work with no loop                      | Draft, plan-review, implement, or implementation-review mode                          |
+| Phase | An automated draft/review or implement/review loop | `/stereo:plan` or `/stereo:implement`                                                 |
+| Cycle | Both phases end to end                             | `/stereo:quick`                                                                       |
+| Role  | The model performing one kind of work              | Planner, plan-reviewer, implementer, implementation-reviewer, or adversarial-reviewer |
+
+Every multi-role command uses role-named model flags: `--planner`, `--plan-reviewer`,
+`--implementer`, and `--impl-reviewer`. Model selections use one addressing convention:
+
+- `claude:session` runs the role inline when that role allows it.
+- `claude:sonnet`, `claude:opus`, `claude:haiku`, and `claude:fable` use a contained foreground
+  Claude agent.
+- Any other value is a Codex model request or registry alias resolved by the companion.
+
+One `--effort` value applies to every Codex-routed role in a command. gpt-5.6-family selections
+default to `max`, other `gpt-*` selections default to `xhigh`, and non-OpenAI selections omit an
+effort override unless you supply one.
+
+There are three deliberate boundaries. `/stereo:review` remains Codex-native; use
+`/stereo:adversarial-review` for a Claude-routed review. `/stereo:rescue` and `/stereo:transfer`
+remain Codex bridges. `claude:session` is rejected for implementation so Claude writes stay
+contained in the file-edit-only implementer agent.
+
+An inline `claude:session` review is convenient but not independent when the session produced the
+work. Prefer a named Claude reviewer or Codex when you want genuinely fresh eyes.
 
 ### `/stereo:review`
 
@@ -91,7 +122,10 @@ Use it when you want:
 - a review of your current uncommitted changes
 - a review of your branch compared to a base branch like `main`
 
-Use `--base <ref>` for branch review. It also supports `--wait` and `--background`. It is not steerable and does not take custom focus text. Use [`/stereo:adversarial-review`](#codexadversarial-review) when you want to challenge a specific decision or risk area.
+Use `--base <ref>` for branch review. It also supports `--wait`, `--background`, and a Codex
+`--model`. It is not steerable and does not take custom focus text. Claude model selections are
+rejected because this command maps to Codex's built-in reviewer; use
+[`/stereo:adversarial-review`](#stereoadversarial-review) for a Claude-routed challenge review.
 
 Examples:
 
@@ -110,7 +144,10 @@ Runs a **steerable** review that questions the chosen implementation and design.
 It can be used to pressure-test assumptions, tradeoffs, failure modes, and whether a different approach would have been safer or simpler.
 
 It uses the same review target selection as `/stereo:review`, including `--base <ref>` for branch review.
-It also supports `--wait` and `--background`. Unlike `/stereo:review`, it can take extra focus text after the flags.
+It also supports `--wait`, `--background`, and `--model`. Unlike `/stereo:review`, it can take
+extra focus text after the flags. Codex models can run in the foreground or background. Claude
+models and `claude:session` use the same adversarial brief and structured output contract in the
+foreground; `--background --model claude:*` is rejected.
 
 Use it when you want:
 
@@ -124,6 +161,7 @@ Examples:
 /stereo:adversarial-review
 /stereo:adversarial-review --base main challenge whether this was the right caching and retry design
 /stereo:adversarial-review --background look for race conditions and question the chosen approach
+/stereo:adversarial-review --model claude:opus challenge the rollback design
 ```
 
 This command is read-only. It does not fix code.
@@ -135,8 +173,8 @@ while the plan drafter and adversarial reviewer can each be either Claude or Cod
 
 | Step        | Flag              | Default                | Claude execution                       | Codex execution                 |
 | ----------- | ----------------- | ---------------------- | -------------------------------------- | ------------------------------- |
-| Plan draft  | `--planner-model` | Current Claude session | Foreground read-only planner subagent  | Fresh read-only task            |
-| Plan review | `--model`         | `sol` at `max`         | Foreground read-only reviewer subagent | Persistent `plan-review` thread |
+| Plan draft  | `--planner`       | Current Claude session | Foreground read-only planner subagent  | Fresh read-only task            |
+| Plan review | `--plan-reviewer` | `sol` at `max`         | Foreground read-only reviewer subagent | Persistent `plan-review` thread |
 
 Claude model values are `claude:sonnet`, `claude:opus`, `claude:haiku`, and `claude:fable`;
 `claude:session` selects inline work by the current session. Codex values include registry aliases
@@ -153,33 +191,40 @@ The review loop is capped at 6 rounds by default (healthy reviews approve in 2-5
 iterate forever. gpt-5.6-family Codex selections default to `max`, other `gpt-*` models default to
 `xhigh`, and non-OpenAI models omit the effort override.
 
+Use `--draft-only` to run and store just the draft step. The stored plan has verdict `draft` and
+review round 0, so implementation still presents the unapproved-plan gate. Use `--review-only` to
+load the stored plan, run one fresh review round, persist its actual verdict, and stop without
+revising it. The two modes conflict; each also rejects flags for a role or loop it does not run.
+
 `terra` and `luna` map to `gpt-5.6-terra` and `gpt-5.6-luna`.
 
 Examples:
 
 ```bash
 /stereo:plan add rate limiting to the public API
-/stereo:plan --planner-model claude:haiku add a validation check
-/stereo:plan --model claude:opus refactor the retry logic
+/stereo:plan --planner claude:haiku add a validation check
+/stereo:plan --plan-reviewer claude:opus refactor the retry logic
 /stereo:plan --max-plan-rounds 3 refactor the retry logic
-/stereo:plan --model terra --effort high migrate the config loader
+/stereo:plan --plan-reviewer terra --effort high migrate the config loader
+/stereo:plan --draft-only draft a migration plan
+/stereo:plan --review-only --plan-reviewer claude:opus
 ```
 
 Planning is read-only: nothing is implemented until you run
-[`/stereo:implement`](#codeximplement). Codex-reviewed plans retain their review thread.
+[`/stereo:implement`](#stereoimplement). Codex-reviewed plans retain their review thread.
 Claude-reviewed plans are stored in the same durable state without a Codex thread, so later
 implementation starts fresh with the complete plan embedded.
 
 ### `/stereo:implement`
 
-Implements the plan reviewed by [`/stereo:plan`](#codexplan). The implementer and implementation
+Implements the plan reviewed by [`/stereo:plan`](#stereoplan). The implementer and implementation
 reviewer are independently selectable while the current Claude session keeps ownership of the
 gates, verification, fix loop, and final report:
 
-| Step                  | Flag             | Default                | Claude execution                      | Codex execution      |
-| --------------------- | ---------------- | ---------------------- | ------------------------------------- | -------------------- |
-| Implementation        | `--model`        | Stored model or `sol`  | Foreground file-edit-only implementer | Workspace-write task |
-| Implementation review | `--review-model` | Current Claude session | Foreground read-only reviewer         | Fresh read-only task |
+| Step                  | Flag              | Default                | Claude execution                      | Codex execution      |
+| --------------------- | ----------------- | ---------------------- | ------------------------------------- | -------------------- |
+| Implementation        | `--implementer`   | Stored model or `sol`  | Foreground file-edit-only implementer | Workspace-write task |
+| Implementation review | `--impl-reviewer` | Current Claude session | Foreground read-only reviewer         | Fresh read-only task |
 
 The same Claude and Codex model values accepted by `/stereo:plan` work here, except
 `claude:session` is not a valid implementer: Claude writes are always isolated in the contained
@@ -193,6 +238,11 @@ use `--max-fix-rounds <n>` to change the cap, and `--fresh` to start a new Codex
 resuming the stored one. A Claude-reviewed plan also starts a fresh Codex thread with a truthful
 outside-thread preamble.
 
+Use `--implement-only` to run preflight, implementation, and host-side checks, then stop before
+review. Use `--review-only` to treat the current dirty and untracked worktree as the complete
+implementation delta, run one implementation-review step, and stop without applying fixes. A
+clean worktree has nothing to review.
+
 Claude implementation is deliberately file-edits-only: the agent has no shell, network, process,
 or git tool. Before edits, the command detects plan steps requiring version scripts, package
 installation, code generation, migrations, or interactive processes and asks whether to switch to
@@ -203,11 +253,13 @@ Examples:
 
 ```bash
 /stereo:implement
-/stereo:implement --model claude:sonnet
-/stereo:implement --review-model terra
-/stereo:implement --model sol --review-model claude:opus --effort high
+/stereo:implement --implementer claude:sonnet
+/stereo:implement --impl-reviewer terra
+/stereo:implement --implementer sol --impl-reviewer claude:opus --effort high
 /stereo:implement --max-fix-rounds 3
 /stereo:implement --fresh
+/stereo:implement --implement-only
+/stereo:implement --review-only --impl-reviewer claude:opus
 ```
 
 The final report lists the stored `residualRisks`, verification results, selected models, and any
@@ -231,15 +283,31 @@ The durable state directory is normally `~/.codex/companion-state/<workspace>/`,
 
 ### `/stereo:quick`
 
-Runs the complete pair workflow in one command for a small, single-feature task. Claude explores the repository and drafts a compact plan, Codex reviews it, and an approved plan moves directly into implementation without another user command. Claude then reviews the delta, runs the tests it can identify, and sends any required fix rounds back to Codex.
+Runs the complete pair workflow in one command for a small, single-feature task. Each of the four
+roles is independently routable. Defaults preserve the original cycle: the current Claude session
+drafts, `sol` reviews at `max`, Codex implements with the resolved plan-review model and effort,
+and the current Claude session reviews the implementation.
 
-Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the plan cap you can keep iterating in the same Codex thread, implement the reviewed but unapproved plan with its findings carried forward, or stop. Dirty worktrees and exhausted fix rounds still produce explicit safety gates. If the task needs a plan longer than roughly 120 lines or crosses multiple features or subsystems, quick stops before review and directs you to [`/stereo:plan`](#codexplan).
+Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the plan cap you can keep iterating in the same Codex thread, implement the reviewed but unapproved plan with its findings carried forward, or stop. Dirty worktrees and exhausted fix rounds still produce explicit safety gates. If the task needs a plan longer than roughly 120 lines or crosses multiple features or subsystems, quick stops before review and directs you to [`/stereo:plan`](#stereoplan).
 
-Use `--model` and `--effort` to override the pair defaults:
+Use the same four role flags as the phase commands:
+
+| Role                    | Flag              | Default                                   |
+| ----------------------- | ----------------- | ----------------------------------------- |
+| Planner                 | `--planner`       | `claude:session`                          |
+| Plan reviewer           | `--plan-reviewer` | `sol`                                     |
+| Implementer             | `--implementer`   | Latest Codex plan-review model and effort |
+| Implementation reviewer | `--impl-reviewer` | `claude:session`                          |
+
+When a Claude plan reviewer leaves no Codex thread to resume, quick starts a fresh Codex
+implementation task. Its implementer default is `sol` with the supplied effort or `max`, and the
+recap names that effective choice before writes begin. Claude review verdicts are stored before
+quick transitions or stops, so later `/stereo:implement` gates remain accurate.
 
 ```bash
 /stereo:quick fix the retry delay calculation
-/stereo:quick --model terra --effort high add a validation check
+/stereo:quick --planner claude:haiku --plan-reviewer terra --effort high add a validation check
+/stereo:quick --plan-reviewer claude:sonnet --impl-reviewer claude:opus fix a small bug
 ```
 
 The latest reviewed plan is stored normally, so an interrupted approved run can resume with `/stereo:implement`. Nothing is committed or pushed.
@@ -387,6 +455,19 @@ When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted
 /stereo:implement
 ```
 
+### Run Every Step By Hand
+
+```bash
+/stereo:plan --draft-only add rate limiting to the public API
+/stereo:plan --review-only
+/stereo:implement --implement-only
+/stereo:implement --review-only
+```
+
+If the one-round plan review returns `needs-revision`, ask the current session to revise and
+re-store the plan before reviewing it again, or run the full `/stereo:plan` phase to use its
+automated revision loop.
+
 ### Start Something Long-Running
 
 ```bash
@@ -469,7 +550,9 @@ npm run provider-probe -- --config /path/to/provider-stanza.toml --model kimi-k3
 
 The first command starts Codex with a temporary `CODEX_HOME` to prove the stanza parses; it does not edit your real config. `--live` additionally requires the stanza's `env_key`, makes a tool-using turn and a follow-up turn in a scratch workspace, and may incur provider charges. Re-run it when a provider changes its endpoint or model catalog.
 
-Third-party structured-output and tool-calling fidelity varies. Run a small `/stereo:plan --model <alias> ...` round before trusting a provider with implementation work. Provider API-key billing and quotas are independent of ChatGPT plan quotas.
+Third-party structured-output and tool-calling fidelity varies. Run a small
+`/stereo:plan --plan-reviewer <alias> ...` round before trusting a provider with implementation
+work. Provider API-key billing and quotas are independent of ChatGPT plan quotas.
 
 ### Moving The Work Over To Codex
 

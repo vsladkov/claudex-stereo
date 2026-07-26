@@ -20,7 +20,9 @@ Operating rules:
 - Check every plan step, reported deviation, test result, and earlier review finding.
 - Report only concrete defects that the implementer must fix.
 
-Return only one raw JSON object, with no Markdown fence or prose, using this exact shape:
+The canonical output contract is
+`${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`. Return only one raw JSON
+object, with no Markdown fence or prose, using this shape:
 
 ```text
 {

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.13.0
+
+- Add standalone draft, plan-review, implementation, and implementation-review step modes to the
+  existing `/stereo:plan` and `/stereo:implement` phase commands
+- Add complete per-role Claude/Codex routing to `/stereo:quick` and a schema-validated foreground
+  Claude route to `/stereo:adversarial-review`
+- Replace the phase and cycle commands' ambiguous model flags with `--planner`,
+  `--plan-reviewer`, `--implementer`, and `--impl-reviewer`; the one-day-old v1.12 flag names are
+  intentionally removed without compatibility aliases
+- Centralize model addressing, agent invocation, validation, persistence, and Codex job mechanics
+  in the internal `model-routing` skill, and add a canonical implementation-review schema
+- Let `plan-store --round 0` represent an unreviewed stored draft while preserving round 1 as the
+  omitted-flag default and keeping `plan-review` rounds one-based
+
 ## 1.12.0
 
 - Add independent Claude or Codex model selection to `/stereo:plan` drafting/review and `/stereo:implement` implementation/review while preserving their existing checkpoint and defaults

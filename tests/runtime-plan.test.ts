@@ -451,6 +451,75 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.match(rendered.stdout, /# Approved mixed plan/);
 });
 
+test('plan-store preserves round zero for drafts and keeps other round validation strict', () => {
+  const workspace = makeTempDir();
+  const plan = [
+    '## Goal',
+    '',
+    'Draft a truthful round-zero plan.',
+    '',
+    '## Approach',
+    '',
+    'Keep the test focused.',
+  ].join('\n');
+
+  const storedDraft = run(
+    'node',
+    [
+      SCRIPT,
+      'plan-store',
+      '--json',
+      '--verdict',
+      'draft',
+      '--round',
+      '0',
+      '--summary',
+      'Round-zero draft.',
+    ],
+    {
+      cwd: workspace,
+      input: plan,
+    },
+  );
+  assert.equal(storedDraft.status, 0, storedDraft.stderr);
+  const draftPayload = JSON.parse(storedDraft.stdout);
+  assert.equal(draftPayload.verdict, 'draft');
+  assert.equal(draftPayload.round, 0);
+  assert.equal(draftPayload.reviewedBy, null);
+
+  const state = run('node', [SCRIPT, 'plan-state', '--json'], { cwd: workspace });
+  assert.equal(state.status, 0, state.stderr);
+  assert.equal(JSON.parse(state.stdout).round, 0);
+
+  const rendered = run('node', [SCRIPT, 'plan-state'], { cwd: workspace });
+  assert.equal(rendered.status, 0, rendered.stderr);
+  assert.match(rendered.stdout, /^Stored plan \(verdict: draft, round 0, updated /);
+
+  for (const invalidRound of ['-1', '1.5', 'not-a-round']) {
+    const invalid = run(
+      'node',
+      [SCRIPT, 'plan-store', '--json', '--verdict', 'draft', '--round', invalidRound],
+      {
+        cwd: workspace,
+        input: plan,
+      },
+    );
+    assert.notEqual(invalid.status, 0);
+    assert.match(
+      invalid.stderr,
+      /Unsupported stored-plan round ".+"\. Use a non-negative integer\./,
+    );
+    assert.match(JSON.parse(invalid.stdout).error, /Unsupported stored-plan round/);
+  }
+
+  const omittedRound = run('node', [SCRIPT, 'plan-store', '--json', '--verdict', 'draft'], {
+    cwd: workspace,
+    input: plan,
+  });
+  assert.equal(omittedRound.status, 0, omittedRound.stderr);
+  assert.equal(JSON.parse(omittedRound.stdout).round, 1);
+});
+
 test('plan-store rejects a missing verdict and empty stdin with JSON usage errors', () => {
   const workspace = makeTempDir();
 

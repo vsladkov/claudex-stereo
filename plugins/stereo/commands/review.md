@@ -10,6 +10,11 @@ Run a Codex review through the shared built-in reviewer.
 Raw slash-command arguments:
 `$ARGUMENTS`
 
+Before any repository inspection or execution, inspect the raw arguments for `--model`. If its
+value starts with `claude:`, stop with:
+"`/stereo:review` is Codex-native and does not accept Claude models. Use
+`/stereo:adversarial-review --model <claude selection>` for a Claude review."
+
 Core constraint:
 
 - This command is review-only.

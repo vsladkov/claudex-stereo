@@ -77,47 +77,76 @@ test('directly-wired commands disable model invocation of the command file', () 
   }
 });
 
-test('plan, implement, and quick keep the pair-workflow loop mechanics', () => {
+test('pair commands load the canonical routing skill and keep workflow wiring', () => {
+  const routing = read('skills/model-routing/SKILL.md');
+  assert.match(routing, /status <jobId> --wait --timeout-ms 90000 --json/);
+  for (const role of [
+    'planner',
+    'plan-reviewer',
+    'implementer',
+    'implementation-reviewer',
+    'adversarial-reviewer',
+  ]) {
+    assert.match(routing, new RegExp(`subagent_type: "stereo:${role}"`), role);
+  }
+  assert.ok(
+    (routing.match(/run_in_background: false/g) ?? []).length >= 5,
+    'all routing-skill Agent templates must stay foreground',
+  );
+
   const plan = read('commands/plan.md');
-  assert.match(plan, /status <jobId> --wait --timeout-ms 90000 --json/);
+  assert.match(plan, /skills\/model-routing\/SKILL\.md/);
   assert.match(plan, /plan-review --background --json --thread <planReviewThreadId> --round <n>/);
   assert.match(plan, /<<'CODEX_PAIR_PLAN'/);
   assert.match(plan, /plan-store --json/);
-  assert.match(plan, /plugins\/stereo\/schemas\/plan-review-output\.schema\.json/);
+  assert.match(plan, /schemas\/plan-review-output\.schema\.json/);
   assert.match(plan, /^allowed-tools:.*\bAgent\b.*$/m);
-  assert.ok(
-    (plan.match(/run_in_background: false/g) ?? []).length >= 2,
-    'plan Agent routes must stay foreground',
-  );
+  assert.match(plan.match(/^argument-hint:.*$/m)?.[0] ?? '', /--draft-only/);
+  assert.match(plan.match(/^argument-hint:.*$/m)?.[0] ?? '', /--review-only/);
 
   const implement = read('commands/implement.md');
+  assert.match(implement, /skills\/model-routing\/SKILL\.md/);
   assert.match(implement, /plan-state --json/);
-  assert.match(implement, /status <jobId> --wait --timeout-ms 90000 --json/);
   assert.match(implement, /<<'CODEX_PAIR_PLAN'/);
   assert.match(implement, /<<'CODEX_PAIR_IMPL'/);
   assert.match(implement, /<<'CODEX_PAIR_FIX'/);
   assert.match(implement, /task --background --json --write --model <effectiveModel> <effortArg>/);
-  assert.match(implement, /approved outside this Codex thread/);
-  assert.match(implement, /reviewed but unapproved plan/);
+  assert.match(implement, /approved outside\s+this Codex thread/);
+  assert.match(implement, /reviewed but unapproved/);
   assert.match(implement, /^allowed-tools:.*\bAgent\b.*$/m);
   assert.match(implement, /Compare `git rev-parse HEAD` with `baselineCommit`/);
-  assert.match(implement, /Continue with file edits only — the listed command steps become yours/);
   assert.match(implement, /implementationReviewThreadId/);
-  assert.ok(
-    (implement.match(/run_in_background: false/g) ?? []).length >= 2,
-    'implement Agent routes must stay foreground',
-  );
+  assert.match(implement, /schemas\/implementation-review-output\.schema\.json/);
+  assert.match(implement.match(/^argument-hint:.*$/m)?.[0] ?? '', /--implement-only/);
+  assert.match(implement.match(/^argument-hint:.*$/m)?.[0] ?? '', /--review-only/);
 
   const quick = read('commands/quick.md');
+  assert.match(quick, /skills\/model-routing\/SKILL\.md/);
   assert.match(quick, /plan-state --json/);
-  assert.match(quick, /status <jobId> --wait --timeout-ms 90000 --json/);
   assert.match(quick, /<<'CODEX_PAIR_PLAN'/);
   assert.match(quick, /<<'CODEX_PAIR_IMPL'/);
   assert.match(quick, /<<'CODEX_PAIR_FIX'/);
+  assert.match(quick, /plan-store --json/);
+  assert.match(quick, /^allowed-tools:.*\bAgent\b.*$/m);
+  assert.match(quick, /plannerThreadId/);
+  assert.match(quick, /planReviewThreadId/);
+  assert.match(quick, /implementationThreadId/);
+  assert.match(quick, /implementationReviewThreadId/);
+
+  const adversarial = read('commands/adversarial-review.md');
+  assert.match(adversarial, /skills\/model-routing\/SKILL\.md/);
+  assert.match(adversarial, /prompts\/adversarial-review\.md/);
+  assert.match(adversarial, /schemas\/review-output\.schema\.json/);
+  assert.match(adversarial, /^allowed-tools:.*\bAgent\b.*$/m);
+
+  const nativeReview = read('commands/review.md');
+  assert.match(nativeReview, /does not accept Claude models/);
+  assert.match(nativeReview, /\/stereo:adversarial-review/);
 });
 
 test('pair agents keep their role-specific tool and output contracts', () => {
   const expectedAgents = [
+    'adversarial-reviewer.md',
     'codex-rescue.md',
     'implementation-reviewer.md',
     'implementer.md',
@@ -135,7 +164,15 @@ test('pair agents keep their role-specific tool and output contracts', () => {
   assert.match(planReviewer, /"section"/);
   assert.match(planReviewer, /"confidence"/);
 
-  for (const file of expectedAgents.filter((file) => file.startsWith('pair-'))) {
+  const adversarialReviewer = read('agents/adversarial-reviewer.md');
+  assert.match(adversarialReviewer, /schemas\/review-output\.schema\.json/);
+
+  const implementationReviewer = read('agents/implementation-reviewer.md');
+  assert.match(implementationReviewer, /schemas\/implementation-review-output\.schema\.json/);
+
+  assert.doesNotThrow(() => JSON.parse(read('schemas/implementation-review-output.schema.json')));
+
+  for (const file of expectedAgents.filter((file) => file !== 'codex-rescue.md')) {
     assert.match(read(path.join('agents', file)), /run_in_background: false/, file);
   }
 });

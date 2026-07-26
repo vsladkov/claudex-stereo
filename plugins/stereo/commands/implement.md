@@ -1,273 +1,277 @@
 ---
-description: Implement the plan reviewed in /stereo:plan with independently selected Claude or Codex implementation and review models
-argument-hint: '[--model <implement-model>] [--review-model <review-model>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
+description: Implement or review the stored plan with independently selected Claude or Codex role models
+argument-hint: '[--implement-only|--review-only] [--implementer <model>] [--impl-reviewer <model>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
 
-Run the implementation half of the dual-model pair workflow through the shared plugin runtime.
-The main Claude session orchestrates implementation, verification, review, and fixes. The selected
-Claude or Codex model performs each routed implementation or review step.
+First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
+agent, validation, quoting, and background-job rules. The rules below are step-specific.
+
+Run the implementation phase of the Stereo workflow. The main Claude session owns preflight,
+baselines, host verification, review/fix orchestration, and the final report.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
 
-Parse all arguments before loading state or starting an agent or Codex job:
+## Arguments and modes
 
-- `--model <model>` selects the implementer. If absent, use the stored Codex model; if the stored
-  value is null, use `sol`.
-- `--review-model <model>` selects the implementation reviewer and defaults to `claude:session`.
-- `--effort <none|minimal|low|medium|high|xhigh|max>` applies only to selected Codex steps. Never
-  pass it to a Claude-side step.
+After reading the routing skill, parse all arguments before loading state:
+
+- `--implementer <model>` selects the implementer. When absent, use the stored Codex model; if it
+  is null, use `sol`.
+- `--impl-reviewer <model>` selects the implementation reviewer and defaults to
+  `claude:session`.
+- `--effort <none|minimal|low|medium|high|xhigh|max>` applies to all Codex-routed roles.
 - `--max-fix-rounds <n>` defaults to 4.
-- `--fresh` skips a reusable stored Codex review thread.
-- Reject missing values, duplicate model flags, unexpected positionals, invalid effort, and unknown
-  `claude:*` values before work.
+- `--fresh` skips a reusable stored Codex plan-review thread.
+- `--implement-only` implements and verifies once, then stops before review.
+- `--review-only` reviews the current dirty/untracked implementation delta once without fixing.
+- Without a mode flag, run the complete implement-plus-review/fix phase.
 
-Model addressing is role-local:
+Reject missing values, duplicates, positionals, invalid effort/round values, unknown flags,
+unknown `claude:*` values, and both mode flags together. The removed implementer `--model` and
+`--review-model` flags are unknown; report the role-named replacements.
 
-- `claude:sonnet`, `claude:opus`, `claude:haiku`, and `claude:fable` select the corresponding
-  foreground Claude subagent model override.
-- `claude:session` is valid only for `--review-model`, where it preserves the existing inline
-  review. Reject it for `--model`: Claude implementation must use the contained
-  `stereo:implementer` agent.
-- Anything not beginning with `claude:` is a Codex model request. Pass aliases, raw ids, and
-  qualified `model@provider` values to the companion for `normalizeRequestedModel` resolution.
-- For a Codex implementation reviewer, use the pair default effort for the selected model when
-  `--effort` is absent: `max` for the gpt-5.6 family, `xhigh` for other `gpt-*` models, and no
-  effort override for non-OpenAI models.
+For `--review-only`, reject `--implementer`, `--fresh`, and `--max-fix-rounds`. For
+`--implement-only`, reject `--impl-reviewer` and `--max-fix-rounds`.
 
-Treat user-supplied Codex `--model` and `--effort` implementation values as overrides. Otherwise
-use the stored values. When a mixed-flow record has both `model` and `effort` set to null, use the
-canonical pair defaults `sol` and `max`; do not pass literal nulls or silently defer to the user's
-Codex configuration. When the effective effort is null, omit the `--effort` flag entirely. If the
-user overrides `--model` without also passing `--effort`, treat the implementation effort as unset
-— the stored effort belonged to the stored model. In the templates below,
-`<effortArg>` means the implementation's `--effort <effectiveEffort>` when non-null and nothing
-otherwise; `<reviewEffortArg>` is the corresponding reviewer argument. Never pass a
-Claude-prefixed value to the companion.
+Reject `claude:session` as the implementer; Claude writes must use the contained named agent.
 
-Scope of the result-handling rules:
+For Codex implementation, user-supplied implementer and effort values override stored values. If
+the user overrides only the model, clear the stored effort because it belonged to the old model.
+When both stored values are null, use `sol` and the user's effort or `max`. Omit a null effort.
+For a Codex implementation reviewer, apply the routing skill's pair defaults.
 
-- This command is a deliberate, user-invoked iterative workflow.
-- Within it, the `codex-result-handling` rule to STOP after presenting findings applies only at the user-decision points defined below.
-- Inside the fix loop, act on review findings and route fixes to the selected implementer without
-  asking the user.
+Inside the full fix loop, act on findings automatically. The stop-after-review rule applies to
+`--review-only` and explicit safeguard decisions.
 
-Every Codex turn is launched with `--background --json`; never wait on a long turn in one
-foreground Bash call. Parse `jobId`, poll until terminal, post phase/elapsed/latest
-`job.progressPreview` updates, then fetch the result:
+## Common stored-plan preflight
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" result <jobId> --json
-```
-
-Surface any top-level `{"error": ...}` or failed job. Treat no phase change and no new progress
-entry for roughly 10 minutes as stalled; ask `Keep waiting (Recommended)` or
-`Cancel the implementation and stop`. Elapsed time alone is not a stall. If Codex is missing or
-unauthenticated, stop and direct the user to `/stereo:setup`.
-
-Phase 0 - Preflight:
-
-- Load the stored plan:
+Load:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 ```
 
-- If `available` is `false`, stop and tell the user to run `/stereo:plan` first.
-- Save the stored plan's thread id only as `storedPlanReviewThreadId`; it is not
-  `implementationThreadId`.
-- If `verdict` is not `approve`, use `AskUserQuestion` once with
-  `Run /stereo:plan first (Recommended)`, `Implement the unapproved plan anyway`, and `Stop here`.
-- Show a one-line recap: plan summary, round count, `updatedAt`, reviewer label when present, and
-  whether documented residual risks exist. Mention that `/stereo:plan-state` renders the full
-  stored plan.
-- Check the worktree with `git status --porcelain=v1 --untracked-files=all`. Record
-  `baselineCommit` from `git rev-parse HEAD` plus the exact already-dirty path list.
-- If dirty, ask `Stop so I can commit or stash first (Recommended)` or
-  `Continue with a dirty worktree`.
-- If the stop-time review gate is enabled, mention that finishing triggers one extra Codex review
-  and that `/stereo:setup --disable-review-gate` avoids it during long pair sessions.
+If `available` is false, stop and tell the user to run `/stereo:plan`. Save a non-null stored
+thread only as `storedPlanReviewThreadId`, never as an implementation thread.
 
-If the selected implementer is Claude, scan the stored plan's `## Step-by-step changes` before any
-edit for command-requiring work beyond the fixed host verification gates: version bumps, package
-installation, code generation, migrations, or interactive/long-running processes. If found, ask:
+If the stored verdict is not `approve`, ask once:
 
-- `Switch this step to a Codex implementer (Recommended)` — select canonical `sol` with the user's
-  effort or `max`, then use the Codex branch.
-- `Continue with file edits only — the listed command steps become yours to run` — record each
-  user-owned step and list it as unexecuted in the final report.
-- `Stop here`.
+- `Run /stereo:plan first (Recommended)`
+- `Implement/review the unapproved plan anyway`
+- `Stop here`
 
-The Claude implementer never requests commands and the orchestrator never executes shell text on
-its behalf.
+Show the summary, verdict, round (including round 0 for a draft), `updatedAt`, reviewer label when
+present, and whether residual risks exist. Mention `/stereo:plan-state` for the complete plan.
 
-Phase 1 - Implementation routing:
+## Standalone implementation-review step
 
-### Codex implementer
+For `--review-only`, do not use the normal dirty-worktree attribution rule:
 
-When `storedPlanReviewThreadId` is non-null and the user did not pass `--fresh`, resume that
-review thread. Otherwise start a fresh thread without `--thread`; this is the continuation path for
-plans reviewed outside Codex. Embed the complete stored plan verbatim and use
-`<effectiveModel>` and `<effortArg>`.
+1. Record `baselineCommit = HEAD`.
+2. Read `git status --porcelain=v1 --untracked-files=all`.
+3. Treat every current dirty and untracked path as the implementation delta.
+4. If the worktree is clean, stop with `Nothing to review.`
+5. Run the repository's identifiable host checks and record every command and exit result.
+6. Build review input from the full stored plan, `HEAD`, current status/diff, every untracked file,
+   and the host-check results.
 
-For a non-null stored thread whose verdict is `approve`, use the canonical resumed-thread prompt:
+Route exactly one review through `--impl-reviewer`:
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <storedPlanReviewThreadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
-<task>
-Implement the approved plan below in this repository. You reviewed and approved this plan earlier in this thread.
-
-[full stored plan text, verbatim]
-</task>
-<action_safety>
-Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
-</action_safety>
-<completeness_contract>
-Implement the whole plan before stopping. If a step turns out to be impossible, say so explicitly instead of silently skipping it.
-</completeness_contract>
-<verification_loop>
-Run the repository's relevant tests or build before finalizing and fix what you break.
-</verification_loop>
-<compact_output_contract>
-Report: a summary of the changes, the files you touched, the verification you ran with results, and any deviations from the plan with reasons.
-</compact_output_contract>
-CODEX_PAIR_IMPL
-```
-
-For a non-null stored thread whose verdict is not `approve`, only continue after the Phase 0 user
-gate. Use the same resumed command and contracts, but replace the task block with truthful wording:
-
-```text
-<task>
-Implement the reviewed but unapproved plan below in this repository. You reviewed this plan earlier in this thread, and the user explicitly chose to continue despite its stored verdict.
-
-[full stored plan text, verbatim]
-</task>
-```
-
-For a null stored thread whose verdict is `approve`, use this truthful fresh-thread prompt. If
-`reviewedBy` is present, include `, by <reviewedBy>` in the first sentence; otherwise omit that
-phrase.
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
-<task>
-Implement the approved plan below in this repository. The plan was reviewed and approved outside this Codex thread<, by reviewedBy when present>.
-
-[full stored plan text, verbatim]
-</task>
-<action_safety>
-Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
-</action_safety>
-<completeness_contract>
-Implement the whole plan before stopping. If a step turns out to be impossible, say so explicitly instead of silently skipping it.
-</completeness_contract>
-<verification_loop>
-Run the repository's relevant tests or build before finalizing and fix what you break.
-</verification_loop>
-<compact_output_contract>
-Report: a summary of the changes, the files you touched, the verification you ran with results, and any deviations from the plan with reasons.
-</compact_output_contract>
-CODEX_PAIR_IMPL
-```
-
-For a null stored thread whose verdict is not `approve`, only continue after the Phase 0 user gate.
-Use the same fresh command and contracts, but replace the task block with truthful wording:
-
-```text
-<task>
-Implement the reviewed but unapproved plan below in this repository. The plan was reviewed outside this Codex thread<, by reviewedBy when present>, and the user explicitly chose to continue despite its stored verdict.
-
-[full stored plan text, verbatim]
-</task>
-```
-
-- `--fresh` from the user also skips a non-null stored thread and starts a new one (still embed the
-  full plan and pass `--write`, without `--thread`).
-
-Poll and fetch through the common background-job handling. If resume fails, or Codex claims
-changes while both `touchedFiles` and the delta are empty, retry once fresh with the identical full
-prompt. Adopt the latest implementation payload's thread id only as `implementationThreadId`.
-
-### Claude implementer
-
-Invoke the contained agent in the foreground:
-
-```text
-subagent_type: "stereo:implementer"
-model: "<sonnet|opus|haiku|fable>"
-run_in_background: false
-prompt: |
-  Apply only the file edits in this plan. Never request command execution.
-
-  [full stored plan text, verbatim]
-
-  Baseline dirty paths to preserve:
-  [path list]
-```
-
-An Agent/model availability error stops the selected step; never silently substitute another
-model. Immediately after every Claude implementation or fix invocation:
-
-- Compare `git rev-parse HEAD` with `baselineCommit`.
-- If HEAD moved, stop, surface the change, and mark the final never-commit statement as retracted.
-- Inspect `git diff <baselineCommit>`, status, and every new file while excluding baseline-dirty
-  paths from attribution.
-
-After either implementer, the orchestrator runs the identifiable repository checks on the host.
-For this repository, use `npm test`, `npm run typecheck`, `npm run lint`, `npm run format:check`,
-and `npm run check-version`; elsewhere, use documented equivalents. Record every command and exit
-result. These fixed verification gates are orchestrator-owned, not model-requested shell work.
-
-Phase 2 - Implementation review router and fix loop:
-
-Build review input from the full stored plan, `baselineCommit`, baseline-dirty paths, current
-status/diff, changed and untracked files, implementer report, and host-check results.
-
-Route every review by `--review-model`:
-
-- `claude:session`: preserve the existing inline review:
-  - Inspect `git status --short --untracked-files=all`, `git diff`, and every changed or untracked
-    file, ignoring paths already dirty in the baseline.
-  - Run the project's identifiable test suite or build.
-  - Check the implementation against every plan step and earlier review finding.
-  - Produce internal `{acceptable, summary, fixes}` data. Each fix names file and line, what is
-    wrong, and what correct looks like.
-- A named Claude model: invoke the reviewer in the foreground:
-
-```text
-subagent_type: "stereo:implementation-reviewer"
-model: "<sonnet|opus|haiku|fable>"
-run_in_background: false
-prompt: |
-  Review this implementation against the plan and baseline. Inspect git status/diff and run only
-  the named verification commands. Return only raw JSON.
-
-  Plan:
-  [full stored plan verbatim]
-
-  Baseline commit and already-dirty paths:
-  [baseline data]
-
-  Host verification:
-  [commands and results]
-```
-
-- A Codex model: start a fresh read-only task. Save its id only as
+- `claude:session`: inspect the complete delta inline.
+- Named Claude: use the routing skill's `stereo:implementation-reviewer` template.
+- Codex: launch one fresh read-only task and save its thread only as
   `implementationReviewThreadId`:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> <<'CODEX_PAIR_PLAN'
 <task>
-Review the current implementation delta against the complete plan below.
-Inspect git status and git diff relative to the supplied baseline, ignore already-dirty paths, and
-run the named verification commands. Do not edit files.
+Review the entire current dirty and untracked worktree against the stored plan below. The current
+worktree is the implementation delta; do not apply the normal phase-flow baseline exclusion.
+Inspect git status, git diff against HEAD, and every untracked file. Run only the named
+verification commands. Do not edit files.
 
 Plan:
-[full stored plan verbatim]
+[full stored plan, verbatim]
+
+Host verification:
+[commands and results]
+</task>
+<output_contract>
+Return only raw JSON matching
+${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json.
+</output_contract>
+CODEX_PAIR_PLAN
+```
+
+Validate through the routing skill, including the acceptable/fixes coupling and one retry. Report
+the exact `{acceptable, summary, fixes}` result and host checks, then stop. Do not fix or store
+implementation state.
+
+## Implementation preflight
+
+For the full phase or `--implement-only`, record:
+
+- `baselineCommit` from `git rev-parse HEAD`.
+- The exact paths from `git status --porcelain=v1 --untracked-files=all`.
+
+If dirty, ask whether to stop so the user can commit/stash (recommended) or continue. Preserve the
+baseline-dirty list for attribution and rollback. If the stop-time review gate is enabled, mention
+that completion triggers an additional Codex review and how to disable it during long pair runs.
+
+If the selected implementer is Claude, scan the stored plan's `## Step-by-step changes` before any
+edit for commands beyond the fixed host verification gates: version bumps, package installation,
+code generation, migrations, or interactive/long-running processes. If present, ask:
+
+- Switch to canonical Codex `sol` with the user's effort or `max` (recommended).
+- Continue with file edits only and leave each command step user-owned.
+- Stop.
+
+Record every user-owned step. The Claude implementer never requests commands, and the orchestrator
+never executes shell text on an agent's behalf.
+
+## Implementation routing
+
+### Codex implementer
+
+When `storedPlanReviewThreadId` is non-null and `--fresh` was not passed, resume it. Otherwise
+start a fresh write thread. Embed the complete stored plan verbatim in every fresh prompt.
+
+Approved, resumed:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <storedPlanReviewThreadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
+<task>
+Implement the approved plan below in this repository. You reviewed and approved this plan earlier
+in this thread.
+
+[full stored plan, verbatim]
+</task>
+<action_safety>
+Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
+</action_safety>
+<completeness_contract>
+Implement the whole plan before stopping. Report any impossible step explicitly.
+</completeness_contract>
+<verification_loop>
+Run the repository's relevant tests or build and fix regressions.
+</verification_loop>
+<compact_output_contract>
+Report changes, touched files, verification results, and deviations with reasons.
+</compact_output_contract>
+CODEX_PAIR_IMPL
+```
+
+Approved, fresh:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
+<task>
+Implement the approved plan below in this repository. The plan was reviewed and approved outside
+this Codex thread<, by reviewedBy when present>.
+
+[full stored plan, verbatim]
+</task>
+<action_safety>
+Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
+</action_safety>
+<completeness_contract>
+Implement the whole plan before stopping. Report any impossible step explicitly.
+</completeness_contract>
+<verification_loop>
+Run the repository's relevant tests or build and fix regressions.
+</verification_loop>
+<compact_output_contract>
+Report changes, touched files, verification results, and deviations with reasons.
+</compact_output_contract>
+CODEX_PAIR_IMPL
+```
+
+Unapproved, resumed (only after the preflight gate):
+
+```text
+<task>
+Implement the reviewed but unapproved plan below in this repository. You reviewed this plan
+earlier in this thread, and the user explicitly chose to continue despite its stored verdict.
+
+[full stored plan, verbatim]
+</task>
+```
+
+Use this task block in the approved-resumed command and retain all four safety/output contracts.
+
+Unapproved, fresh (only after the preflight gate):
+
+```text
+<task>
+Implement the reviewed but unapproved plan below in this repository. The plan was reviewed
+outside this Codex thread<, by reviewedBy when present>, and the user explicitly chose to
+continue despite its stored verdict.
+
+[full stored plan, verbatim]
+</task>
+```
+
+Use this task block in the approved-fresh command and retain all four safety/output contracts.
+`--fresh` always selects the corresponding fresh variant, even when a stored review thread exists.
+
+Poll and fetch through the routing skill. If resume fails, or Codex claims changes while both
+`touchedFiles` and the actual delta are empty, retry once fresh with the identical full prompt.
+Save only the latest implementation/fix payload's thread id as `implementationThreadId`.
+
+### Claude implementer
+
+Use the routing skill's foreground `stereo:implementer` template with the full plan, baseline-dirty
+paths, and user-owned command steps. After every Claude implementation or fix:
+
+- Compare `git rev-parse HEAD` with `baselineCommit`.
+- If HEAD moved, stop, surface the commit change, and retract the final never-commit claim.
+- Inspect `git diff <baselineCommit>`, status, and every new file while excluding baseline-dirty
+  paths from attribution.
+
+## Host verification and implement-only stop
+
+After either implementer, run the identifiable repository checks on the host. For this repository:
+
+```text
+npm test
+npm run typecheck
+npm run lint
+npm run format:check
+npm run check-version
+```
+
+Elsewhere, use documented equivalents. Record every command and exit result. These are
+orchestrator-owned gates, not model-requested shell work.
+
+For `--implement-only`, report the attributed delta, selected implementer, host results,
+deviations, and user-owned steps. Point to `/stereo:implement --review-only` and stop without any
+review or fix round.
+
+## Full implementation-review and fix loop
+
+Build review input from the full plan, `baselineCommit`, baseline-dirty paths, current status/diff,
+changed and untracked files, implementer report, and host results. The canonical contract is
+`${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`.
+
+Route every round:
+
+- `claude:session`: inspect inline and produce internal `{acceptable, summary, fixes}` data.
+- Named Claude: use the routing skill's `stereo:implementation-reviewer` template.
+- Codex: start a fresh read-only task and save its id only as
+  `implementationReviewThreadId`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> <<'CODEX_PAIR_PLAN'
+<task>
+Review the current implementation delta against the complete plan below. Inspect status and diff
+relative to the supplied baseline, ignore already-dirty paths, run only the named verification
+commands, and do not edit files.
+
+Plan:
+[full stored plan, verbatim]
 
 Baseline commit:
 [baselineCommit]
@@ -275,30 +279,25 @@ Baseline commit:
 Already-dirty paths:
 [path list]
 
-Host verification results:
+Host verification:
 [commands and results]
 </task>
 <output_contract>
-Return only this raw JSON shape:
-{"acceptable":boolean,"summary":"non-empty string","fixes":[{"file":"path","line":1,"problem":"what is wrong","correct":"correct result"}]}
-When acceptable is true, fixes must be empty. Otherwise fixes must be non-empty.
+Return only raw JSON matching
+${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json.
 </output_contract>
 CODEX_PAIR_PLAN
 ```
 
-Parse named-Claude output directly and Codex output from `storedJob.result.rawOutput`. Validate
-`acceptable`, a non-empty `summary`, `fixes`, and every non-empty `file`, positive-integer `line`,
-non-empty `problem`, and non-empty `correct`. Retry malformed output once with the exact validation
-error. A Claude retry is a new foreground call with `run_in_background: false`; a Codex retry is
-read-only on `--thread <implementationReviewThreadId>`. The retry may update only
-`implementationReviewThreadId`; it must never overwrite `implementationThreadId`. After a second
-failure ask `Let the orchestrator review inline (Recommended)` or `Stop here`; never infer a
-verdict.
+Parse named-Claude output directly and Codex output from `storedJob.result.rawOutput`. Apply the
+routing skill's validation and retry. A Codex retry resumes only
+`implementationReviewThreadId`; never assign it to `implementationThreadId`. After a second
+malformed result, ask whether to review inline or stop.
 
 If acceptable, finish. Otherwise send the exact numbered fixes to the same implementer kind that
 produced the delta.
 
-For Codex fixes:
+Codex fix:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <implementationThreadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_FIX'
@@ -308,39 +307,30 @@ Fix the review findings below in this repository. Keep all other behavior unchan
 [numbered fixes with file, line, problem, and correct result]
 </task>
 <verification_loop>
-Run the repository's relevant tests or build before finalizing and fix what you break.
+Run the repository's relevant tests or build and fix regressions.
 </verification_loop>
 <compact_output_contract>
-Report which findings you fixed, how, and what verification you ran.
+Report which findings were fixed, how, and what verification ran.
 </compact_output_contract>
 CODEX_PAIR_FIX
 ```
 
-For Claude fixes, invoke `stereo:implementer` with the original Claude model override,
-`run_in_background: false`, the full plan, and the numbered fixes verbatim. Recompare
-`git rev-parse HEAD` with `baselineCommit` and re-inspect the baseline delta immediately afterward.
+For Claude fixes, invoke the same contained implementer with the original model, full plan, and
+numbered fixes. Recheck HEAD and the delta immediately. After every fix, rerun host checks and the
+selected reviewer.
 
-After every fix, rerun the host checks and the selected reviewer. Adopt
-`implementationThreadId` exclusively from Codex implementation/fix payloads. Never assign
-`implementationReviewThreadId` to it.
+At `--max-fix-rounds` (default 4), or when substantially the same issue survives three rounds,
+show remaining fixes and ask whether to send one more implementer round, let the orchestrator fix
+directly, or stop and report as-is.
 
-Stall safeguards (these are safeguards, not caps):
+## Final report
 
-- At `--max-fix-rounds` (default 4), present remaining fixes and ask
-  `Send one more implementer round`, `Let the orchestrator fix the rest directly`, or
-  `Stop and report as-is`.
-- If substantially the same issue survives 3 rounds, pause and ask the same question early.
+Report selected roles, fix rounds, attributed files, host results, deviations, user-owned steps,
+and all stored open questions and residual risks. For Codex implementation, include
+`implementationThreadId` and `codex resume <implementationThreadId>`. Label
+`storedPlanReviewThreadId` and `implementationReviewThreadId` by role and never present them as
+implementation resume targets.
 
-Final report:
-
-- Summarize the selected implementer and reviewer, fix rounds used, attributed files, host
-  verification results, deviations, user-owned unexecuted command steps, and all stored
-  `openQuestions` and `residualRisks`.
-- When Codex implemented, include `implementationThreadId` and
-  `codex resume <implementationThreadId>`.
-- Label `storedPlanReviewThreadId` and `implementationReviewThreadId` by role when present; never
-  present either review-only id as the implementation resume target.
-- Give rollback guidance relative to `baselineCommit`, preserving paths dirty before this run.
-- If HEAD is still `baselineCommit`, state plainly that nothing was committed or pushed. If HEAD
-  moved at any point, retract that claim explicitly and report the observed commit change.
-- Never commit. Never push.
+Give rollback guidance relative to `baselineCommit` without erasing baseline-dirty paths. If HEAD
+is unchanged, state that nothing was committed or pushed. If it moved, retract that statement and
+report the observed change. Never commit or push.

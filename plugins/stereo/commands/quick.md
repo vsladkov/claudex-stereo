@@ -1,242 +1,346 @@
 ---
-description: Plan, review, implement, and verify one small task with Claude and Codex in a single pair workflow
-argument-hint: '[--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [small task description]'
+description: Plan, review, implement, and verify one small task with independently routed Claude or Codex roles
+argument-hint: '[--planner <model>] [--plan-reviewer <model>] [--implementer <model>] [--impl-reviewer <model>] [--effort <none|minimal|low|medium|high|xhigh|max>] [small task description]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
 
-Run the complete dual-model pair workflow for one small task. The detailed loop rules in
-`/stereo:plan` and `/stereo:implement` are canonical; this command mirrors them with fixed quick
-caps and no approval gate between an approved plan and implementation.
+First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
+agent, validation, persistence, quoting, and background-job rules. The rules below are
+step-specific.
+
+Run both Stereo phases for one small task. Preserve the canonical `/stereo:plan` and
+`/stereo:implement` semantics with fixed quick safeguards and no approval gate between an approved
+plan and implementation.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
 
-Argument handling:
+## Arguments and role defaults
 
-- `--model` and `--effort` are runtime-selection flags. Forward user overrides to every
-  `plan-review` call, then use the resolved model and effort returned by the latest plan-review
-  payload for implementation and fix calls. When the resolved effort is null, omit `--effort`.
-- All remaining text is the task description. If it is empty, ask the user what small task to
-  complete before doing anything else.
-- Quick has fixed automatic caps: 2 plan-review rounds and 2 implementation fix rounds. It has no
-  round-count flags.
+After reading the routing skill, parse all arguments before repository work:
 
-Scope of the result-handling rules:
+- `--planner <model>` defaults to `claude:session`.
+- `--plan-reviewer <model>` defaults to `sol`.
+- `--implementer <model>` defaults to the model/effort resolved by the latest Codex plan-review
+  payload. If the plan reviewer is Claude-side, default to `sol` with user `--effort` or `max`.
+- `--impl-reviewer <model>` defaults to `claude:session`.
+- `--effort <none|minimal|low|medium|high|xhigh|max>` applies to every Codex-routed role.
+- Remaining text is the task. Ask for it if empty.
 
-- This command is a deliberate, user-invoked iterative workflow.
-- Inside its review and fix loops, act on findings without asking the user except at the explicit
-  decision points below.
+Reject missing values, duplicate role flags, invalid effort, unknown flags, unknown `claude:*`
+values, and `claude:session` as implementer. The removed `--model` flag is unknown; report the
+role-named alternatives. Quick has no configurable round-count flags.
 
-Phase 0 - Scope gate and compact plan:
+Keep these ids distinct:
 
-- Explore the repository with Read, Glob, Grep, and read-only git commands until you can name the
-  exact files, symbols, and integration points.
-- Quick is only for one small feature whose honest plan fits roughly 120 lines. If the task spans
-  multiple features or subsystems, or the draft would exceed that bound, stop before round 1 and
-  tell the user to run `/stereo:plan` instead.
-- Draft a self-contained plan with exactly these sections: `## Goal`, `## Approach`,
-  `## Files to change`, `## Step-by-step changes`, `## Testing and verification`,
-  `## Risks and edge cases`, `## Out of scope`.
-- Do not write the plan into the repository. Send it through quoted heredoc stdin.
+- `plannerThreadId`: Codex draft only; never reused.
+- `planReviewThreadId`: Codex plan-review payloads only.
+- `implementationThreadId`: Codex implementation/fix payloads only.
+- `implementationReviewThreadId`: fresh Codex implementation-review tasks only.
 
-Phase 1 - Existing plan-state warning:
+Never cross-assign them.
 
-- After the task passes the scope gate but before launching round 1, inspect the current
-  repository's stored plan:
+## Scope gate and draft
+
+Explore the repository read-only until the task can be grounded in exact files, symbols, callers,
+configuration, registration, and tests. Quick is for one small feature whose honest plan fits
+roughly 120 lines. If it crosses features/subsystems or exceeds that bound, stop before review and
+direct the user to `/stereo:plan`.
+
+Draft exactly the seven canonical headings in order. Never write the plan into the repository.
+
+Route the draft:
+
+- `claude:session`: draft inline.
+- Named Claude: use the routing skill's `stereo:planner` template.
+- Codex: launch a fresh read-only task:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json <plannerSelectionArgs> <<'CODEX_PAIR_PLAN'
+<task>
+Explore this repository read-only and draft a compact implementation plan for this small task:
+
+[task text verbatim]
+</task>
+<output_contract>
+Return only a plan with exactly these headings once each and in order:
+## Goal
+## Approach
+## Files to change
+## Step-by-step changes
+## Testing and verification
+## Risks and edge cases
+## Out of scope
+</output_contract>
+CODEX_PAIR_PLAN
+```
+
+For a Codex draft, read `storedJob.result.rawOutput` and save its thread only as
+`plannerThreadId`. Validate the seven headings and apply the routing skill's one-retry recovery.
+
+## Existing-plan warning
+
+After the scope gate but before review, load:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 ```
 
-- If `available` is `true`, post a one-line warning that this quick run will replace the stored
-  plan, naming its `summary` and `updatedAt`. Do not claim to know whether it was implemented;
-  plan-state does not record that. This is a warning, not another user gate.
-- Do not read plan-state again during this run. Carry the current plan, thread id, model, effort,
-  findings, open questions, and residual risks from the review result payloads in this
-  conversation.
+If `available` is true, warn that Quick will replace the stored plan, naming its summary and
+`updatedAt`. Do not claim whether it was implemented. Do not read plan-state again during this
+run; carry current plan/review state in the conversation.
 
-Phase 2 - Capped Codex plan review:
+## Plan-review loop
 
-- Launch round 1 in the background. In the templates, `<selectionArgs>` is the user's
-  `--model`/`--effort` overrides when present and nothing otherwise.
+Quick pauses after 2 plan-review rounds, with an absolute safeguard at 6 after an explicit
+keep-iterating choice.
+
+For each round:
+
+- `claude:session`: review inline into structured state.
+- Named Claude: use the routing skill's `stereo:plan-reviewer` template with full plan and bounded
+  prior context.
+- Codex round 1:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <selectionArgs> <<'CODEX_PAIR_PLAN'
-<full plan document>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> <<'CODEX_PAIR_PLAN'
+[full current plan, verbatim]
 CODEX_PAIR_PLAN
 ```
 
-- Parse the launch JSON for `jobId`, then poll until the job leaves `queued`/`running`, passing a
-  Bash timeout of 120000 for each poll:
+- Later Codex rounds:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
-```
-
-- After every non-terminal poll, post one progress line with phase, elapsed time, and the latest
-  progress line (the last entry of the payload's `job.progressPreview` array; it is empty once a job
-  completes), then poll again.
-- If a launch or poll prints a top-level `{"error": ...}` object, surface it and stop the loop.
-- No phase change and no new `job.progressPreview` entry for roughly 10 minutes is a stall. Ask once:
-  `Keep waiting (Recommended)` or `Cancel the review and stop`. Advancing progress is not a stall,
-  regardless of total elapsed time.
-- At terminal status, fetch the stored result:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" result <jobId> --json
-```
-
-- Read `storedJob.result`: carry `.threadId`, `.model`, `.effort`, `.result.verdict`,
-  `.result.findings`, `.result.revision_instructions`, `.result.open_questions`,
-  `.result.residual_risks`, and `.parseError`. Refresh the thread id from every round.
-- If `parseError` is set, resubmit the same plan and round once on `--thread <threadId>`. If it
-  fails again, show the raw output and ask `Stop and treat the plan as unapproved` or
-  `Continue revising anyway`.
-- If a job is `failed`, retry round 1 once without `--thread`, or a later round once on the same
-  thread. If that retry fails, restart as round 1 on a fresh thread while carrying accumulated
-  `## Reviewer responses` in the plan. Surface the error if that restart also fails.
-- On `needs-revision`, address every finding by changing the plan, rebutting it with repository
-  evidence under `## Reviewer responses`, or explicitly descoping scope-expanding/pre-existing
-  hazards into `## Out of scope` with a documented residual. Carry material `residual_risks` into
-  `## Risks and edge cases`.
-- Resubmit the full revised plan on the current thread:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --thread <threadId> --round <n> <selectionArgs> <<'CODEX_PAIR_PLAN'
-<full revised plan document>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --thread <planReviewThreadId> --round <n> <reviewSelectionArgs> <<'CODEX_PAIR_PLAN'
+[full revised plan, verbatim]
 CODEX_PAIR_PLAN
 ```
 
-- Post a one-line round/verdict/finding-count update after every completed round.
-- On `approve`, continue directly to Phase 3 without asking the user.
-- After round 2 still returns `needs-revision`, show the latest findings and ask once:
-  `Keep iterating (Recommended)`, `Implement anyway`, or `Stop here`.
-  - `Keep iterating` stays inside quick, revises on the same thread as round 3, and follows the
-    canonical scope-accretion and repeated-finding safeguards through a total cap of 6 rounds.
-    Rounds 3-5 continue automatically while converging. At round 6 without approval, ask only
-    `Implement anyway` or `Stop here`.
-  - `Implement anyway` records the current findings as original unapproved review findings and
-    enters the truthful unapproved branch in Phase 3. Do not ask about the verdict again.
-  - `Stop here` reports the latest findings and stops. The unapproved plan remains stored, so a
-    later `/stereo:implement` will show its normal non-approve gate.
-- If the plan grows beyond roughly 1.5 times its round-1 size, a finding targets review-added
-  machinery, the same finding survives two explicit rebuttals, or the plan oscillates between
-  shapes, pause at the same decision point instead of looping blindly.
+Refresh `planReviewThreadId`, resolved model, and resolved effort only from Codex plan-review
+payloads. Apply the canonical parse-error, failed-job, and one-retry recovery rules. A fresh
+restart becomes round 1 and carries accumulated `## Reviewer responses`.
 
-Phase 3 - Implementation preflight:
+On `needs-revision`, address every finding by changing the plan, rebutting with repository
+evidence, or explicitly descoping scope-expanding/pre-existing hazards. Carry complete residual
+risks. Report round, verdict, and finding count.
 
-- Use the current in-conversation plan and latest review payload; never reload plan-state.
-- Show a one-line recap of the plan summary and review rounds. Mention documented residual risks
-  when present.
-- Record `git rev-parse HEAD`, `git status --porcelain=v1 --untracked-files=all`, and all paths
-  already dirty as the rollback/review baseline.
-- If the worktree is dirty, ask once: `Stop so I can commit or stash first (Recommended)` or
-  `Continue with a dirty worktree`.
-- If the stop-time review gate is enabled, mention that finishing quick triggers one extra Codex
-  review and that `/stereo:setup --disable-review-gate` avoids it during long pair sessions.
-
-Phase 4 - Codex implements:
-
-- Use the latest plan thread by default. Let `<effectiveModel>` and `<effortArg>` represent the
-  resolved review model and optional `--effort <effectiveEffort>`.
-- For an approved plan, use the canonical implementation prompt:
+On approval, continue without a user gate. Before leaving a terminal Claude-side review, persist:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <threadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> --reviewed-by '<reviewer label>' --summary '<summary>' <repeated --open-question/--residual-risk args> <<'CODEX_PAIR_PLAN'
+[full current plan, verbatim]
+CODEX_PAIR_PLAN
+```
+
+Codex plan reviews already store each parsed round.
+
+After round 2 still needs revision, ask:
+
+- `Keep iterating (Recommended)`: continue automatically through rounds 3-5 while converging; at
+  round 6 ask only implement-anyway or stop.
+- `Implement anyway`: first persist a Claude-side `needs-revision` result when applicable, retain
+  the findings as original unapproved findings, then enter the truthful unapproved branch.
+- `Stop here`: first persist a Claude-side `needs-revision` result when applicable, report the
+  findings, and stop.
+
+Pause at the same decision point on plan growth beyond roughly 1.5 times round 1, review-added
+machinery attracting findings, two surviving rebuttals, or oscillation.
+
+## Implementation preflight
+
+Use the in-conversation plan and latest result. Show the plan summary, rounds, effective
+implementer, and residual risks.
+
+Record `baselineCommit`, status, and all already-dirty paths. If dirty, ask whether to stop for a
+commit/stash (recommended) or continue. Mention an enabled stop-review gate.
+
+If the selected implementer is Claude, scan for command-requiring work beyond host verification:
+version bumps, dependency installation, code generation, migrations, or interactive/long-running
+processes. If found, ask whether to switch to canonical Codex `sol`, leave each command user-owned,
+or stop. Never execute shell text on a Claude agent's behalf.
+
+## Implementation routing
+
+### Codex implementer
+
+If `planReviewThreadId` exists, resume it. Otherwise launch fresh without `--thread`. Always pass
+the effective implementer model and optional effort.
+
+Approved, resumed:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <planReviewThreadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
 <task>
-Implement the approved plan below in this repository. You reviewed and approved this plan earlier in this thread.
+Implement the approved plan below in this repository. You reviewed and approved this plan earlier
+in this thread.
 
-[current full plan text, verbatim]
+[current full plan, verbatim]
 </task>
 <action_safety>
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
 </action_safety>
 <completeness_contract>
-Implement the whole plan before stopping. If a step turns out to be impossible, say so explicitly instead of silently skipping it.
+Implement the whole plan and report impossible steps explicitly.
 </completeness_contract>
 <verification_loop>
-Run the repository's relevant tests or build before finalizing and fix what you break.
+Run relevant tests or builds and fix regressions.
 </verification_loop>
 <compact_output_contract>
-Report: a summary of the changes, the files you touched, the verification you ran with results, and any deviations from the plan with reasons.
+Report changes, touched files, verification, and deviations.
 </compact_output_contract>
 CODEX_PAIR_IMPL
 ```
 
-- If the user chose `Implement anyway`, use the same command and contracts but replace the
-  `<task>` block with this truthful version:
+Approved after a Claude review, fresh:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
+<task>
+Implement the approved plan below in this repository. The plan was reviewed and approved outside
+this Codex thread, by <reviewer label>.
+
+[current full plan, verbatim]
+</task>
+<action_safety>
+Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
+</action_safety>
+<completeness_contract>
+Implement the whole plan and report impossible steps explicitly.
+</completeness_contract>
+<verification_loop>
+Run relevant tests or builds and fix regressions.
+</verification_loop>
+<compact_output_contract>
+Report changes, touched files, verification, and deviations.
+</compact_output_contract>
+CODEX_PAIR_IMPL
+```
+
+For `Implement anyway` with `planReviewThreadId`, replace the approved task block with:
 
 ```text
 <task>
-Implement the reviewed but unapproved plan below in this repository. The plan was not approved in this thread; the latest review findings are known open issues. Implement the plan as specified and address a finding where the plan already covers its remedy. Do not silently expand scope.
+Implement the reviewed but unapproved plan below in this repository. You reviewed this plan
+earlier in this thread, and the user explicitly chose to continue despite the current verdict.
+Implement only the plan's scope and do not silently discard the known findings.
 
-[current full plan text, verbatim]
+[current full plan, verbatim]
 
 Latest unapproved review findings:
 [latest findings, verbatim]
 </task>
 ```
 
-- Poll like the plan loop, using a Bash timeout of 600000 per poll:
+For `Implement anyway` without `planReviewThreadId`, launch fresh and use:
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
+```text
+<task>
+Implement the reviewed but unapproved plan below in this repository. The plan was reviewed
+outside this Codex thread, by <reviewer label>, and the user explicitly chose to continue despite
+the current verdict. Implement only the plan's scope and do not silently discard the known
+findings.
+
+[current full plan, verbatim]
+
+Latest unapproved review findings:
+[latest findings, verbatim]
+</task>
 ```
 
-- Post phase, elapsed time, and the latest `job.progressPreview` entry after non-terminal polls.
-  Treat 10 minutes without a phase change or a new `job.progressPreview` entry as stalled and ask
-  `Keep waiting (Recommended)` or
-  `Cancel the implementation and stop`.
-- Fetch terminal output with `result <jobId> --json`. Surface top-level JSON errors.
-- If resume fails, or `touchedFiles` is empty and git shows no delta against the baseline despite
-  claimed changes, retry once with `task --background --json --write --fresh`, the identical full
-  prompt, and a note that prior thread context is unavailable. Keep the truthful unapproved
-  wording and findings in that branch. If the fresh run still makes no change, surface it.
-- Always adopt the thread id from the latest implementation payload.
+Both variants retain all four safety/output contracts from the approved templates.
 
-Phase 5 - Claude reviews and fixes:
+Poll and fetch through the routing skill. If resume fails, or claimed changes have neither
+`touchedFiles` nor an actual delta, retry once fresh with the same truthful full prompt. Adopt the
+latest implementation payload's thread only as `implementationThreadId`.
 
-- Inspect `git status --short --untracked-files=all`, `git diff`, and every changed or untracked
-  file. Ignore paths already dirty in the baseline when attributing the delta.
-- Run the identifiable project test suite or build on the host when permission is available.
-- Verify the implementation against every plan step, earlier review finding, and reported
-  deviation. For every original unapproved review finding, maintain a verified status:
-  `resolved` only when the delta and tests prove it; otherwise `unresolved`.
-- If acceptable, continue to the final report. Otherwise send a numbered fix list with file/line,
-  the defect, and the correct result:
+### Claude implementer
+
+Use the routing skill's foreground `stereo:implementer` template with the plan, baseline-dirty
+paths, original unapproved findings when present, and user-owned steps. After every invocation,
+compare HEAD with `baselineCommit` and inspect the actual delta. Stop and retract the never-commit
+claim if HEAD moved.
+
+After either implementer, run identifiable host tests/builds and record commands and results.
+
+## Implementation-review and fix loop
+
+Build input from the plan, baseline, baseline-dirty paths, complete current delta, implementer
+report, host results, and original unapproved findings. The canonical result is
+`${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`.
+
+Route each review:
+
+- `claude:session`: review inline.
+- Named Claude: use the routing skill's `stereo:implementation-reviewer` template.
+- Codex: launch a fresh read-only task:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <threadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_FIX'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> <<'CODEX_PAIR_PLAN'
+<task>
+Review the current implementation delta against the complete plan. Inspect status and diff
+relative to the baseline, ignore already-dirty paths, run only named verification commands, and
+do not edit files.
+
+Plan:
+[current full plan, verbatim]
+
+Baseline commit and already-dirty paths:
+[baseline data]
+
+Host verification:
+[commands and results]
+
+Original unapproved findings:
+[findings or none]
+</task>
+<output_contract>
+Return only raw JSON matching
+${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json.
+</output_contract>
+CODEX_PAIR_PLAN
+```
+
+Save a Codex review task's thread only as `implementationReviewThreadId`. Parse
+`storedJob.result.rawOutput`; retry malformed output once on that review thread. Never assign it
+to `implementationThreadId`.
+
+If acceptable, finish. Otherwise send exact numbered fixes to the original implementer.
+
+Codex fix:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <implementationThreadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_FIX'
 <task>
 Fix the review findings below in this repository. Keep all other behavior unchanged.
 
-[numbered fix list]
+[numbered fixes]
 </task>
 <verification_loop>
-Run the repository's relevant tests or build before finalizing and fix what you break.
+Run relevant tests or builds and fix regressions.
 </verification_loop>
 <compact_output_contract>
-Report which findings you fixed, how, and what verification you ran.
+Report fixed findings and verification.
 </compact_output_contract>
 CODEX_PAIR_FIX
 ```
 
-- Poll, fetch, update to the latest thread id, and re-review after each fix.
-- After 2 fix rounds, present remaining issues and ask:
-  `Send one more Codex round`, `Let Claude fix the rest directly`, or `Stop and report as-is`.
+For Claude fixes, use the same named implementer and model with the full plan and fixes. Recheck
+HEAD and delta. After every fix, rerun host checks and the selected reviewer.
 
-Final report:
+Quick pauses after 2 fix rounds. Show remaining fixes and ask whether to send one more implementer
+round, let Claude fix directly, or stop. Do not silently exceed the cap.
 
-- Summarize fix rounds used, files Codex touched, tests run and their results, deviations, and all
-  carried `open_questions` and `residual_risks` from the latest plan review.
-- If the unapproved branch was used, list every original review finding with its verified final
-  status (`resolved` or `unresolved`) and evidence from the delta/tests. Never label a finding
-  unresolved merely because it appeared in the pre-implementation review.
-- Include `Codex session ID: <threadId>` and `Resume in Codex: codex resume <threadId>`.
-- State plainly that nothing was committed. Give rollback guidance relative to the recorded
-  baseline: `git restore` for newly modified tracked paths and cautious `git clean` guidance for
-  new paths, without erasing paths that were already dirty.
-- Never commit. Never push.
-- If Codex is missing or unauthenticated at any point, stop and tell the user to run
-  `/stereo:setup`.
+For every original unapproved plan finding, track `resolved` only when delta/tests prove it;
+otherwise `unresolved`.
+
+## Final report
+
+Report selected roles, fix rounds, attributed files, host results, deviations, user-owned steps,
+open questions, and residual risks. If unapproved implementation was chosen, list every original
+finding with status and evidence.
+
+Include `implementationThreadId` and `codex resume <implementationThreadId>` only when Codex
+implemented. Label all other thread ids by role. Give rollback guidance relative to the baseline
+without erasing pre-existing dirty paths. State nothing was committed or pushed only if HEAD is
+unchanged; otherwise retract that claim. Never commit or push.

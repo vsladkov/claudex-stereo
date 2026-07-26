@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Implementation-review verdict. When acceptable is true, fixes must be empty; when material defects remain, acceptable is false and fixes must be non-empty.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["acceptable", "summary", "fixes"],
+  "properties": {
+    "acceptable": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fixes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "line", "problem", "correct"],
+        "properties": {
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "problem": {
+            "type": "string",
+            "minLength": 1
+          },
+          "correct": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
