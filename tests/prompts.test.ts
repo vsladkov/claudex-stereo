@@ -35,11 +35,20 @@ test('interpolateTemplate never re-scans substituted values', () => {
 // versa) fails here instead of silently degrading a live prompt.
 const PRODUCTION_VARIABLES = {
   'adversarial-review': {
-    REVIEW_KIND: 'Adversarial Review',
     TARGET_LABEL: 'working tree diff',
     USER_FOCUS: 'No extra focus provided.',
     REVIEW_COLLECTION_GUIDANCE: '',
     REVIEW_INPUT: 'diff content',
+  },
+  'implementation-review': {
+    PLAN_INPUT: 'plan text',
+    BASELINE_CONTEXT: 'baseline context',
+    REVIEW_CONTEXT: 'review context',
+    HOST_RESULTS: 'host results',
+  },
+  'plan-draft': {
+    TASK_TEXT: 'task text',
+    SIZE_CONTRACT: 'size contract',
   },
   'plan-review': {
     PLAN_INPUT: 'plan text',
@@ -53,10 +62,14 @@ const PRODUCTION_VARIABLES = {
 };
 
 for (const [name, variables] of Object.entries(PRODUCTION_VARIABLES)) {
-  test(`the ${name} template's placeholders are fully covered by its call site`, () => {
+  test(`the ${name} template's placeholders exactly match its production variables`, () => {
     const template = loadPromptTemplate(PLUGIN_ROOT, name);
-    const placeholders = [...template.matchAll(/\{\{([A-Z_]+)\}\}/g)].map((match) => match[1]);
+    const placeholders = [
+      ...new Set([...template.matchAll(/\{\{([A-Z_]+)\}\}/g)].map((match) => match[1])),
+    ].sort();
+    const productionVariables = Object.keys(variables).sort();
     assert.equal(placeholders.length > 0, true);
+    assert.deepEqual(placeholders, productionVariables);
     const rendered = interpolateTemplate(template, variables);
     assert.doesNotMatch(rendered, /\{\{[A-Z_]+\}\}/);
   });

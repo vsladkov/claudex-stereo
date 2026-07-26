@@ -144,6 +144,52 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(nativeReview, /\/stereo:adversarial-review/);
 });
 
+test('pair commands fill the canonical role briefs', () => {
+  const plan = read('commands/plan.md');
+  const implement = read('commands/implement.md');
+  const quick = read('commands/quick.md');
+
+  for (const [file, source] of [
+    ['plan.md', plan],
+    ['quick.md', quick],
+  ] as const) {
+    assert.match(source, /prompts\/plan-draft\.md/, `${file} must load the planner brief`);
+    assert.match(source, /prompts\/plan-review\.md/, `${file} must load the plan-review brief`);
+    for (const token of [
+      '{{TASK_TEXT}}',
+      '{{SIZE_CONTRACT}}',
+      '{{PLAN_INPUT}}',
+      '{{ROUND_NUMBER}}',
+      '{{REVISION_CONTEXT}}',
+      '{{REPO_MAP}}',
+    ]) {
+      assert.equal(source.includes(token), true, `${file} must name the ${token} fill`);
+    }
+  }
+
+  for (const [file, source] of [
+    ['implement.md', implement],
+    ['quick.md', quick],
+  ] as const) {
+    assert.match(
+      source,
+      /prompts\/implementation-review\.md/,
+      `${file} must load the implementation-review brief`,
+    );
+    for (const token of [
+      '{{PLAN_INPUT}}',
+      '{{BASELINE_CONTEXT}}',
+      '{{REVIEW_CONTEXT}}',
+      '{{HOST_RESULTS}}',
+    ]) {
+      assert.equal(source.includes(token), true, `${file} must name the ${token} fill`);
+    }
+  }
+
+  assert.doesNotMatch(read('prompts/plan-review.md'), /You are Codex/);
+  assert.doesNotMatch(read('prompts/adversarial-review.md'), /You are Codex/);
+});
+
 test('pair agents keep their role-specific tool and output contracts', () => {
   const expectedAgents = [
     'adversarial-reviewer.md',

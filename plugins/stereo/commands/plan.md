@@ -52,9 +52,17 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 2. If `available` is false, stop with: `Run /stereo:plan first.`
 3. Use the exact stored `plan` as the current plan. Always perform an independent round 1; do not
    resume a stored thread.
-4. Route exactly one round through `--plan-reviewer`:
-   - For `claude:session`, review inline using the plan-review schema.
-   - For a named Claude model, use the routing skill's `stereo:plan-reviewer` template.
+4. Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-review.md` and fill it without changing any other
+   text:
+   - `{{PLAN_INPUT}}` = the full stored plan.
+   - `{{ROUND_NUMBER}}` = `1`.
+   - `{{REPO_MAP}}` = empty; the Claude reviewer inspects the repository with its native tools.
+   - `{{REVISION_CONTEXT}}` = empty because this is an independent round 1.
+     The result is the single `planReviewBrief` for either Claude route.
+5. Route exactly one round through `--plan-reviewer`:
+   - For `claude:session`, apply `planReviewBrief` inline and produce structured loop state.
+   - For a named Claude model, use `planReviewBrief` verbatim as the routing skill's
+     `stereo:plan-reviewer` prompt.
    - For Codex, launch:
 
 ```bash
@@ -64,7 +72,8 @@ CODEX_PAIR_PLAN
 ```
 
 Use the routing skill's validation and one-retry recovery. Read Codex results from
-`storedJob.result`, including `threadId`, `model`, `effort`, `result`, and `parseError`.
+`storedJob.result`, including `threadId`, `model`, `effort`, `result`, and `parseError`, and record
+the invocation usage using the routing skill's `storedJob.tokenUsage` rule.
 
 Codex plan review stores a successfully parsed result automatically. For a Claude-side result,
 persist the actual verdict, even `needs-revision`, with the full plan and one option per question
@@ -76,56 +85,44 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verd
 CODEX_PAIR_PLAN
 ```
 
-Report the verdict, findings, revision instructions, open questions, and complete residual risks
-verbatim. Do not revise or implement.
+Report the verdict, findings, revision instructions, open questions, complete residual risks, and
+the reviewer's per-invocation usage and duration (or `usage unavailable`) verbatim. Do not revise
+or implement.
 
 ## Draft step
 
 For the full phase or `--draft-only`, inspect the repository read-only until the draft can name
 exact files, symbols, callers, configuration, registration points, and tests.
 
-Produce a self-contained plan with exactly these headings once each and in order:
+Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-draft.md` and fill it without changing any other text:
 
-1. `## Goal`
-2. `## Approach`
-3. `## Files to change`
-4. `## Step-by-step changes`
-5. `## Testing and verification`
-6. `## Risks and edge cases`
-7. `## Out of scope`
+- `{{TASK_TEXT}}` = the task text verbatim.
+- `{{SIZE_CONTRACT}}` = `If an honest draft needs more than roughly 400 lines, propose splitting
+the task before review.`
 
-If an honest draft needs more than roughly 400 lines, propose splitting the task before review.
-Never write the draft into the user's repository.
+The result is the single `planDraftBrief` for every route. Never write the draft into the user's
+repository.
 
 Route by `--planner`:
 
-- `claude:session`: draft inline after read-only exploration.
-- Named Claude: use the routing skill's `stereo:planner` template with the task verbatim.
+- `claude:session`: apply `planDraftBrief` inline after read-only exploration.
+- Named Claude: use `planDraftBrief` verbatim as the routing skill's `stereo:planner` prompt.
 - Codex: launch a fresh read-only task:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json <plannerSelectionArgs> <<'CODEX_PAIR_PLAN'
-<task>
-Explore this repository read-only and draft an implementation plan for the task below.
-
-[task text verbatim]
-</task>
-<output_contract>
-Return only the plan document with exactly these headings once each and in order:
-## Goal
-## Approach
-## Files to change
-## Step-by-step changes
-## Testing and verification
-## Risks and edge cases
-## Out of scope
-No preamble, Markdown fence, or trailing commentary.
-</output_contract>
+[planDraftBrief, verbatim]
 CODEX_PAIR_PLAN
 ```
 
 For a Codex draft, read `storedJob.result.rawOutput` and save its thread id only as
-`plannerThreadId`. Never use it as a review or implementation thread.
+`plannerThreadId`. Record its per-job usage from `storedJob.tokenUsage.job`; never treat the
+cumulative sibling `storedJob.tokenUsage.thread` as this invocation's usage. Never use the thread
+as a review or implementation thread.
+
+For a named-Claude draft, record the Agent result's token usage and duration. For an inline draft,
+record any invocation metrics the harness exposes. Use `usage unavailable` when the relevant
+result omits metrics.
 
 Validate the seven headings. For malformed named-Claude or Codex output, apply the routing skill's
 single retry. A Codex retry resumes only `plannerThreadId` with a read-only
@@ -141,8 +138,9 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verd
 CODEX_PAIR_PLAN
 ```
 
-Present the stored draft, identify the selected planner, and stop. Say that `/stereo:implement`
-will gate on the unapproved `draft` verdict and that `--review-only` runs the next step.
+Present the stored draft, identify the selected planner and its per-invocation usage/duration (or
+`usage unavailable`), and stop. Say that `/stereo:implement` will gate on the unapproved `draft`
+verdict and that `--review-only` runs the next step.
 
 ## Full plan-review phase
 
@@ -152,9 +150,19 @@ optional `planReviewThreadId`, and the complete residual-risk set. Both reviewer
 
 For each round:
 
-- `claude:session`: review inline into structured loop state.
-- Named Claude: use the routing skill's foreground `stereo:plan-reviewer` template with the full
-  plan and bounded prior-round context.
+- For either Claude route, read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-review.md` and fill it without
+  changing any other text:
+  - `{{PLAN_INPUT}}` = the full current plan.
+  - `{{ROUND_NUMBER}}` = the current round.
+  - `{{REPO_MAP}}` = empty; the Claude reviewer uses Read, Glob, Grep, and read-only Bash.
+  - `{{REVISION_CONTEXT}}` = empty in round 1. In later rounds, use the runtime's revision-context
+    meaning adapted for a stateless reviewer: state that the plan responds to earlier findings;
+    embed the earlier findings, responses, open questions, and complete residual risks; require
+    every rebuttal to be verified; and prohibit re-auditing unchanged, previously accepted
+    sections unless the revision changed their assumptions.
+    Use the resulting `planReviewBrief` verbatim for the selected Claude route.
+- `claude:session`: apply `planReviewBrief` inline into structured loop state.
+- Named Claude: use `planReviewBrief` as the foreground `stereo:plan-reviewer` prompt.
 - Codex round 1:
 
 ```bash
@@ -179,8 +187,9 @@ If a Codex job fails, retry round 1 once fresh or a later round once on `planRev
 that fails, restart as round 1 fresh with accumulated `## Reviewer responses`; surface the error
 if the restart also fails.
 
-After every completed round, report its number, verdict, and finding count. On
-`needs-revision`, address every finding exactly once:
+After every completed round, report its number, verdict, finding count, and the reviewer's
+per-invocation usage and duration (or `usage unavailable`). On `needs-revision`, address every
+finding exactly once:
 
 1. Change the plan.
 2. Rebut it under `## Reviewer responses` with concrete repository evidence.
@@ -203,5 +212,9 @@ automatically. Only a final Codex verdict on `planReviewThreadId` can supply a l
 review thread.
 
 Finish with the full plan, verdict, rounds, reviewer, open questions, complete residual risks, and
-whether a resumable Codex review thread exists. Label `plannerThreadId` separately. Tell the user
-to run `/stereo:implement`. Never implement, commit, or push.
+per-invocation usage/duration for every routed draft and review turn (using `usage unavailable`
+when omitted), plus whether a resumable Codex review thread exists. Use
+`storedJob.tokenUsage.job` for Codex turns and the Agent result's usage/duration for named Claude
+turns. Label `storedJob.tokenUsage.thread` separately as cumulative when it is included; never
+compare it with a single Claude invocation. Label `plannerThreadId` separately. Tell the user to
+run `/stereo:implement`. Never implement, commit, or push.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.14.0
+
+- Give Claude and Codex planners, plan reviewers, implementation reviewers, and adversarial
+  reviewers the same canonical role brief, including stateless prior-review context
+- Neutralize Codex-specific identities in shared review prompts and add repository-root
+  `AGENTS.md` guidance for Codex contributor grounding
+- Report per-invocation token usage and duration for both ecosystems, with Codex per-job and
+  cumulative-thread counters labeled separately
+- Strengthen prompt and command wiring tests so template placeholders and command fills cannot
+  drift silently
+
 ## 1.13.0
 
 - Add standalone draft, plan-review, implementation, and implementation-review step modes to the

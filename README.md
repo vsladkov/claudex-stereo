@@ -100,7 +100,23 @@ Every multi-role command uses role-named model flags: `--planner`, `--plan-revie
 
 One `--effort` value applies to every Codex-routed role in a command. gpt-5.6-family selections
 default to `max`, other `gpt-*` selections default to `xhigh`, and non-OpenAI selections omit an
-effort override unless you supply one.
+effort override unless you supply one. Claude invocations do not expose an equivalent
+per-invocation effort control; choose a stronger Claude model when that role needs more reasoning
+depth.
+
+Stereo uses one canonical brief per role, regardless of which ecosystem performs it:
+
+| Role                    | Canonical brief                                   | Filled by                              | Consumers                                        |
+| ----------------------- | ------------------------------------------------- | -------------------------------------- | ------------------------------------------------ |
+| Planner                 | `plugins/stereo/prompts/plan-draft.md`            | Orchestrating command                  | Plan and Quick drafts, all routes                |
+| Plan reviewer           | `plugins/stereo/prompts/plan-review.md`           | Runtime for Codex; command for Claude  | Plan and Quick review rounds, all routes         |
+| Implementation reviewer | `plugins/stereo/prompts/implementation-review.md` | Orchestrating command                  | Implement and Quick review rounds, all routes    |
+| Adversarial reviewer    | `plugins/stereo/prompts/adversarial-review.md`    | Runtime for Codex; command for Claude  | Adversarial review, both ecosystems              |
+| Implementer             | Equivalent prompt and contained-agent contracts   | Route-specific by containment boundary | Implement and Quick implementation and fix turns |
+
+Codex also reads repository-root `AGENTS.md` guidance. If your project keeps contributor or
+workflow guidance only in `CLAUDE.md`, add an `AGENTS.md` pointer or mirror the applicable guidance
+there so cold Codex threads receive the same repository grounding.
 
 There are three deliberate boundaries. `/stereo:review` remains Codex-native; use
 `/stereo:adversarial-review` for a Claude-routed review. `/stereo:rescue` and `/stereo:transfer`

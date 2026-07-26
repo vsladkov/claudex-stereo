@@ -48,36 +48,32 @@ configuration, registration, and tests. Quick is for one small feature whose hon
 roughly 120 lines. If it crosses features/subsystems or exceeds that bound, stop before review and
 direct the user to `/stereo:plan`.
 
-Draft exactly the seven canonical headings in order. Never write the plan into the repository.
+Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-draft.md` and fill it without changing any other text:
+
+- `{{TASK_TEXT}}` = the task text verbatim.
+- `{{SIZE_CONTRACT}}` = `This is a compact Quick plan. If the task crosses features or subsystems,
+or an honest plan would exceed roughly 120 lines, stop and direct the user to /stereo:plan.`
+
+The result is the single `planDraftBrief` for every route. Never write the plan into the
+repository.
 
 Route the draft:
 
-- `claude:session`: draft inline.
-- Named Claude: use the routing skill's `stereo:planner` template.
+- `claude:session`: apply `planDraftBrief` inline.
+- Named Claude: use `planDraftBrief` verbatim as the routing skill's `stereo:planner` prompt.
 - Codex: launch a fresh read-only task:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json <plannerSelectionArgs> <<'CODEX_PAIR_PLAN'
-<task>
-Explore this repository read-only and draft a compact implementation plan for this small task:
-
-[task text verbatim]
-</task>
-<output_contract>
-Return only a plan with exactly these headings once each and in order:
-## Goal
-## Approach
-## Files to change
-## Step-by-step changes
-## Testing and verification
-## Risks and edge cases
-## Out of scope
-</output_contract>
+[planDraftBrief, verbatim]
 CODEX_PAIR_PLAN
 ```
 
 For a Codex draft, read `storedJob.result.rawOutput` and save its thread only as
-`plannerThreadId`. Validate the seven headings and apply the routing skill's one-retry recovery.
+`plannerThreadId`. Record per-job usage from `storedJob.tokenUsage.job`. For a named-Claude draft,
+record the Agent result's token usage and duration. Record any inline metrics the harness exposes;
+otherwise use `usage unavailable`. Validate the seven headings and apply the routing skill's
+one-retry recovery.
 
 ## Existing-plan warning
 
@@ -98,9 +94,19 @@ keep-iterating choice.
 
 For each round:
 
-- `claude:session`: review inline into structured state.
-- Named Claude: use the routing skill's `stereo:plan-reviewer` template with full plan and bounded
-  prior context.
+- For either Claude route, read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-review.md` and fill it without
+  changing any other text:
+  - `{{PLAN_INPUT}}` = the full current plan.
+  - `{{ROUND_NUMBER}}` = the current round.
+  - `{{REPO_MAP}}` = empty; the Claude reviewer uses its native read-only repository tools.
+  - `{{REVISION_CONTEXT}}` = empty in round 1. In later rounds, use the runtime's revision-context
+    meaning adapted for statelessness: state that the plan responds to earlier findings; embed the
+    earlier findings, responses, open questions, and complete residual risks; require rebuttals to
+    be verified; and prohibit re-auditing unchanged, previously accepted sections unless the
+    revision changed their assumptions.
+    Use the resulting `planReviewBrief` verbatim for the selected Claude route.
+- `claude:session`: apply `planReviewBrief` inline into structured state.
+- Named Claude: use `planReviewBrief` as the `stereo:plan-reviewer` prompt.
 - Codex round 1:
 
 ```bash
@@ -121,9 +127,12 @@ Refresh `planReviewThreadId`, resolved model, and resolved effort only from Code
 payloads. Apply the canonical parse-error, failed-job, and one-retry recovery rules. A fresh
 restart becomes round 1 and carries accumulated `## Reviewer responses`.
 
+After every completed round, report its number, verdict, finding count, and reviewer
+per-invocation usage and duration (or `usage unavailable`).
+
 On `needs-revision`, address every finding by changing the plan, rebutting with repository
 evidence, or explicitly descoping scope-expanding/pre-existing hazards. Carry complete residual
-risks. Report round, verdict, and finding count.
+risks.
 
 On approval, continue without a user gate. Before leaving a terminal Claude-side review, persist:
 
@@ -252,14 +261,16 @@ Both variants retain all four safety/output contracts from the approved template
 
 Poll and fetch through the routing skill. If resume fails, or claimed changes have neither
 `touchedFiles` nor an actual delta, retry once fresh with the same truthful full prompt. Adopt the
-latest implementation payload's thread only as `implementationThreadId`.
+latest implementation payload's thread only as `implementationThreadId`. Record every Codex
+implementation or retry invocation's per-job usage from `storedJob.tokenUsage.job`.
 
 ### Claude implementer
 
 Use the routing skill's foreground `stereo:implementer` template with the plan, baseline-dirty
 paths, original unapproved findings when present, and user-owned steps. After every invocation,
-compare HEAD with `baselineCommit` and inspect the actual delta. Stop and retract the never-commit
-claim if HEAD moved.
+record the Agent result's token usage and duration (or `usage unavailable`), compare HEAD with
+`baselineCommit`, and inspect the actual delta. Stop and retract the never-commit claim if HEAD
+moved.
 
 After either implementer, run identifiable host tests/builds and record commands and results.
 
@@ -269,35 +280,34 @@ Build input from the plan, baseline, baseline-dirty paths, complete current delt
 report, host results, and original unapproved findings. The canonical result is
 `${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`.
 
+Maintain `implementationReviewHistory` across the otherwise stateless review invocations:
+
+- Round 1 contains the implementer report verbatim and the original unapproved plan findings when
+  the user selected `Implement anyway`; otherwise it states that there are no original findings.
+- Every later round preserves that round-1 context, retains every prior numbered
+  implementation-review fix with its `resolved`/`unresolved` status from the latest delta and host
+  results, and includes the latest fix-round implementer report verbatim.
+
 Route each review:
 
-- `claude:session`: review inline.
-- Named Claude: use the routing skill's `stereo:implementation-reviewer` template.
+- Read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md` and fill it once for the current
+  round without changing any other text:
+  - `{{PLAN_INPUT}}` = the full current plan.
+  - `{{BASELINE_CONTEXT}}` = the normal Quick attribution semantics, including `baselineCommit`,
+    baseline-dirty paths excluded from attribution, current status/diff, and every attributed
+    changed and untracked file.
+  - `{{REVIEW_CONTEXT}}` = the current `implementationReviewHistory`.
+  - `{{HOST_RESULTS}}` = every named host-verification command and its exact exit result/output
+    summary for the latest delta.
+    Use the resulting `implementationReviewBrief` verbatim for the selected route.
+- `claude:session`: apply `implementationReviewBrief` inline.
+- Named Claude: use `implementationReviewBrief` as the routing skill's
+  `stereo:implementation-reviewer` prompt.
 - Codex: launch a fresh read-only task:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> <<'CODEX_PAIR_PLAN'
-<task>
-Review the current implementation delta against the complete plan. Inspect status and diff
-relative to the baseline, ignore already-dirty paths, run only named verification commands, and
-do not edit files.
-
-Plan:
-[current full plan, verbatim]
-
-Baseline commit and already-dirty paths:
-[baseline data]
-
-Host verification:
-[commands and results]
-
-Original unapproved findings:
-[findings or none]
-</task>
-<output_contract>
-Return only raw JSON matching
-${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json.
-</output_contract>
+[implementationReviewBrief, verbatim]
 CODEX_PAIR_PLAN
 ```
 
@@ -305,7 +315,9 @@ Save a Codex review task's thread only as `implementationReviewThreadId`. Parse
 `storedJob.result.rawOutput`; retry malformed output once on that review thread. Never assign it
 to `implementationThreadId`.
 
-If acceptable, finish. Otherwise send exact numbered fixes to the original implementer.
+After every completed review round, report its number, verdict/fix count, and reviewer
+per-invocation usage and duration (or `usage unavailable`). If acceptable, finish. Otherwise send
+exact numbered fixes to the original implementer.
 
 Codex fix:
 
@@ -326,7 +338,8 @@ CODEX_PAIR_FIX
 ```
 
 For Claude fixes, use the same named implementer and model with the full plan and fixes. Recheck
-HEAD and delta. After every fix, rerun host checks and the selected reviewer.
+HEAD and delta. After every fix, rerun host checks, update every prior fix's
+`resolved`/`unresolved` status for the next `{{REVIEW_CONTEXT}}`, and invoke the selected reviewer.
 
 Quick pauses after 2 fix rounds. Show remaining fixes and ask whether to send one more implementer
 round, let Claude fix directly, or stop. Do not silently exceed the cap.
@@ -337,8 +350,12 @@ otherwise `unresolved`.
 ## Final report
 
 Report selected roles, fix rounds, attributed files, host results, deviations, user-owned steps,
-open questions, and residual risks. If unapproved implementation was chosen, list every original
-finding with status and evidence.
+open questions, residual risks, and per-invocation usage/duration for every draft, plan-review,
+implementer, fix, and implementation-review turn. Use `usage unavailable` when metrics were
+omitted. For Codex turns use `storedJob.tokenUsage.job`; for named Claude turns use the Agent
+result's usage and duration. Label `storedJob.tokenUsage.thread` cumulative when shown and never
+compare it with one Claude invocation. If unapproved implementation was chosen, list every
+original finding with status and evidence.
 
 Include `implementationThreadId` and `codex resume <implementationThreadId>` only when Codex
 implemented. Label all other thread ids by role. Give rollback guidance relative to the baseline

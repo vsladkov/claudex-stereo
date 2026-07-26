@@ -34,6 +34,10 @@ For Codex pair roles, use the user-supplied `--effort` when present. Otherwise u
 `gpt-5.6` family, `xhigh` for other `gpt-*` models, and omit `--effort` for non-OpenAI models.
 Preserve command-specific stored-model/stored-effort rules when the command defines them.
 
+Claude foreground and inline invocations do not expose a per-invocation reasoning-effort control.
+Never translate `--effort` into thinking-keyword prompt tricks. When more Claude-side reasoning is
+needed, recommend selecting a stronger Claude model instead.
+
 ## Foreground agents
 
 Always invoke these agents in the foreground. Supply the command's complete step-specific context
@@ -46,8 +50,7 @@ subagent_type: "stereo:planner"
 model: "<sonnet|opus|haiku|fable>"
 run_in_background: false
 prompt: |
-  Explore this repository read-only and draft the requested plan.
-  [task and exact seven-heading contract]
+  [filled ${CLAUDE_PLUGIN_ROOT}/prompts/plan-draft.md]
 ```
 
 Validate that the result has exactly these second-level headings, once each and in order:
@@ -61,11 +64,7 @@ subagent_type: "stereo:plan-reviewer"
 model: "<sonnet|opus|haiku|fable>"
 run_in_background: false
 prompt: |
-  Perform exactly one adversarial plan-review round.
-  [round, prior-round context, and full current plan]
-
-  Return only raw JSON matching
-  ${CLAUDE_PLUGIN_ROOT}/schemas/plan-review-output.schema.json.
+  [filled ${CLAUDE_PLUGIN_ROOT}/prompts/plan-review.md]
 ```
 
 Validate the top-level object and every required field, enum, array, finding field, confidence
@@ -93,11 +92,7 @@ subagent_type: "stereo:implementation-reviewer"
 model: "<sonnet|opus|haiku|fable>"
 run_in_background: false
 prompt: |
-  Review one implementation delta against the supplied plan and baseline.
-  [plan, baseline, diff/status guidance, and named verification results]
-
-  Return only raw JSON matching
-  ${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json.
+  [filled ${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md]
 ```
 
 Validate `acceptable`, non-empty `summary`, and `fixes`; validate every fix's non-empty `file`,
@@ -121,6 +116,11 @@ prompt: |
 Validate the top-level object and every field required by
 `${CLAUDE_PLUGIN_ROOT}/schemas/review-output.schema.json`, including verdict enums, finding
 severity, positive line ranges, confidence range, recommendation, and `next_steps`.
+
+After every foreground Agent invocation, record the token usage and duration reported in the
+Agent result. If the harness omits either metric, record `usage unavailable` for the missing
+metric instead of dropping it. Include these per-invocation metrics in the command's round note
+and final report wherever Codex per-invocation usage is reported.
 
 For malformed agent output, retry the same selected agent once with the exact validation error and
 the full original input. If the retry is also malformed, ask whether to perform the step inline or
@@ -146,6 +146,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" result <jobId> --json
 Treat a top-level `{"error": ...}` from launch, status, or result as a command failure: surface it
 and stop or follow the command's explicit retry rule. Do not confuse an empty terminal
 `progressPreview` with missing progress.
+
+From every successful `result <jobId> --json` fetch, record `storedJob.tokenUsage.job` as that
+invocation's usage. `storedJob.tokenUsage.thread` is cumulative for the whole Codex thread: it may
+be reported separately only when labeled cumulative, and must never be compared with a single
+Claude invocation. If `tokenUsage` or the relevant counter is absent, record `usage unavailable`
+instead of omitting the usage line. Carry each invocation's usage into the command's round notes
+and final report.
 
 Track the last phase and last progress entry. Only treat a job as stalled after roughly ten
 minutes with neither a phase change nor a new progress entry. Ask whether to keep waiting
