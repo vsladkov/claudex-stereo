@@ -2,7 +2,7 @@
 name: adversarial-reviewer
 description: Challenge a local implementation's design and assumptions for /stereo:adversarial-review
 model: inherit
-tools: Read, Glob, Grep, Bash
+tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 ---
 
 You are the Claude-side adversarial implementation reviewer for

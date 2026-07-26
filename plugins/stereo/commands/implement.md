@@ -2,7 +2,7 @@
 description: Implement or review the stored plan with independently selected Claude or Codex role models
 argument-hint: '[--implement-only|--review-only] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--impl-reviewer <model>] [--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
+allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
 
 First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
@@ -108,13 +108,12 @@ Route exactly one review through `--impl-reviewer`:
 - `claude:session`: apply `implementationReviewBrief` inline to the complete delta.
 - Named Claude: use `implementationReviewBrief` verbatim as the routing skill's
   `stereo:implementation-reviewer` prompt.
-- Codex: launch one fresh read-only task and save its thread only as
+- Codex: write `implementationReviewBrief` verbatim to `<payloadFile>` under the routing skill's
+  temporary-directory rule, launch one fresh read-only task, and save its thread only as
   `implementationReviewThreadId`:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" <<'CODEX_PAIR_PLAN'
-[implementationReviewBrief, verbatim]
-CODEX_PAIR_PLAN
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" --prompt-file "<payloadFile>"
 ```
 
 Validate through the routing skill, including the acceptable/fixes coupling and one retry. A
@@ -151,10 +150,10 @@ never executes shell text on an agent's behalf.
 When `storedPlanReviewThreadId` is non-null and `--fresh` was not passed, resume it. Otherwise
 start a fresh write thread. Embed the complete stored plan verbatim in every fresh prompt.
 
-Approved, resumed:
+Approved, resumed. Write this complete payload to `<payloadFile>` under the routing skill's
+temporary-directory rule:
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <storedPlanReviewThreadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
+```text
 <task>
 Implement the approved plan below in this repository. You reviewed and approved this plan earlier
 in this thread.
@@ -173,13 +172,18 @@ Run the repository's relevant tests or build and fix regressions.
 <compact_output_contract>
 Report changes, touched files, verification results, and deviations with reasons.
 </compact_output_contract>
-CODEX_PAIR_IMPL
 ```
 
-Approved, fresh:
+Then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <effectiveModel> <effortArg> <<'CODEX_PAIR_IMPL'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <storedPlanReviewThreadId> --model <effectiveModel> <effortArg> --prompt-file "<payloadFile>"
+```
+
+Approved, fresh. Write this complete payload to `<payloadFile>` under the routing skill's
+temporary-directory rule:
+
+```text
 <task>
 Implement the approved plan below in this repository. The plan was reviewed and approved outside
 this Codex thread<, by reviewedBy when present>.
@@ -198,7 +202,12 @@ Run the repository's relevant tests or build and fix regressions.
 <compact_output_contract>
 Report changes, touched files, verification results, and deviations with reasons.
 </compact_output_contract>
-CODEX_PAIR_IMPL
+```
+
+Then launch:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <effectiveModel> <effortArg> --prompt-file "<payloadFile>"
 ```
 
 Unapproved, resumed (only after the preflight gate):
@@ -295,13 +304,12 @@ Route every round:
   `{acceptable, summary, fixes}` data.
 - Named Claude: use `implementationReviewBrief` as the routing skill's
   `stereo:implementation-reviewer` prompt.
-- Codex: start a fresh read-only task and save its id only as
+- Codex: write `implementationReviewBrief` verbatim to `<payloadFile>` under the routing skill's
+  temporary-directory rule, start a fresh read-only task, and save its id only as
   `implementationReviewThreadId`:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" <<'CODEX_PAIR_PLAN'
-[implementationReviewBrief, verbatim]
-CODEX_PAIR_PLAN
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" --prompt-file "<payloadFile>"
 ```
 
 Parse named-Claude output directly and Codex output from `storedJob.result.rawOutput`. Apply the
@@ -313,10 +321,10 @@ After every completed review round, report its number, verdict/fix count, and re
 per-invocation usage and duration (or `usage unavailable`). If acceptable, finish. Otherwise send
 the exact numbered fixes to the same implementer kind that produced the delta.
 
-Codex fix:
+Codex fix. Write this complete payload to `<payloadFile>` under the routing skill's
+temporary-directory rule:
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <implementationThreadId> --model <effectiveModel> <effortArg> <<'CODEX_PAIR_FIX'
+```text
 <task>
 Fix the review findings below in this repository. Keep all other behavior unchanged.
 
@@ -328,7 +336,12 @@ Run the repository's relevant tests or build and fix regressions.
 <compact_output_contract>
 Report which findings were fixed, how, and what verification ran.
 </compact_output_contract>
-CODEX_PAIR_FIX
+```
+
+Then launch:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <implementationThreadId> --model <effectiveModel> <effortArg> --prompt-file "<payloadFile>"
 ```
 
 For Claude fixes, invoke the same contained implementer with the original model, full plan, and

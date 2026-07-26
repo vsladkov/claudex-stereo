@@ -218,10 +218,15 @@ replace a requested model after an availability or provider error.
 
 ## Quoting
 
-Pass task, plan, diff, and finding bodies through quoted heredoc stdin with a step-specific fixed
-delimiter. Never use an unquoted heredoc. Shell-quote each short metadata argument independently
-with single quotes, replacing an embedded `'` with `'"'"'`. Never interpolate reviewer or task
-text unquoted into a shell command.
+Write every Codex task, plan, diff, and finding payload to a file in a temporary directory outside
+the user's repository, using the Write tool. Prefer the session scratch directory when the
+harness provides one; otherwise use a unique `mktemp -d`-style location under the operating
+system's temporary directory. Never write payload files into the user's repository. Deliver plan
+documents with `plan-review --plan-file "<payloadFile>"`, task and brief payloads with
+`task --prompt-file "<payloadFile>"`, and stored plans with
+`plan-store ... < "<payloadFile>"`. The payload file's content must never pass through the shell.
+Shell-quote each short metadata argument independently with single quotes, replacing an embedded
+`'` with `'"'"'`. Never interpolate reviewer or task text unquoted into a shell command.
 
 ## Plan persistence
 

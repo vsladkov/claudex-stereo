@@ -2,7 +2,7 @@
 description: Draft or review a plan with independently selected Claude or Codex role models
 argument-hint: '[--draft-only|--review-only] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
+allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
 
 First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
@@ -71,12 +71,11 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
    - For `claude:session`, apply `planReviewBrief` inline and produce structured loop state.
    - For a named Claude model, use `planReviewBrief` verbatim as the routing skill's
      `stereo:plan-reviewer` prompt.
-   - For Codex, launch:
+   - For Codex, write the full stored plan verbatim to `<payloadFile>` under the routing skill's
+     temporary-directory rule, then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> <<'CODEX_PAIR_PLAN'
-[full stored plan, verbatim]
-CODEX_PAIR_PLAN
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> --plan-file "<payloadFile>"
 ```
 
 Use the routing skill's validation and one-retry recovery. Read Codex results from
@@ -85,12 +84,11 @@ the invocation usage using the routing skill's `storedJob.tokenUsage` rule.
 
 Codex plan review stores a successfully parsed result automatically. For a Claude-side result,
 persist the actual verdict, even `needs-revision`, with the full plan and one option per question
-and risk:
+and risk. Write the full stored plan verbatim to `<payloadFile>` under the routing skill's
+temporary-directory rule, then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 --reviewed-by '<reviewer label>' --summary '<summary>' <repeated --open-question/--residual-risk args> <<'CODEX_PAIR_PLAN'
-[full stored plan, verbatim]
-CODEX_PAIR_PLAN
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 --reviewed-by '<reviewer label>' --summary '<summary>' <repeated --open-question/--residual-risk args> < "<payloadFile>"
 ```
 
 Report the verdict, findings, revision instructions, open questions, complete residual risks, and
@@ -109,18 +107,18 @@ Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-draft.md` and fill it without changing 
 the task before review.`
 
 The result is the single `planDraftBrief` for every route. Never write the draft into the user's
-repository.
+repository; a Codex route may write it only as a payload file under the routing skill's
+temporary-directory rule.
 
 Route by `--planner`:
 
 - `claude:session`: apply `planDraftBrief` inline after read-only exploration.
 - Named Claude: use `planDraftBrief` verbatim as the routing skill's `stereo:planner` prompt.
-- Codex: launch a fresh read-only task:
+- Codex: write `planDraftBrief` verbatim to `<payloadFile>` under the routing skill's
+  temporary-directory rule, then launch a fresh read-only task:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json <plannerSelectionArgs> <<'CODEX_PAIR_PLAN'
-[planDraftBrief, verbatim]
-CODEX_PAIR_PLAN
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json <plannerSelectionArgs> --prompt-file "<payloadFile>"
 ```
 
 For a Codex draft, read `storedJob.result.rawOutput` and save its thread id only as
@@ -138,12 +136,12 @@ single retry. A Codex retry resumes only `plannerThreadId` with a read-only
 whether to draft inline or stop. Correct malformed inline output once; if it still violates the
 heading contract, ask whether to retry inline or stop.
 
-For `--draft-only`, derive a one-line summary and store the draft with no reviewer label:
+For `--draft-only`, derive a one-line summary. Write the full draft plan verbatim to
+`<payloadFile>` under the routing skill's temporary-directory rule, then store the draft with no
+reviewer label:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict 'draft' --round 0 --summary '<one-line summary>' <<'CODEX_PAIR_PLAN'
-[full draft plan, verbatim]
-CODEX_PAIR_PLAN
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict 'draft' --round 0 --summary '<one-line summary>' < "<payloadFile>"
 ```
 
 Present the stored draft, identify the selected planner and its per-invocation usage/duration (or
@@ -178,20 +176,18 @@ For each round:
   number, full revised plan, and self-verification instruction when supported; otherwise use the
   fully briefed stateless fallback above. Apply the same schema validation in either mode and
   report whether the round was continued or re-briefed.
-- Codex round 1:
+- Codex round 1: write the full current plan verbatim to `<payloadFile>` under the routing skill's
+  temporary-directory rule, then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> <<'CODEX_PAIR_PLAN'
-[full current plan, verbatim]
-CODEX_PAIR_PLAN
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> --plan-file "<payloadFile>"
 ```
 
-- Later Codex rounds resume only `planReviewThreadId`:
+- Later Codex rounds resume only `planReviewThreadId`. Write the full revised plan verbatim to
+  `<payloadFile>` under the same temporary-directory rule, then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --thread <planReviewThreadId> --round <n> <reviewSelectionArgs> <<'CODEX_PAIR_PLAN'
-[full revised plan, verbatim]
-CODEX_PAIR_PLAN
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --thread <planReviewThreadId> --round <n> <reviewSelectionArgs> --plan-file "<payloadFile>"
 ```
 
 Refresh `planReviewThreadId` only from successful Codex plan-review payloads. On `parseError`,

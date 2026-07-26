@@ -32,8 +32,9 @@ the raw arguments. Default to the companion's normal model for a missing `--mode
 - `claude:session`, `claude:inherit`, and the four explicit Claude aliases take the Claude path.
   Reject any other `claude:*` value using the routing skill's availability rule.
 - Reject `--background` with a Claude model before inspecting the repository:
-  "`--background` is not available for Claude adversarial reviewers. Remove it to run in the
-  foreground, or choose a Codex model."
+  "`--background` creates durable Codex jobs visible in `/stereo:status`. A Claude agent review is
+  bound to this session and would not survive it. Remove `--background` to run the Claude review
+  in the foreground, or choose a Codex model for a durable background review."
 - `--wait` is accepted but redundant on the Claude path, which is always foreground.
 
 ## Codex path

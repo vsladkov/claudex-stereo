@@ -104,10 +104,25 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   const plan = read('commands/plan.md');
   assert.match(plan, /skills\/model-routing\/SKILL\.md/);
   assert.match(plan, /plan-review --background --json --thread <planReviewThreadId> --round <n>/);
-  assert.match(plan, /<<'CODEX_PAIR_PLAN'/);
   assert.match(plan, /plan-store --json/);
   assert.match(plan, /schemas\/plan-review-output\.schema\.json/);
-  assert.match(plan, /^allowed-tools:.*\bAgent\b.*$/m);
+  assert.match(plan, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
+  assert.equal(
+    (plan.match(/--plan-file "<payloadFile>"/g) ?? []).length,
+    3,
+    'Plan must deliver all three review payloads by file',
+  );
+  assert.equal(
+    (plan.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
+    1,
+    'Plan must deliver its draft task payload by file',
+  );
+  assert.equal(
+    (plan.match(/^node .*plan-store .* < "<payloadFile>"$/gm) ?? []).length,
+    2,
+    'Plan must deliver both stored-plan payloads by stdin redirect',
+  );
+  assert.doesNotMatch(plan, /<<'CODEX_PAIR_/);
   const planHint = plan.match(/^argument-hint:.*$/m)?.[0] ?? '';
   for (const flag of [
     '--draft-only',
@@ -121,13 +136,16 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   const implement = read('commands/implement.md');
   assert.match(implement, /skills\/model-routing\/SKILL\.md/);
   assert.match(implement, /plan-state --json/);
-  assert.match(implement, /<<'CODEX_PAIR_PLAN'/);
-  assert.match(implement, /<<'CODEX_PAIR_IMPL'/);
-  assert.match(implement, /<<'CODEX_PAIR_FIX'/);
   assert.match(implement, /task --background --json --write --model <effectiveModel> <effortArg>/);
   assert.match(implement, /approved outside\s+this Codex thread/);
   assert.match(implement, /reviewed but unapproved/);
-  assert.match(implement, /^allowed-tools:.*\bAgent\b.*$/m);
+  assert.match(implement, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
+  assert.equal(
+    (implement.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
+    5,
+    'Implement must deliver all five Codex task payloads by file',
+  );
+  assert.doesNotMatch(implement, /<<'CODEX_PAIR_/);
   assert.match(implement, /Compare `git rev-parse HEAD` with `baselineCommit`/);
   assert.match(implement, /implementationReviewThreadId/);
   assert.match(implement, /schemas\/implementation-review-output\.schema\.json/);
@@ -143,7 +161,7 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.equal(
     (
       implement.match(
-        /^node .*task --background.*--output-schema "\$\{CLAUDE_PLUGIN_ROOT\}\/schemas\/implementation-review-output\.schema\.json".*$/gm,
+        /^node .*task --background.*--output-schema "\$\{CLAUDE_PLUGIN_ROOT\}\/schemas\/implementation-review-output\.schema\.json".*--prompt-file "<payloadFile>"$/gm,
       ) ?? []
     ).length,
     2,
@@ -153,11 +171,24 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   const quick = read('commands/quick.md');
   assert.match(quick, /skills\/model-routing\/SKILL\.md/);
   assert.match(quick, /plan-state --json/);
-  assert.match(quick, /<<'CODEX_PAIR_PLAN'/);
-  assert.match(quick, /<<'CODEX_PAIR_IMPL'/);
-  assert.match(quick, /<<'CODEX_PAIR_FIX'/);
   assert.match(quick, /plan-store --json/);
-  assert.match(quick, /^allowed-tools:.*\bAgent\b.*$/m);
+  assert.match(quick, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
+  assert.equal(
+    (quick.match(/--plan-file "<payloadFile>"/g) ?? []).length,
+    2,
+    'Quick must deliver both plan-review payloads by file',
+  );
+  assert.equal(
+    (quick.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
+    5,
+    'Quick must deliver all five Codex task payloads by file',
+  );
+  assert.equal(
+    (quick.match(/^node .*plan-store .* < "<payloadFile>"$/gm) ?? []).length,
+    1,
+    'Quick must deliver its stored-plan payload by stdin redirect',
+  );
+  assert.doesNotMatch(quick, /<<'CODEX_PAIR_/);
   assert.match(quick, /plannerThreadId/);
   assert.match(quick, /planReviewThreadId/);
   assert.match(quick, /implementationThreadId/);
@@ -174,7 +205,7 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.equal(
     (
       quick.match(
-        /^node .*task --background.*--output-schema "\$\{CLAUDE_PLUGIN_ROOT\}\/schemas\/implementation-review-output\.schema\.json".*$/gm,
+        /^node .*task --background.*--output-schema "\$\{CLAUDE_PLUGIN_ROOT\}\/schemas\/implementation-review-output\.schema\.json".*--prompt-file "<payloadFile>"$/gm,
       ) ?? []
     ).length,
     1,
@@ -267,6 +298,19 @@ test('pair agents keep their role-specific tool and output contracts', () => {
   assert.match(implementationReviewer, /schemas\/implementation-review-output\.schema\.json/);
 
   assert.doesNotThrow(() => JSON.parse(read('schemas/implementation-review-output.schema.json')));
+
+  for (const file of [
+    'adversarial-reviewer.md',
+    'implementation-reviewer.md',
+    'plan-reviewer.md',
+    'planner.md',
+  ]) {
+    assert.match(
+      read(path.join('agents', file)),
+      /^tools:\s*Read, Glob, Grep, Bash, WebFetch, WebSearch$/m,
+      file,
+    );
+  }
 
   for (const file of expectedAgents.filter((file) => file !== 'codex-rescue.md')) {
     const source = read(path.join('agents', file));

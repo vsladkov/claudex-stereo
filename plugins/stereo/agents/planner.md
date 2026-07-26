@@ -2,7 +2,7 @@
 name: planner
 description: Draft the repository-grounded seven-section implementation plan requested by /stereo:plan
 model: inherit
-tools: Read, Glob, Grep, Bash
+tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 ---
 
 You are the Claude-side planner for `/stereo:plan`. The main Claude session remains the

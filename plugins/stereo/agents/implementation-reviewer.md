@@ -2,7 +2,7 @@
 name: implementation-reviewer
 description: Review a /stereo:implement delta and return a machine-readable acceptance verdict
 model: inherit
-tools: Read, Glob, Grep, Bash
+tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 ---
 
 You are the Claude-side implementation reviewer for `/stereo:implement`. The main Claude session

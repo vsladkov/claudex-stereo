@@ -2,7 +2,7 @@
 name: plan-reviewer
 description: Adversarially review one /stereo:plan round and return the exact structured verdict
 model: inherit
-tools: Read, Glob, Grep, Bash
+tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 ---
 
 You are the Claude-side adversarial plan reviewer for `/stereo:plan`. The main Claude session

@@ -138,6 +138,33 @@ test('task runs without auth preflight so Codex can refresh an expired session',
   assert.match(result.stdout, /Handled the requested task/);
 });
 
+test('task --prompt-file delivers delimiter-bearing content intact', () => {
+  const repo = makeTempDir();
+  const payloadDir = makeTempDir();
+  const binDir = makeTempDir();
+  const payloadPath = path.join(payloadDir, 'task.txt');
+  const payload = [
+    '<task>',
+    'Verify file-based task delivery.',
+    'CODEX_PAIR_PLAN',
+    'TRAILING_PROMPT_FILE_SENTINEL',
+    '</task>',
+  ].join('\n');
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(payloadPath, payload, 'utf8');
+
+  const result = run('node', [SCRIPT, 'task', '--prompt-file', payloadPath], {
+    cwd: repo,
+    env: buildEnv(binDir),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(path.join(binDir, 'fake-codex-state.json'), 'utf8'));
+  assert.equal(fakeState.lastTurnStart.prompt, payload);
+  assert.match(fakeState.lastTurnStart.prompt, /TRAILING_PROMPT_FILE_SENTINEL/);
+});
+
 test('transfer delegates the current Claude session directly to native import', () => {
   const home = makeTempDir();
   const repo = path.join(home, 'repo');

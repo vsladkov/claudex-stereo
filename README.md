@@ -130,6 +130,13 @@ single-file repository can keep `AGENTS.md` canonical and make `CLAUDE.md` impor
 `@AGENTS.md`. A two-file repository can instead point or mirror the applicable guidance in both;
 this repository keeps `CLAUDE.md` canonical and a separate `AGENTS.md` with Codex-specific notes.
 
+Live-source access follows each platform's own configuration. Codex uses the web-search setting
+from the user's Codex configuration. Stereo's named Claude planner and reviewer agents allowlist
+`WebFetch` and `WebSearch`, which are available only when the running harness provides them; an
+inline `claude:session` role uses the harness's own tool grants. The Claude agent allowlists are
+Stereo's static configuration, while actual tool availability and Codex web-search settings
+remain platform- and user-owned.
+
 There are three deliberate boundaries. `/stereo:review` remains Codex-native; use
 `/stereo:adversarial-review` for a Claude-routed review. `/stereo:rescue` and `/stereo:transfer`
 remain Codex bridges. `claude:session` is rejected for implementation so Claude writes stay
@@ -175,7 +182,9 @@ It uses the same review target selection as `/stereo:review`, including `--base 
 It also supports `--wait`, `--background`, and `--model`. Unlike `/stereo:review`, it can take
 extra focus text after the flags. Codex models can run in the foreground or background. All Claude
 selections, including `claude:session` and `claude:inherit`, use the same adversarial brief and
-structured output contract in the foreground; `--background --model claude:*` is rejected.
+structured output contract in the foreground. `--background --model claude:*` is rejected because
+Claude agent reviews are session-bound and not visible in `/stereo:status`; choose a Codex model
+for a durable background review.
 
 Use it when you want:
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.16.0
+
+- Deliver every Codex pair-workflow payload through a temporary file instead of a fixed-delimiter
+  heredoc, using `--plan-file`, `--prompt-file`, or stdin redirection as appropriate
+- Allow the four read-only Claude planner and reviewer agents to use `WebFetch` and `WebSearch`
+  when the running harness provides them
+- Correct the Claude adversarial-review background rationale and document how live-source
+  availability differs across Codex, named Claude agents, and the inline Claude session
+- Add structural transport pins and success-path runtime coverage for delimiter-bearing plan and
+  task payload files
+
 ## 1.15.0
 
 - Add per-role Codex effort flags to Plan, Implement, and Quick while retaining `--effort` as the

@@ -107,6 +107,36 @@ test('plan-review applies sol/max defaults and names a pair thread', () => {
   assert.match(fakeState.threads[0].name, /^Codex Companion Pair/);
 });
 
+test('plan-review --plan-file delivers delimiter-bearing content intact', () => {
+  const repo = makeTempDir();
+  const payloadDir = makeTempDir();
+  const binDir = makeTempDir();
+  const statePath = path.join(binDir, 'fake-codex-state.json');
+  const payloadPath = path.join(payloadDir, 'plan.md');
+  const payload = [
+    '## Goal',
+    '',
+    'Verify file-based plan delivery.',
+    '',
+    'CODEX_PAIR_PLAN',
+    '',
+    'TRAILING_PLAN_FILE_SENTINEL',
+  ].join('\n');
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(payloadPath, payload, 'utf8');
+
+  const result = run('node', [SCRIPT, 'plan-review', '--plan-file', payloadPath], {
+    cwd: repo,
+    env: buildEnv(binDir),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(fakeState.lastTurnStart.prompt.includes(payload), true);
+  assert.match(fakeState.lastTurnStart.prompt, /TRAILING_PLAN_FILE_SENTINEL/);
+});
+
 test('plan-review routes provider aliases per thread and omits provider-unsafe effort', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
