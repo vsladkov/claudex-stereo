@@ -734,6 +734,7 @@ rl.on("line", (line) => {
 	          turnId,
 	          model: message.params.model ?? null,
 	          effort: message.params.effort ?? null,
+	          outputSchema: message.params.outputSchema ?? null,
 	          prompt
 	        };
 		        state.turnStarts = Array.isArray(state.turnStarts) ? state.turnStarts : [];

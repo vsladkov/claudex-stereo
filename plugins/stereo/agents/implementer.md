@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Apply only the file edits in an approved /stereo:implement plan without shell or process access
-model: sonnet
+model: inherit
 tools: Read, Glob, Grep, Edit, Write
 ---
 

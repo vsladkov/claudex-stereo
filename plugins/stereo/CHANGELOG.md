@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.15.0
+
+- Add per-role Codex effort flags to Plan, Implement, and Quick while retaining `--effort` as the
+  command-wide fallback
+- Enforce the implementation-review schema in Codex task turns through the new
+  `task --output-schema` runtime pass-through
+- Continue named-Claude plan reviewers across rounds when the harness supports follow-ups, with
+  the existing fully briefed stateless flow as a fallback
+- Add `claude:inherit` for contained roles and document platform model precedence plus Claude's
+  session, agent-definition, and model-selection reasoning controls
+
 ## 1.14.0
 
 - Give Claude and Codex planners, plan reviewers, implementation reviewers, and adversarial

@@ -93,6 +93,13 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     (routing.match(/run_in_background: false/g) ?? []).length >= 5,
     'all routing-skill Agent templates must stay foreground',
   );
+  assert.equal(
+    (routing.match(/^model: "<sonnet\|opus\|haiku\|fable>"$/gm) ?? []).length,
+    5,
+    'all explicit Claude aliases must keep passing an invocation-level model',
+  );
+  assert.match(routing, /\|\s*`claude:inherit`\s*\|/);
+  assert.match(routing, /^## Continuing an agent across plan-review rounds$/m);
 
   const plan = read('commands/plan.md');
   assert.match(plan, /skills\/model-routing\/SKILL\.md/);
@@ -101,8 +108,15 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(plan, /plan-store --json/);
   assert.match(plan, /schemas\/plan-review-output\.schema\.json/);
   assert.match(plan, /^allowed-tools:.*\bAgent\b.*$/m);
-  assert.match(plan.match(/^argument-hint:.*$/m)?.[0] ?? '', /--draft-only/);
-  assert.match(plan.match(/^argument-hint:.*$/m)?.[0] ?? '', /--review-only/);
+  const planHint = plan.match(/^argument-hint:.*$/m)?.[0] ?? '';
+  for (const flag of [
+    '--draft-only',
+    '--review-only',
+    '--planner-effort',
+    '--plan-reviewer-effort',
+  ]) {
+    assert.match(planHint, new RegExp(flag));
+  }
 
   const implement = read('commands/implement.md');
   assert.match(implement, /skills\/model-routing\/SKILL\.md/);
@@ -117,8 +131,24 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(implement, /Compare `git rev-parse HEAD` with `baselineCommit`/);
   assert.match(implement, /implementationReviewThreadId/);
   assert.match(implement, /schemas\/implementation-review-output\.schema\.json/);
-  assert.match(implement.match(/^argument-hint:.*$/m)?.[0] ?? '', /--implement-only/);
-  assert.match(implement.match(/^argument-hint:.*$/m)?.[0] ?? '', /--review-only/);
+  const implementHint = implement.match(/^argument-hint:.*$/m)?.[0] ?? '';
+  for (const flag of [
+    '--implement-only',
+    '--review-only',
+    '--implementer-effort',
+    '--impl-reviewer-effort',
+  ]) {
+    assert.match(implementHint, new RegExp(flag));
+  }
+  assert.equal(
+    (
+      implement.match(
+        /^node .*task --background.*--output-schema "\$\{CLAUDE_PLUGIN_ROOT\}\/schemas\/implementation-review-output\.schema\.json".*$/gm,
+      ) ?? []
+    ).length,
+    2,
+    'both implementation-review task templates must keep runtime schema enforcement',
+  );
 
   const quick = read('commands/quick.md');
   assert.match(quick, /skills\/model-routing\/SKILL\.md/);
@@ -132,12 +162,32 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(quick, /planReviewThreadId/);
   assert.match(quick, /implementationThreadId/);
   assert.match(quick, /implementationReviewThreadId/);
+  const quickHint = quick.match(/^argument-hint:.*$/m)?.[0] ?? '';
+  for (const flag of [
+    '--planner-effort',
+    '--plan-reviewer-effort',
+    '--implementer-effort',
+    '--impl-reviewer-effort',
+  ]) {
+    assert.match(quickHint, new RegExp(flag));
+  }
+  assert.equal(
+    (
+      quick.match(
+        /^node .*task --background.*--output-schema "\$\{CLAUDE_PLUGIN_ROOT\}\/schemas\/implementation-review-output\.schema\.json".*$/gm,
+      ) ?? []
+    ).length,
+    1,
+    'the Quick implementation-review task template must keep runtime schema enforcement',
+  );
 
   const adversarial = read('commands/adversarial-review.md');
   assert.match(adversarial, /skills\/model-routing\/SKILL\.md/);
   assert.match(adversarial, /prompts\/adversarial-review\.md/);
   assert.match(adversarial, /schemas\/review-output\.schema\.json/);
   assert.match(adversarial, /^allowed-tools:.*\bAgent\b.*$/m);
+  assert.match(adversarial, /`claude:inherit`/);
+  assert.match(adversarial, /omit the Agent\s+`model` parameter/);
 
   const nativeReview = read('commands/review.md');
   assert.match(nativeReview, /does not accept Claude models/);
@@ -219,7 +269,9 @@ test('pair agents keep their role-specific tool and output contracts', () => {
   assert.doesNotThrow(() => JSON.parse(read('schemas/implementation-review-output.schema.json')));
 
   for (const file of expectedAgents.filter((file) => file !== 'codex-rescue.md')) {
-    assert.match(read(path.join('agents', file)), /run_in_background: false/, file);
+    const source = read(path.join('agents', file));
+    assert.match(source, /^model:\s*inherit$/m, file);
+    assert.match(source, /run_in_background: false/, file);
   }
 });
 

@@ -14,14 +14,21 @@ wording here.
 
 Interpret selections as follows:
 
-| Selection        | Route                                                     |
-| ---------------- | --------------------------------------------------------- |
-| `claude:session` | Run inline in the current Claude session                  |
-| `claude:sonnet`  | Run the named foreground agent with `model: "sonnet"`     |
-| `claude:opus`    | Run the named foreground agent with `model: "opus"`       |
-| `claude:haiku`   | Run the named foreground agent with `model: "haiku"`      |
-| `claude:fable`   | Run the named foreground agent with `model: "fable"`      |
-| Anything else    | Pass the requested Codex model to the companion unchanged |
+| Selection        | Route                                                             |
+| ---------------- | ----------------------------------------------------------------- |
+| `claude:session` | Run inline in the current Claude session                          |
+| `claude:inherit` | Run the named foreground agent with the `model` parameter omitted |
+| `claude:sonnet`  | Run the named foreground agent with `model: "sonnet"`             |
+| `claude:opus`    | Run the named foreground agent with `model: "opus"`               |
+| `claude:haiku`   | Run the named foreground agent with `model: "haiku"`              |
+| `claude:fable`   | Run the named foreground agent with `model: "fable"`              |
+| Anything else    | Pass the requested Codex model to the companion unchanged         |
+
+`claude:inherit` requests the platform's model inheritance. With the Agent `model` parameter
+omitted, `CLAUDE_CODE_SUBAGENT_MODEL` wins when that environment variable is set; otherwise the
+agent frontmatter's `model: inherit` resolves to the main conversation's model. Record the
+effective model reported by the Agent result in the invocation note; if it is not exposed, label
+the effective model `unavailable` rather than guessing.
 
 Allow `claude:session` for planner, plan-reviewer, implementation-reviewer, and
 adversarial-reviewer roles. Reject it for the implementer: Claude writes must stay inside the
@@ -30,18 +37,37 @@ contained `stereo:implementer` agent.
 Never pass a `claude:*` selection to the companion. Reject unknown `claude:*` values before
 starting work.
 
-For Codex pair roles, use the user-supplied `--effort` when present. Otherwise use `max` for the
-`gpt-5.6` family, `xhigh` for other `gpt-*` models, and omit `--effort` for non-OpenAI models.
-Preserve command-specific stored-model/stored-effort rules when the command defines them.
+Resolve effort independently for each active Codex-routed role:
 
-Claude foreground and inline invocations do not expose a per-invocation reasoning-effort control.
-Never translate `--effort` into thinking-keyword prompt tricks. When more Claude-side reasoning is
-needed, recommend selecting a stronger Claude model instead.
+1. Use that role's effort flag when present.
+2. Otherwise use the command-wide `--effort` when present.
+3. Otherwise preserve the command's stored-model/stored-effort rule, when it has one, or use
+   `max` for the `gpt-5.6` family, `xhigh` for other `gpt-*` models, and omit `--effort` for
+   non-OpenAI models.
+
+A role effort flag is valid only when that role runs in the selected mode and is Codex-routed;
+reject it for an inactive or Claude-routed role. A role or command-wide effort override replaces
+the stored implementer effort. An explicit implementer model with neither effort override clears
+the stored effort because it belongs to the old model, then uses the normal model-pair default.
+
+Claude-side reasoning has three distinct controls. Stereo's agent definitions omit `effort`, so
+Claude-routed roles inherit the session's effort and extended-thinking configuration. Subagents
+have no per-subagent thinking setting; `ultrathink` is the only recognized thinking keyword and
+applies to the main turn, so never translate `--effort` into prompt tricks. Agent definitions do
+support an `effort` frontmatter field (`low|medium|high|xhigh|max`, availability
+model-dependent), which overrides session effort. A modified copy under `.claude/agents/` can be
+invoked manually, but it cannot shadow the plugin-scoped `stereo:*` agent types used by these
+commands. Model selection remains the per-invocation Claude strength control; dynamic
+per-invocation Claude effort is not available on the Agent invocation surface.
 
 ## Foreground agents
 
 Always invoke these agents in the foreground. Supply the command's complete step-specific context
 where a bracketed placeholder appears.
+
+For `claude:sonnet|opus|haiku|fable`, include the explicit `model` parameter shown below. For
+`claude:inherit`, omit the `model` parameter entirely; do not pass the string `inherit` or a null
+value.
 
 Planner:
 
@@ -126,6 +152,35 @@ For malformed agent output, retry the same selected agent once with the exact va
 the full original input. If the retry is also malformed, ask whether to perform the step inline or
 stop without inferring a verdict. For an Agent tool or selected-model availability error, report
 the error verbatim and stop immediately; never substitute a different model.
+
+## Continuing an agent across plan-review rounds
+
+This rule applies only to named-Claude plan-review loops. Implementation-review invocations stay
+stateless in both ecosystems. Inline `claude:session` plan reviews already share the main
+conversation and do not use this rule.
+
+Round 1 always invokes `stereo:plan-reviewer` with the complete filled `planReviewBrief` and keeps
+the returned agent continuation handle only for the current command run. For every later round:
+
+1. When the harness exposes agent follow-up or resume, continue that same reviewer. Send a compact
+   round message containing the round number, the full revised plan, the instruction to verify its
+   own earlier findings and the recorded responses or descopes, and a reminder to return the same
+   plan-review output contract. Do not resend the full role brief.
+2. Validate the continued result against the same schema. If it is malformed, continue the same
+   agent once more with the exact validation error and the full revised plan.
+3. If continuation is unavailable, errors, or remains malformed after that retry, invoke a fresh
+   `stereo:plan-reviewer` of the same selected model for that round. Give it the complete filled
+   brief with the prior findings, responses, open questions, and complete residual risks embedded
+   in `{{REVISION_CONTEXT}}`, exactly as the stateless flow does. Apply the normal validation and
+   one-retry rule to this fresh invocation, and use its continuation handle for any later round.
+
+A continuation transport or Agent-tool error uses this fresh-agent fallback instead of the
+generic immediate-stop rule above. If that fresh invocation reports a selected-model availability
+error, surface it and stop without substituting a model.
+
+Continuation never crosses command runs or Claude sessions. Every new command starts with a fresh
+round-1 agent. For each continued round, report the token usage and duration from that follow-up's
+result when the harness provides them; otherwise report `usage unavailable`.
 
 ## Codex background jobs
 

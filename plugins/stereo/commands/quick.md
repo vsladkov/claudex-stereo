@@ -1,6 +1,6 @@
 ---
 description: Plan, review, implement, and verify one small task with independently routed Claude or Codex roles
-argument-hint: '[--planner <model>] [--plan-reviewer <model>] [--implementer <model>] [--impl-reviewer <model>] [--effort <none|minimal|low|medium|high|xhigh|max>] [small task description]'
+argument-hint: '[--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--impl-reviewer <model>] [--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [small task description]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -21,16 +21,32 @@ Raw slash-command arguments:
 After reading the routing skill, parse all arguments before repository work:
 
 - `--planner <model>` defaults to `claude:session`.
+- `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+  Codex-routed planner.
 - `--plan-reviewer <model>` defaults to `sol`.
+- `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+  Codex-routed plan reviewer.
 - `--implementer <model>` defaults to the model/effort resolved by the latest Codex plan-review
-  payload. If the plan reviewer is Claude-side, default to `sol` with user `--effort` or `max`.
+  payload. If the plan reviewer is Claude-side, default to `sol` with the matching role effort,
+  command-wide effort, or `max`.
+- `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+  Codex-routed implementer, including the effort from a Codex plan-review payload.
 - `--impl-reviewer <model>` defaults to `claude:session`.
-- `--effort <none|minimal|low|medium|high|xhigh|max>` applies to every Codex-routed role.
+- `--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+  Codex-routed implementation reviewer.
+- `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
+  Codex-routed roles that have no role effort flag.
 - Remaining text is the task. Ask for it if empty.
 
-Reject missing values, duplicate role flags, invalid effort, unknown flags, unknown `claude:*`
-values, and `claude:session` as implementer. The removed `--model` flag is unknown; report the
-role-named alternatives. Quick has no configurable round-count flags.
+Reject missing values, duplicate role or role-effort flags, invalid effort, unknown flags, unknown
+`claude:*` values, and `claude:session` as implementer. Accept `claude:inherit` alongside
+`claude:session` and the four explicit Claude aliases. Reject a role effort flag when its selected
+role is Claude-routed. Resolve every Codex role through role effort > command-wide effort > the
+routing skill's pair default. When `--implementer` is omitted, use the plan-review payload's
+resolved model and effort at the last level; either `--implementer-effort` or `--effort` overrides
+that payload effort. An explicit implementer model instead uses that model's pair default when
+neither effort flag is present. The removed `--model` flag is unknown; report the role-named
+alternatives. Quick has no configurable round-count flags.
 
 Keep these ids distinct:
 
@@ -94,19 +110,25 @@ keep-iterating choice.
 
 For each round:
 
-- For either Claude route, read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-review.md` and fill it without
-  changing any other text:
+- For `claude:session`, named-Claude round 1, and any named-Claude stateless fallback, read
+  `${CLAUDE_PLUGIN_ROOT}/prompts/plan-review.md` and fill it without changing any other text:
   - `{{PLAN_INPUT}}` = the full current plan.
   - `{{ROUND_NUMBER}}` = the current round.
   - `{{REPO_MAP}}` = empty; the Claude reviewer uses its native read-only repository tools.
-  - `{{REVISION_CONTEXT}}` = empty in round 1. In later rounds, use the runtime's revision-context
-    meaning adapted for statelessness: state that the plan responds to earlier findings; embed the
-    earlier findings, responses, open questions, and complete residual risks; require rebuttals to
-    be verified; and prohibit re-auditing unchanged, previously accepted sections unless the
-    revision changed their assumptions.
+  - `{{REVISION_CONTEXT}}` = empty in round 1. For `claude:session` later rounds and a
+    named-Claude stateless fallback, use the runtime's revision-context meaning: state that the
+    plan responds to earlier findings; embed the earlier findings, responses, open questions, and
+    complete residual risks; require rebuttals to be verified; and prohibit re-auditing
+    unchanged, previously accepted sections unless the revision changed their assumptions.
     Use the resulting `planReviewBrief` verbatim for the selected Claude route.
 - `claude:session`: apply `planReviewBrief` inline into structured state.
-- Named Claude: use `planReviewBrief` as the `stereo:plan-reviewer` prompt.
+- Named Claude round 1: use `planReviewBrief` as the `stereo:plan-reviewer` prompt and retain its
+  continuation handle for this command only.
+- Later named-Claude rounds: apply the routing skill's
+  "Continuing an agent across plan-review rounds" rule. Continue the same reviewer with the round
+  number, full revised plan, and self-verification instruction when supported; otherwise use the
+  fully briefed stateless fallback above. Apply the same schema validation in either mode and
+  report whether the round was continued or re-briefed.
 - Codex round 1:
 
 ```bash
@@ -306,14 +328,14 @@ Route each review:
 - Codex: launch a fresh read-only task:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> <<'CODEX_PAIR_PLAN'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" <<'CODEX_PAIR_PLAN'
 [implementationReviewBrief, verbatim]
 CODEX_PAIR_PLAN
 ```
 
 Save a Codex review task's thread only as `implementationReviewThreadId`. Parse
-`storedJob.result.rawOutput`; retry malformed output once on that review thread. Never assign it
-to `implementationThreadId`.
+`storedJob.result.rawOutput`; retry malformed output once on that review thread while preserving
+the same `--output-schema` flag. Never assign it to `implementationThreadId`.
 
 After every completed review round, report its number, verdict/fix count, and reviewer
 per-invocation usage and duration (or `usage unavailable`). If acceptable, finish. Otherwise send

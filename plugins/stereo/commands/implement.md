@@ -1,6 +1,6 @@
 ---
 description: Implement or review the stored plan with independently selected Claude or Codex role models
-argument-hint: '[--implement-only|--review-only] [--implementer <model>] [--impl-reviewer <model>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
+argument-hint: '[--implement-only|--review-only] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--impl-reviewer <model>] [--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -20,9 +20,14 @@ After reading the routing skill, parse all arguments before loading state:
 
 - `--implementer <model>` selects the implementer. When absent, use the stored Codex model; if it
   is null, use `sol`.
+- `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+  Codex-routed implementer.
 - `--impl-reviewer <model>` selects the implementation reviewer and defaults to
   `claude:session`.
-- `--effort <none|minimal|low|medium|high|xhigh|max>` applies to all Codex-routed roles.
+- `--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+  Codex-routed implementation reviewer.
+- `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
+  Codex-routed roles that have no role effort flag.
 - `--max-fix-rounds <n>` defaults to 4.
 - `--fresh` skips a reusable stored Codex plan-review thread.
 - `--implement-only` implements and verifies once, then stops before review.
@@ -30,18 +35,24 @@ After reading the routing skill, parse all arguments before loading state:
 - Without a mode flag, run the complete implement-plus-review/fix phase.
 
 Reject missing values, duplicates, positionals, invalid effort/round values, unknown flags,
-unknown `claude:*` values, and both mode flags together. The removed implementer `--model` and
+unknown `claude:*` values, and both mode flags together. Accept `claude:inherit` alongside
+`claude:session` and the four explicit Claude aliases. The removed implementer `--model` and
 `--review-model` flags are unknown; report the role-named replacements.
 
-For `--review-only`, reject `--implementer`, `--fresh`, and `--max-fix-rounds`. For
-`--implement-only`, reject `--impl-reviewer` and `--max-fix-rounds`.
+For `--review-only`, reject `--implementer`, `--implementer-effort`, `--fresh`, and
+`--max-fix-rounds`. For `--implement-only`, reject `--impl-reviewer`,
+`--impl-reviewer-effort`, and `--max-fix-rounds`. Reject a role effort flag when its selected role
+is Claude-routed.
 
 Reject `claude:session` as the implementer; Claude writes must use the contained named agent.
 
-For Codex implementation, user-supplied implementer and effort values override stored values. If
-the user overrides only the model, clear the stored effort because it belonged to the old model.
-When both stored values are null, use `sol` and the user's effort or `max`. Omit a null effort.
-For a Codex implementation reviewer, apply the routing skill's pair defaults.
+For Codex implementation, resolve effort as `--implementer-effort` > command-wide `--effort` >
+stored effort > the selected model's pair default. Either effort flag replaces the stored effort.
+If the user overrides the implementer model while supplying neither effort flag, clear the stored
+effort because it belonged to the old model, then use the new model's pair default. When both
+stored values are null, use `sol` and the user's matching role/command effort or `max`. Omit a
+null effort. For a Codex implementation reviewer, resolve `--impl-reviewer-effort` >
+command-wide `--effort` > the routing skill's pair default.
 
 Inside the full fix loop, act on findings automatically. The stop-after-review rule applies to
 `--review-only` and explicit safeguard decisions.
@@ -101,14 +112,15 @@ Route exactly one review through `--impl-reviewer`:
   `implementationReviewThreadId`:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> <<'CODEX_PAIR_PLAN'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" <<'CODEX_PAIR_PLAN'
 [implementationReviewBrief, verbatim]
 CODEX_PAIR_PLAN
 ```
 
-Validate through the routing skill, including the acceptable/fixes coupling and one retry. Report
-the exact `{acceptable, summary, fixes}` result, host checks, and reviewer per-invocation usage and
-duration (or `usage unavailable`), then stop. Do not fix or store implementation state.
+Validate through the routing skill, including the acceptable/fixes coupling and one retry. A
+Codex retry preserves the same `--output-schema` flag. Report the exact
+`{acceptable, summary, fixes}` result, host checks, and reviewer per-invocation usage and duration
+(or `usage unavailable`), then stop. Do not fix or store implementation state.
 
 ## Implementation preflight
 
@@ -287,15 +299,15 @@ Route every round:
   `implementationReviewThreadId`:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> <<'CODEX_PAIR_PLAN'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" <<'CODEX_PAIR_PLAN'
 [implementationReviewBrief, verbatim]
 CODEX_PAIR_PLAN
 ```
 
 Parse named-Claude output directly and Codex output from `storedJob.result.rawOutput`. Apply the
 routing skill's validation and retry. A Codex retry resumes only
-`implementationReviewThreadId`; never assign it to `implementationThreadId`. After a second
-malformed result, ask whether to review inline or stop.
+`implementationReviewThreadId` and preserves the same `--output-schema` flag; never assign it to
+`implementationThreadId`. After a second malformed result, ask whether to review inline or stop.
 
 After every completed review round, report its number, verdict/fix count, and reviewer
 per-invocation usage and duration (or `usage unavailable`). If acceptable, finish. Otherwise send

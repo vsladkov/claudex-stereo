@@ -636,6 +636,46 @@ test('task --fresh is treated as routing control and does not leak into the prom
   assert.equal(fakeState.lastTurnStart.prompt, 'diagnose the flaky test');
 });
 
+test('task --output-schema rejects unreadable or invalid schemas before starting a turn', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+  run('git', ['add', 'README.md'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  const env = buildEnv(binDir);
+
+  const missingSchemaPath = path.join(repo, 'missing-output-schema.json');
+  const missing = run(
+    process.execPath,
+    [SCRIPT, 'task', '--json', '--output-schema', missingSchemaPath, 'review the implementation'],
+    { cwd: repo, env },
+  );
+
+  assert.equal(missing.status, 1);
+  const missingPayload = JSON.parse(missing.stdout);
+  assert.deepEqual(Object.keys(missingPayload), ['error']);
+  assert.match(missingPayload.error, /ENOENT/);
+  assert.equal(readFakeState(binDir).lastTurnStart, undefined);
+  assert.equal(readCompanionState(repo, env), null);
+
+  const invalidSchemaPath = path.join(repo, 'invalid-output-schema.json');
+  fs.writeFileSync(invalidSchemaPath, '{ not valid JSON\n', 'utf8');
+  const invalid = run(
+    process.execPath,
+    [SCRIPT, 'task', '--json', '--output-schema', invalidSchemaPath, 'review the implementation'],
+    { cwd: repo, env },
+  );
+
+  assert.equal(invalid.status, 1);
+  const invalidPayload = JSON.parse(invalid.stdout);
+  assert.deepEqual(Object.keys(invalidPayload), ['error']);
+  assert.match(invalidPayload.error, /JSON|position/i);
+  assert.equal(readFakeState(binDir).lastTurnStart, undefined);
+  assert.equal(readCompanionState(repo, env), null);
+});
+
 test('task forwards model selection and reasoning effort to app-server turn/start', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -924,6 +964,57 @@ test('task --background enqueues a detached worker and exposes per-job status', 
   assert.equal(resultPayload.job.id, launchPayload.jobId);
   assert.equal(resultPayload.job.status, 'completed');
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
+});
+
+test('task --output-schema reaches a background app-server turn', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+  run('git', ['add', 'README.md'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  const env = buildEnv(binDir);
+  const schemaPath = path.join(
+    path.dirname(SCRIPT),
+    '..',
+    'schemas',
+    'implementation-review-output.schema.json',
+  );
+
+  const launched = run(
+    process.execPath,
+    [
+      SCRIPT,
+      'task',
+      '--background',
+      '--json',
+      '--output-schema',
+      schemaPath,
+      'review the implementation',
+    ],
+    { cwd: repo, env },
+  );
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId;
+
+  const status = run(
+    process.execPath,
+    [SCRIPT, 'status', jobId, '--wait', '--timeout-ms', '15000', '--json'],
+    { cwd: repo, env },
+  );
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(JSON.parse(status.stdout).job.status, 'completed');
+
+  const result = run(process.execPath, [SCRIPT, 'result', jobId, '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).job.status, 'completed');
+
+  const expectedSchema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  assert.deepEqual(readFakeState(binDir).lastTurnStart.outputSchema, expectedSchema);
 });
 
 test('slow write tasks expose diff and plan progress while running and retain it in the log', async () => {

@@ -1,7 +1,7 @@
 ---
 name: implementation-reviewer
 description: Review a /stereo:implement delta and return a machine-readable acceptance verdict
-model: sonnet
+model: inherit
 tools: Read, Glob, Grep, Bash
 ---
 

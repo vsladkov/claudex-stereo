@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Draft the repository-grounded seven-section implementation plan requested by /stereo:plan
-model: sonnet
+model: inherit
 tools: Read, Glob, Grep, Bash
 ---
 

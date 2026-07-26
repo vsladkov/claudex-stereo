@@ -1,7 +1,7 @@
 ---
 name: adversarial-reviewer
 description: Challenge a local implementation's design and assumptions for /stereo:adversarial-review
-model: sonnet
+model: inherit
 tools: Read, Glob, Grep, Bash
 ---
 

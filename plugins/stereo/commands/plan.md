@@ -1,6 +1,6 @@
 ---
 description: Draft or review a plan with independently selected Claude or Codex role models
-argument-hint: '[--draft-only|--review-only] [--planner <model>] [--plan-reviewer <model>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
+argument-hint: '[--draft-only|--review-only] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -21,20 +21,28 @@ After reading the routing skill, parse every argument before inspecting the repo
 a routed step:
 
 - `--planner <model>` selects the drafter and defaults to `claude:session`.
+- `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+  Codex-routed planner.
 - `--plan-reviewer <model>` selects the plan reviewer and defaults to `sol`.
-- `--effort <none|minimal|low|medium|high|xhigh|max>` applies to every Codex-routed role.
+- `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+  Codex-routed plan reviewer.
+- `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
+  Codex-routed roles that have no role effort flag.
 - `--max-plan-rounds <n>` defaults to 6.
 - `--draft-only` runs one draft step, stores it, and stops.
 - `--review-only` reviews the stored plan exactly once and stops.
 - Without a mode flag, run the complete draft-plus-review/revision phase.
 
-Reject missing values, duplicate role flags, invalid effort or round values, unknown flags,
-unknown `claude:*` values, and both mode flags together. The removed `--planner-model` and
+Reject missing values, duplicate role or role-effort flags, invalid effort or round values,
+unknown flags, unknown `claude:*` values, and both mode flags together. Accept `claude:inherit`
+alongside `claude:session` and the four explicit Claude aliases. The removed `--planner-model` and
 reviewer `--model` flags are unknown; report the role-named replacements.
 
-For `--review-only`, reject task text and `--planner`. For `--draft-only`, reject
-`--plan-reviewer` and `--max-plan-rounds`. Full phase and `--draft-only` require task text; if it
-is empty, ask the user what to plan.
+For `--review-only`, reject task text, `--planner`, and `--planner-effort`. For `--draft-only`,
+reject `--plan-reviewer`, `--plan-reviewer-effort`, and `--max-plan-rounds`. Reject a role effort
+flag when its selected role is Claude-routed. Resolve each active Codex role through the routing
+skill's role effort > command-wide effort > model default hierarchy. Full phase and
+`--draft-only` require task text; if it is empty, ask the user what to plan.
 
 The `codex-result-handling` stop-after-findings rule applies at explicit user-decision points and
 to `--review-only`. During the full phase's review loop, revise automatically.
@@ -145,24 +153,31 @@ verdict and that `--review-only` runs the next step.
 ## Full plan-review phase
 
 Maintain `reviewRound`, the full current plan, the latest structured result, reviewer kind,
-optional `planReviewThreadId`, and the complete residual-risk set. Both reviewer ecosystems use
+optional `planReviewThreadId`, the current named-Claude reviewer continuation handle, and the
+complete residual-risk set. Both reviewer ecosystems use
 `${CLAUDE_PLUGIN_ROOT}/schemas/plan-review-output.schema.json`.
 
 For each round:
 
-- For either Claude route, read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-review.md` and fill it without
-  changing any other text:
+- For `claude:session`, named-Claude round 1, and any named-Claude stateless fallback, read
+  `${CLAUDE_PLUGIN_ROOT}/prompts/plan-review.md` and fill it without changing any other text:
   - `{{PLAN_INPUT}}` = the full current plan.
   - `{{ROUND_NUMBER}}` = the current round.
   - `{{REPO_MAP}}` = empty; the Claude reviewer uses Read, Glob, Grep, and read-only Bash.
-  - `{{REVISION_CONTEXT}}` = empty in round 1. In later rounds, use the runtime's revision-context
-    meaning adapted for a stateless reviewer: state that the plan responds to earlier findings;
-    embed the earlier findings, responses, open questions, and complete residual risks; require
-    every rebuttal to be verified; and prohibit re-auditing unchanged, previously accepted
-    sections unless the revision changed their assumptions.
+  - `{{REVISION_CONTEXT}}` = empty in round 1. For `claude:session` later rounds and a
+    named-Claude stateless fallback, use the runtime's revision-context meaning: state that the
+    plan responds to earlier findings; embed the earlier findings, responses, open questions, and
+    complete residual risks; require every rebuttal to be verified; and prohibit re-auditing
+    unchanged, previously accepted sections unless the revision changed their assumptions.
     Use the resulting `planReviewBrief` verbatim for the selected Claude route.
 - `claude:session`: apply `planReviewBrief` inline into structured loop state.
-- Named Claude: use `planReviewBrief` as the foreground `stereo:plan-reviewer` prompt.
+- Named Claude round 1: use `planReviewBrief` as the foreground `stereo:plan-reviewer` prompt and
+  retain its continuation handle for this command only.
+- Later named-Claude rounds: apply the routing skill's
+  "Continuing an agent across plan-review rounds" rule. Continue the same reviewer with the round
+  number, full revised plan, and self-verification instruction when supported; otherwise use the
+  fully briefed stateless fallback above. Apply the same schema validation in either mode and
+  report whether the round was continued or re-briefed.
 - Codex round 1:
 
 ```bash

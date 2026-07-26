@@ -1,7 +1,7 @@
 ---
 name: plan-reviewer
 description: Adversarially review one /stereo:plan round and return the exact structured verdict
-model: sonnet
+model: inherit
 tools: Read, Glob, Grep, Bash
 ---
 

@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { normalizeReasoningEffort, normalizeRequestedModel } from '../../models/registry.ts';
 import {
   filterJobsForCurrentSession,
@@ -5,6 +7,7 @@ import {
   sortJobsNewestFirst,
 } from '../../jobs/job-control.ts';
 import { runTrackedJob } from '../../jobs/tracked-jobs.ts';
+import { readOutputSchema } from '../../runtime/index.ts';
 import { listJobs, nowIso, upsertJob, writeJobFile } from '../../workspace/state.ts';
 import type { JobRecord } from '../../workspace/state.ts';
 import {
@@ -84,6 +87,7 @@ function buildTaskRequest({
   cwd,
   model,
   effort,
+  outputSchema,
   prompt,
   write,
   resumeLast,
@@ -94,6 +98,7 @@ function buildTaskRequest({
     cwd,
     model,
     effort,
+    outputSchema,
     prompt,
     write,
     resumeLast,
@@ -104,7 +109,7 @@ function buildTaskRequest({
 
 export async function handleTask(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['model', 'effort', 'cwd', 'prompt-file', 'thread'],
+    valueOptions: ['model', 'effort', 'cwd', 'prompt-file', 'thread', 'output-schema'],
     booleanOptions: ['json', 'write', 'resume-last', 'resume', 'fresh', 'background'],
     aliasMap: {
       m: 'model',
@@ -115,6 +120,10 @@ export async function handleTask(argv: string[]): Promise<void> {
   const workspaceRoot = resolveCommandWorkspace(options);
   const model = normalizeRequestedModel(options.model);
   const effort = normalizeReasoningEffort(options.effort);
+  const outputSchema =
+    typeof options['output-schema'] === 'string'
+      ? readOutputSchema(path.resolve(cwd, options['output-schema']))
+      : undefined;
   const prompt = readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options['resume-last'] || options.resume);
@@ -145,6 +154,7 @@ export async function handleTask(argv: string[]): Promise<void> {
       cwd,
       model,
       effort,
+      outputSchema,
       prompt,
       write,
       resumeLast,
@@ -164,6 +174,7 @@ export async function handleTask(argv: string[]): Promise<void> {
         cwd,
         model,
         effort,
+        outputSchema,
         prompt,
         write,
         resumeLast,

@@ -158,6 +158,7 @@ export interface TaskRunRequest {
   cwd: string;
   model?: string | null;
   effort?: string | null;
+  outputSchema?: unknown;
   prompt?: string;
   write?: boolean;
   resumeLast?: boolean;
@@ -193,6 +194,7 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
     defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : '',
     model: request.model,
     effort: request.effort,
+    outputSchema: request.outputSchema,
     sandbox: request.write ? 'workspace-write' : 'read-only',
     onProgress: request.onProgress,
     jobId: request.jobId ?? null,
