@@ -1,10 +1,11 @@
 export interface ParseArgsConfig {
   valueOptions?: readonly string[];
+  arrayOptions?: readonly string[];
   booleanOptions?: readonly string[];
   aliasMap?: Readonly<Record<string, string>>;
 }
 
-export type ParsedOptionValue = string | boolean;
+export type ParsedOptionValue = string | string[] | boolean;
 
 export interface ParsedArgs {
   options: Record<string, ParsedOptionValue>;
@@ -13,11 +14,17 @@ export interface ParsedArgs {
 
 export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {}): ParsedArgs {
   const valueOptions = new Set(config.valueOptions ?? []);
+  const arrayOptions = new Set(config.arrayOptions ?? []);
   const booleanOptions = new Set(config.booleanOptions ?? []);
   const aliasMap = config.aliasMap ?? {};
   const options: Record<string, ParsedOptionValue> = {};
   const positionals: string[] = [];
   let passthrough = false;
+
+  const appendArrayOption = (key: string, value: string): void => {
+    const current = options[key];
+    options[key] = Array.isArray(current) ? [...current, value] : [value];
+  };
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -49,6 +56,18 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
         continue;
       }
 
+      if (arrayOptions.has(key)) {
+        const nextValue = inlineValue ?? argv[index + 1];
+        if (nextValue === undefined) {
+          throw new Error(`Missing value for --${rawKey}`);
+        }
+        appendArrayOption(key, nextValue);
+        if (inlineValue === undefined) {
+          index += 1;
+        }
+        continue;
+      }
+
       if (valueOptions.has(key)) {
         const nextValue = inlineValue ?? argv[index + 1];
         if (nextValue === undefined) {
@@ -70,6 +89,16 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
 
     if (booleanOptions.has(key)) {
       options[key] = true;
+      continue;
+    }
+
+    if (arrayOptions.has(key)) {
+      const nextValue = argv[index + 1];
+      if (nextValue === undefined) {
+        throw new Error(`Missing value for -${shortKey}`);
+      }
+      appendArrayOption(key, nextValue);
+      index += 1;
       continue;
     }
 

@@ -29,6 +29,48 @@ test('parseArgs supports inline values and boolean =false', () => {
   assert.deepEqual(options, { model: 'gpt-5.4', json: false, wait: true });
 });
 
+test('parseArgs accumulates repeatable array options without changing scalar options', () => {
+  const values = [
+    `question with "quotes" and 'apostrophes'`,
+    'question with\nan embedded newline',
+    '-leading-dash',
+    '$(touch nope); `still literal` & more',
+  ] as const;
+  const { options } = parseArgs(
+    [
+      '--open-question',
+      values[0],
+      '--open-question',
+      values[1],
+      '--residual-risk',
+      values[2],
+      '--residual-risk',
+      values[3],
+      '--model',
+      'sol',
+    ],
+    {
+      valueOptions: ['model'],
+      arrayOptions: ['open-question', 'residual-risk'],
+    },
+  );
+
+  assert.deepEqual(options, {
+    'open-question': [...values.slice(0, 2)],
+    'residual-risk': [...values.slice(2)],
+    model: 'sol',
+  });
+});
+
+test('parseArgs supports inline and aliased array option values', () => {
+  const { options } = parseArgs(['--risk=first', '-r', 'second'], {
+    arrayOptions: ['residual-risk'],
+    aliasMap: { risk: 'residual-risk', r: 'residual-risk' },
+  });
+
+  assert.deepEqual(options, { 'residual-risk': ['first', 'second'] });
+});
+
 test('parseArgs throws on missing values for both flag forms', () => {
   assert.throws(
     () => parseArgs(['--model'], { valueOptions: ['model'] }),
@@ -37,6 +79,10 @@ test('parseArgs throws on missing values for both flag forms', () => {
   assert.throws(
     () => parseArgs(['-m'], { valueOptions: ['model'], aliasMap: { m: 'model' } }),
     /Missing value for -m/,
+  );
+  assert.throws(
+    () => parseArgs(['--open-question'], { arrayOptions: ['open-question'] }),
+    /Missing value for --open-question/,
   );
 });
 

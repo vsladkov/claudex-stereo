@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.0
+
+- Add independent Claude or Codex model selection to `/stereo:plan` drafting/review and `/stereo:implement` implementation/review while preserving their existing checkpoint and defaults
+- Add contained Claude planner, plan-reviewer, file-edit implementer, and implementation-reviewer agents, with foreground result validation and no shell access for Claude implementation
+- Add `plan-store` and null-thread `/stereo:implement` continuation so Claude-reviewed plans persist, render, and resume through the existing pair-plan state
+
 ## 1.11.0
 
 - Add `/stereo:plan-state --open` to refresh the rendered plan as `pair-plan.md` in durable companion state and best-effort open it through the VS Code `code` CLI, with a printed-path fallback

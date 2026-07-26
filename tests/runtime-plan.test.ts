@@ -384,6 +384,97 @@ test('plan-state reports unavailable before any plan review has run', () => {
   assert.equal(JSON.parse(result.stdout).available, false);
 });
 
+test('plan-store persists a Claude-reviewed plan and round-trips through plan-state', () => {
+  const workspace = makeTempDir();
+  const plan = '# Approved mixed plan\n\nImplement the selected changes.\n';
+  const openQuestions = [`Should "quotes" survive?`, 'Can this span\nmultiple lines?'] as const;
+  const residualRisks = ['-leading dash', 'Literal $(command); `ticks` & symbols'] as const;
+
+  const stored = run(
+    'node',
+    [
+      SCRIPT,
+      'plan-store',
+      '--json',
+      '--verdict',
+      'approve',
+      '--round',
+      '4',
+      '--reviewed-by',
+      'claude:opus',
+      '--summary',
+      'Claude approved the mixed plan.',
+      '--open-question',
+      openQuestions[0],
+      '--open-question',
+      openQuestions[1],
+      '--residual-risk',
+      residualRisks[0],
+      '--residual-risk',
+      residualRisks[1],
+    ],
+    {
+      cwd: workspace,
+      input: plan,
+    },
+  );
+
+  assert.equal(stored.status, 0, stored.stderr);
+  const storedPayload = JSON.parse(stored.stdout);
+  assert.equal(storedPayload.plan, plan);
+  assert.equal(storedPayload.threadId, null);
+  assert.equal(storedPayload.model, null);
+  assert.equal(storedPayload.effort, null);
+  assert.equal(storedPayload.round, 4);
+  assert.equal(storedPayload.verdict, 'approve');
+  assert.equal(storedPayload.reviewedBy, 'claude:opus');
+  assert.equal(storedPayload.summary, 'Claude approved the mixed plan.');
+  assert.deepEqual(storedPayload.openQuestions, [...openQuestions]);
+  assert.deepEqual(storedPayload.residualRisks, [...residualRisks]);
+  assert.match(storedPayload.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+  const state = run('node', [SCRIPT, 'plan-state', '--json'], { cwd: workspace });
+  assert.equal(state.status, 0, state.stderr);
+  const statePayload = JSON.parse(state.stdout);
+  assert.equal(statePayload.available, true);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(statePayload).filter(([key]) => key !== 'available')),
+    storedPayload,
+  );
+  assert.equal(statePayload.verdict, 'approve');
+
+  const rendered = run('node', [SCRIPT, 'plan-state'], { cwd: workspace });
+  assert.equal(rendered.status, 0, rendered.stderr);
+  assert.match(rendered.stdout, /^Stored plan \(verdict: approve, round 4, updated /);
+  assert.match(rendered.stdout, /Open questions:\n- Should "quotes" survive\?/);
+  assert.match(rendered.stdout, /Residual risks:\n- -leading dash/);
+  assert.match(rendered.stdout, /# Approved mixed plan/);
+});
+
+test('plan-store rejects a missing verdict and empty stdin with JSON usage errors', () => {
+  const workspace = makeTempDir();
+
+  const missingVerdict = run('node', [SCRIPT, 'plan-store', '--json'], {
+    cwd: workspace,
+    input: '# Plan\n',
+  });
+  assert.notEqual(missingVerdict.status, 0);
+  assert.match(missingVerdict.stderr, /Provide --verdict <value>/);
+  assert.deepEqual(JSON.parse(missingVerdict.stdout), {
+    error: 'Provide --verdict <value>.',
+  });
+
+  const emptyPlan = run('node', [SCRIPT, 'plan-store', '--json', '--verdict', 'approve'], {
+    cwd: workspace,
+    input: ' \n',
+  });
+  assert.notEqual(emptyPlan.status, 0);
+  assert.match(emptyPlan.stderr, /Provide the plan via piped stdin/);
+  assert.deepEqual(JSON.parse(emptyPlan.stdout), {
+    error: 'Provide the plan via piped stdin.',
+  });
+});
+
 test('plan-state --open materializes and refreshes the exact rendered plan', async () => {
   const workspace = makeTempDir();
   const record = storedPlan();

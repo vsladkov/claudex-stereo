@@ -7,7 +7,13 @@ import {
   normalizeRequestedModel,
   PAIR_DEFAULT_MODEL,
 } from '../../models/registry.ts';
-import { loadPairPlanState, resolvePairPlanMarkdownFile } from '../../workspace/state.ts';
+import { readStdinIfPiped } from '../../shared/fs.ts';
+import {
+  loadPairPlanState,
+  nowIso,
+  resolvePairPlanMarkdownFile,
+  savePairPlanState,
+} from '../../workspace/state.ts';
 import {
   createCompanionJob,
   ensureCodexAvailable,
@@ -62,6 +68,16 @@ async function openInVsCode(filePath: string): Promise<boolean> {
 export const defaultPlanStateDeps: PlanStateDeps = {
   openInEditor: openInVsCode,
 };
+
+function optionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
+    : [];
+}
 
 export async function handlePlanReview(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
@@ -158,4 +174,43 @@ export async function handlePlanState(
     `${rendered}\nExported: ${exportedPath}\n${openMessage}\n`,
     options.json,
   );
+}
+
+export function handlePlanStore(argv: string[]): void {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ['cwd', 'verdict', 'round', 'reviewed-by', 'summary'],
+    arrayOptions: ['open-question', 'residual-risk'],
+    booleanOptions: ['json'],
+  });
+
+  if (positionals.length > 0) {
+    throw new Error('plan-store reads the plan from stdin; unexpected positional arguments.');
+  }
+
+  const verdict = optionalString(options.verdict);
+  if (!verdict) {
+    throw new Error('Provide --verdict <value>.');
+  }
+
+  const plan = readStdinIfPiped();
+  if (!plan.trim()) {
+    throw new Error('Provide the plan via piped stdin.');
+  }
+
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const record = savePairPlanState(workspaceRoot, {
+    plan,
+    threadId: null,
+    model: null,
+    effort: null,
+    round: normalizePlanReviewRound(options.round),
+    verdict,
+    summary: optionalString(options.summary),
+    openQuestions: stringArray(options['open-question']),
+    residualRisks: stringArray(options['residual-risk']),
+    reviewedBy: optionalString(options['reviewed-by']),
+    updatedAt: nowIso(),
+  });
+
+  outputCommandResult(record, renderStoredPlanState(record), options.json);
 }

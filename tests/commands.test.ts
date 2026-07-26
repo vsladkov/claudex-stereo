@@ -39,7 +39,7 @@ test('every command wires the companion entry point it documents', () => {
     'cancel.md': /codex-companion\.ts" cancel "\$ARGUMENTS"/,
     'implement.md': /task --background --json --write --thread/,
     'plan-state.md': /codex-companion\.ts" plan-state \$ARGUMENTS/,
-    'plan.md': /plan-review --background --json --round 1/,
+    'plan.md': [/plan-review --background --json --round 1/, /plan-store --json/],
     'quick.md': [
       /plan-review --background --json --round 1/,
       /task --background --json --write --thread/,
@@ -80,14 +80,33 @@ test('directly-wired commands disable model invocation of the command file', () 
 test('plan, implement, and quick keep the pair-workflow loop mechanics', () => {
   const plan = read('commands/plan.md');
   assert.match(plan, /status <jobId> --wait --timeout-ms 90000 --json/);
-  assert.match(plan, /plan-review --background --json --thread <threadId> --round <n>/);
+  assert.match(plan, /plan-review --background --json --thread <planReviewThreadId> --round <n>/);
   assert.match(plan, /<<'CODEX_PAIR_PLAN'/);
+  assert.match(plan, /plan-store --json/);
+  assert.match(plan, /plugins\/stereo\/schemas\/plan-review-output\.schema\.json/);
+  assert.match(plan, /^allowed-tools:.*\bAgent\b.*$/m);
+  assert.ok(
+    (plan.match(/run_in_background: false/g) ?? []).length >= 2,
+    'plan Agent routes must stay foreground',
+  );
 
   const implement = read('commands/implement.md');
   assert.match(implement, /plan-state --json/);
   assert.match(implement, /status <jobId> --wait --timeout-ms 90000 --json/);
+  assert.match(implement, /<<'CODEX_PAIR_PLAN'/);
   assert.match(implement, /<<'CODEX_PAIR_IMPL'/);
   assert.match(implement, /<<'CODEX_PAIR_FIX'/);
+  assert.match(implement, /task --background --json --write --model <effectiveModel> <effortArg>/);
+  assert.match(implement, /approved outside this Codex thread/);
+  assert.match(implement, /reviewed but unapproved plan/);
+  assert.match(implement, /^allowed-tools:.*\bAgent\b.*$/m);
+  assert.match(implement, /Compare `git rev-parse HEAD` with `baselineCommit`/);
+  assert.match(implement, /Continue with file edits only — the listed command steps become yours/);
+  assert.match(implement, /implementationReviewThreadId/);
+  assert.ok(
+    (implement.match(/run_in_background: false/g) ?? []).length >= 2,
+    'implement Agent routes must stay foreground',
+  );
 
   const quick = read('commands/quick.md');
   assert.match(quick, /plan-state --json/);
@@ -95,6 +114,30 @@ test('plan, implement, and quick keep the pair-workflow loop mechanics', () => {
   assert.match(quick, /<<'CODEX_PAIR_PLAN'/);
   assert.match(quick, /<<'CODEX_PAIR_IMPL'/);
   assert.match(quick, /<<'CODEX_PAIR_FIX'/);
+});
+
+test('pair agents keep their role-specific tool and output contracts', () => {
+  const expectedAgents = [
+    'codex-rescue.md',
+    'implementation-reviewer.md',
+    'implementer.md',
+    'plan-reviewer.md',
+    'planner.md',
+  ];
+  assert.deepEqual(fs.readdirSync(path.join(PLUGIN_ROOT, 'agents')).sort(), expectedAgents);
+
+  const implementer = read('agents/implementer.md');
+  assert.match(implementer, /^tools:\s*Read, Glob, Grep, Edit, Write$/m);
+  assert.doesNotMatch(implementer.match(/^---\n[\s\S]*?\n---/)?.[0] ?? '', /\bBash\b/);
+
+  const planReviewer = read('agents/plan-reviewer.md');
+  assert.match(planReviewer, /plugins\/stereo\/schemas\/plan-review-output\.schema\.json/);
+  assert.match(planReviewer, /"section"/);
+  assert.match(planReviewer, /"confidence"/);
+
+  for (const file of expectedAgents.filter((file) => file.startsWith('pair-'))) {
+    assert.match(read(path.join('agents', file)), /run_in_background: false/, file);
+  }
 });
 
 test('rescue routes through the subagent transport, never Skill recursion', () => {

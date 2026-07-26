@@ -5,7 +5,7 @@ import { printUsage } from './usage.ts';
 import { handleSetup } from './commands/setup.ts';
 import { handleAdversarialReview, handleReview } from './commands/review.ts';
 import { handleTask, handleTaskResumeCandidate, handleTaskWorker } from './commands/task.ts';
-import { handlePlanReview, handlePlanState } from './commands/plan.ts';
+import { handlePlanReview, handlePlanState, handlePlanStore } from './commands/plan.ts';
 import { handleTransfer } from './commands/transfer.ts';
 import { handleResult, handleStatus } from './commands/status.ts';
 import { handleCancel } from './commands/cancel.ts';
@@ -35,6 +35,9 @@ async function main(fullArgv: string[]): Promise<void> {
       break;
     case 'plan-state':
       await handlePlanState(argv);
+      break;
+    case 'plan-store':
+      handlePlanStore(argv);
       break;
     case 'transfer':
       await handleTransfer(argv);
