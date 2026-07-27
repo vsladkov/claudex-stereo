@@ -42,13 +42,14 @@ After reading the routing skill, parse all arguments before repository work:
 
 Reject missing values, duplicate role or role-effort flags, invalid effort, unknown flags, unknown
 `claude:*` values, and `claude:session` as implementer. Accept `claude:inherit` alongside
-`claude:session` and the four explicit Claude aliases. Reject a role effort flag when its selected
-role is Claude-routed. Resolve every Codex role through role effort > command-wide effort > the
-routing skill's pair default. When `--implementer` is omitted, use the plan-review payload's
-resolved model and effort at the last level; either `--implementer-effort` or `--effort` overrides
-that payload effort. An explicit implementer model instead uses that model's pair default when
-neither effort flag is present. The removed `--model` flag is unknown; report the role-named
-alternatives. The renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
+`claude:session` and the four explicit Claude aliases. Accept an optional `codex:` prefix on a Codex
+selection and reject `codex:claude:*`. Reject a role effort flag when its selected role is
+Claude-routed. Resolve every Codex role through role effort > command-wide effort > the routing
+skill's pair default. When `--implementer` is omitted, use the plan-review payload's resolved model
+and effort at the last level; either `--implementer-effort` or `--effort` overrides that payload
+effort. An explicit implementer model instead uses that model's pair default when neither effort
+flag is present. The removed `--model` flag is unknown; report the role-named alternatives. The
+renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
 `--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements. Quick
 has no configurable round-count flags.
 

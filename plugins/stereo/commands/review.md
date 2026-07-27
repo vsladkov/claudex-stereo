@@ -14,6 +14,7 @@ Before any repository inspection or execution, inspect the raw arguments for `--
 value starts with `claude:`, stop with:
 "`/stereo:review` is Codex-native and does not accept Claude models. Use
 `/stereo:adversarial-review --model <claude selection>` for a Claude review."
+A Codex `--model` value may carry an optional `codex:` prefix, which the companion strips.
 
 Core constraint:
 

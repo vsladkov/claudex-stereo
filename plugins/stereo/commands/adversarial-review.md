@@ -27,8 +27,9 @@ Core constraint:
 Parse `--model`, `--wait`, `--background`, `--base`, `--scope`, and the remaining focus text from
 the raw arguments. Default to the companion's normal model for a missing `--model`.
 
-- A model that does not start with `claude:` takes the Codex path below. Preserve the user's raw
-  arguments byte-for-byte when invoking the companion.
+- A model that does not start with `claude:` takes the Codex path below, including one with an
+  optional `codex:` prefix. Preserve the user's raw arguments byte-for-byte when invoking the
+  companion; it strips the prefix.
 - `claude:session`, `claude:inherit`, and the four explicit Claude aliases take the Claude path.
   Reject any other `claude:*` value using the routing skill's availability rule.
 - Reject `--background` with a Claude model before inspecting the repository:

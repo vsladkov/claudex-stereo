@@ -178,6 +178,21 @@ test('plan-review routes provider aliases per thread and omits provider-unsafe e
   assert.equal(openAiState.lastThreadStart.model, 'gpt-5.6-sol');
   assert.equal(openAiState.lastThreadStart.modelProvider, 'openai');
   assert.equal(openAiState.lastTurnStart.effort, 'max');
+
+  const prefixedProviderRun = run(
+    'node',
+    [SCRIPT, 'plan-review', '--model', 'codex:kimi', 'Review prefixed provider routing'],
+    {
+      cwd: repo,
+      env: buildEnv(binDir),
+    },
+  );
+
+  assert.equal(prefixedProviderRun.status, 0, prefixedProviderRun.stderr);
+  const prefixedProviderState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(prefixedProviderState.lastThreadStart.model, 'kimi-k3');
+  assert.equal(prefixedProviderState.lastThreadStart.modelProvider, 'moonshot');
+  assert.equal(prefixedProviderState.lastTurnStart.effort, null);
 });
 
 test('plan-review defaults registered OpenAI model selections to max', () => {

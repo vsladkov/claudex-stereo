@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.24.0
+
+- Accept an optional `codex:` prefix on every Codex model selection, stripped exactly once before
+  alias, provider, and effort resolution, so `codex:sol` and `sol` address the same runtime model
+  on every command
+- Reject `codex:claude:*` and a bare `codex:` with explicit errors while keeping bare selections
+  canonical in defaults, stored plan state, status output, and reports
+- State one addressing rule in the README and routing skill: the prefix names the executing
+  runtime, `claude:` stays required for the closed Claude Code set, and everything else is an open
+  Codex passthrough
+
 ## 1.23.0
 
 - Continue named-Claude implementation reviewers across fix-loop rounds within one command run,

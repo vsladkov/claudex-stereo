@@ -38,8 +38,9 @@ After reading the routing skill, parse all arguments before loading state:
 
 Reject missing values, duplicates, positionals, invalid effort/round values, unknown flags,
 unknown `claude:*` values, and both mode flags together. Accept `claude:inherit` alongside
-`claude:session` and the four explicit Claude aliases. The removed implementer `--model` and
-`--review-model` flags are unknown; report the role-named replacements.
+`claude:session` and the four explicit Claude aliases. Accept an optional `codex:` prefix on a
+Codex selection and reject `codex:claude:*`. The removed implementer `--model` and `--review-model`
+flags are unknown; report the role-named replacements.
 The renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
 `--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements.
 

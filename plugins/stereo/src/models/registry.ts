@@ -40,6 +40,30 @@ const ENTRIES_BY_MODEL = new Map<string, ModelEntry>(
   Object.values(MODEL_REGISTRY).map((entry) => [entry.model, entry]),
 );
 
+const CODEX_PREFIX = 'codex:';
+
+// `claude:` names a closed set of Claude Code execution surfaces and never
+// reaches this runtime. `codex:` is the symmetric optional way to name the
+// runtime that executes everything else, including the third-party provider
+// aliases. It is addressing sugar, so it is stripped exactly once before
+// alias, provider, and effort resolution; a single strip also leaves
+// `codex:codex:<id>` as the escape hatch for a literal `codex:`-prefixed id.
+function stripCodexPrefix(model: string): string {
+  if (!model.toLowerCase().startsWith(CODEX_PREFIX)) {
+    return model;
+  }
+  const remainder = model.slice(CODEX_PREFIX.length).trim();
+  if (!remainder) {
+    throw new Error(`Unsupported model "${model}". Use codex:<model> or a bare Codex model id.`);
+  }
+  if (remainder.toLowerCase().startsWith('claude:')) {
+    throw new Error(
+      `Unsupported model "${model}". The codex: prefix addresses Codex runtime models; claude: selections are not Codex models.`,
+    );
+  }
+  return remainder;
+}
+
 export function registryEntryForModel(resolvedModel: string): ModelEntry | null {
   return ENTRIES_BY_MODEL.get(resolvedModel) ?? null;
 }
@@ -86,7 +110,7 @@ export function normalizeRequestedModel(model: unknown): string | null {
   if (!normalized) {
     return null;
   }
-  const qualified = parseQualifiedModel(normalized);
+  const qualified = parseQualifiedModel(stripCodexPrefix(normalized));
   const resolvedModel = MODEL_ALIASES.get(qualified.model.toLowerCase()) ?? qualified.model;
   return qualified.modelProvider ? `${resolvedModel}@${qualified.modelProvider}` : resolvedModel;
 }

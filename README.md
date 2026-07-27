@@ -97,7 +97,14 @@ Every multi-role command uses role-named model flags: `--planner`, `--plan-revie
   conversation's model.
 - `claude:sonnet`, `claude:opus`, `claude:haiku`, and `claude:fable` use a contained foreground
   Claude agent.
-- Any other value is a Codex model request or registry alias resolved by the companion.
+- Any other value is a Codex selection—a registry alias, a raw model id, or a qualified
+  `model@provider` id—optionally written as `codex:sol`, `codex:glm`, or
+  `codex:gpt-5.6-sol@azure`; the companion strips the prefix.
+
+The prefix names the executing runtime, not the model vendor. `claude:` remains required for its
+closed six-value set so those selections are distinguishable from the open Codex passthrough;
+`codex:` is optional because the Codex side cannot be enumerated and includes third-party
+providers. Bare forms remain canonical in defaults, stored state, status output, and reports.
 
 `--effort` remains the command-wide Codex default. Multi-role commands also accept the matching
 role flags: `--planner-effort`, `--plan-reviewer-effort`, `--implementer-effort`, and
@@ -297,7 +304,7 @@ Claude model values are `claude:inherit`, `claude:sonnet`, `claude:opus`, `claud
 `claude:fable`; `claude:session` selects inline work by the current session. As described above,
 `claude:inherit` honors `CLAUDE_CODE_SUBAGENT_MODEL` before inheriting the session model. Codex
 values include registry aliases such as `sol`, `spark`, `terra`, and `luna`, raw model ids, and
-qualified `model@provider` ids.
+qualified `model@provider` ids; each may carry an optional `codex:` prefix.
 
 `--planner-effort` and `--plan-reviewer-effort` set effort for their Codex-routed role.
 `--effort` is the fallback for either role when its specific flag is absent. A role effort flag is
@@ -331,6 +338,7 @@ Examples:
 ```bash
 /stereo:plan add rate limiting to the public API
 /stereo:plan --plan-reviewer sol add rate limiting to the public API
+/stereo:plan --plan-reviewer codex:sol add rate limiting to the public API
 /stereo:plan --planner claude:haiku add a validation check
 /stereo:plan --plan-reviewer claude:opus refactor the retry logic
 /stereo:plan --max-plan-rounds 3 refactor the retry logic
@@ -705,7 +713,7 @@ Use the provider id from the table below in place of `example`. The URLs in the 
 | `deepseek` | `deepseek-v4-pro` | `[model_providers.deepseek]`  | `DEEPSEEK_API_KEY`  | [DeepSeek API](https://api-docs.deepseek.com/quick_start/pricing/)                           |
 | `glm`      | `glm-5.1`         | `[model_providers.zhipu]`     | `ZAI_API_KEY`       | [Z.AI API](https://docs.z.ai/guides/overview/migrate-to-glm-new)                             |
 
-Aliases and their exact registered model ids select the listed provider per thread. For example, both `--model kimi` and `--model kimi-k3` route to `model_providers.moonshot`. An unregistered raw model id is passed through unchanged with no provider override, so it uses your config's default `model_provider`.
+Aliases and their exact registered model ids select the listed provider per thread. For example, both `--model kimi` and `--model kimi-k3` route to `model_providers.moonshot`. An unregistered raw model id is passed through unchanged with no provider override, so it uses your config's default `model_provider`. These provider models are not Codex models—they execute through the Codex CLI runtime, which is what the optional `codex:` prefix names—so `--model kimi` and `--model codex:kimi` are the same request.
 
 Before first use, save just the provider stanza to a temporary TOML file and run the compatibility probe from this repository checkout:
 

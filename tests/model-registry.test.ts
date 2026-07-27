@@ -22,6 +22,38 @@ test('normalizeRequestedModel resolves the documented aliases to exact models', 
   assert.equal(normalizeRequestedModel('glm'), 'glm-5.1');
 });
 
+test('normalizeRequestedModel strips one optional codex: runtime prefix', () => {
+  assert.equal(normalizeRequestedModel('codex:sol'), 'gpt-5.6-sol');
+  assert.equal(normalizeRequestedModel('  CODEX:Glm  '), 'glm-5.1');
+  assert.equal(normalizeRequestedModel('codex:gpt-5.6-sol@azure'), 'gpt-5.6-sol@azure');
+  assert.equal(normalizeRequestedModel('codex:my-local-model'), 'my-local-model');
+  // Exactly one strip, which keeps a literal codex:-prefixed id addressable.
+  assert.equal(normalizeRequestedModel('codex:codex:latest'), 'codex:latest');
+});
+
+test('normalizeRequestedModel rejects empty and Claude selections under codex:', () => {
+  assert.throws(
+    () => normalizeRequestedModel('codex:'),
+    new Error('Unsupported model "codex:". Use codex:<model> or a bare Codex model id.'),
+  );
+  assert.throws(
+    () => normalizeRequestedModel('codex:   '),
+    new Error('Unsupported model "codex:". Use codex:<model> or a bare Codex model id.'),
+  );
+  assert.throws(
+    () => normalizeRequestedModel('codex:claude:opus'),
+    new Error(
+      'Unsupported model "codex:claude:opus". The codex: prefix addresses Codex runtime models; claude: selections are not Codex models.',
+    ),
+  );
+  assert.throws(
+    () => normalizeRequestedModel('CODEX:CLAUDE:session'),
+    new Error(
+      'Unsupported model "CODEX:CLAUDE:session". The codex: prefix addresses Codex runtime models; claude: selections are not Codex models.',
+    ),
+  );
+});
+
 test('normalizeRequestedModel matches aliases case-insensitively and trims whitespace', () => {
   assert.equal(normalizeRequestedModel('  SOL  '), 'gpt-5.6-sol');
   assert.equal(normalizeRequestedModel('Terra'), 'gpt-5.6-terra');
