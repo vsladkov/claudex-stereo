@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.25.1
+
+- Add the fork's own copyright line to both NOTICE copies while retaining the required upstream
+  OpenAI attribution for `openai/codex-plugin-cc`
+- Add a README License section naming Apache-2.0 and pointing at LICENSE and NOTICE
+
 ## 1.25.0
 
 - Document the built-in Codex alias mappings, pair-role effort defaults, pinned role pipeline, and
