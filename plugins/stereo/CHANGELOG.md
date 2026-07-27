@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.25.0
+
+- Document the built-in Codex alias mappings, pair-role effort defaults, pinned role pipeline, and
+  named Claude model availability required by the default path
+- Document review scope selection, session-aware status flags, and the complete setup readiness
+  report
+- Correct Quick's reviewer-neutral continuation behavior and round-6 safeguard, and explain why
+  Codex implementation-review rounds remain fresh
+- Complete the contributor surface, fix the installed plan-review schema path, and broaden the
+  rescue prompting guidance to all Codex CLI models
+
 ## 1.24.0
 
 - Accept an optional `codex:` prefix on every Codex model selection, stripped exactly once before

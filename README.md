@@ -15,12 +15,16 @@ they already have.
 - `/stereo:plan-state` to read the latest reviewed plan before implementation
 - `/stereo:quick` for the same pair workflow in one command when the task is small
 - `/stereo:rescue`, `/stereo:transfer`, `/stereo:status`, `/stereo:result`, and `/stereo:cancel` to delegate work, hand off sessions, and manage background jobs
+- `/stereo:setup` to check readiness, provider configuration, and review-gate state
 
 ## Requirements
 
 - **Codex authentication or a configured custom model provider.**
   - OpenAI-backed usage contributes to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
 - **Node.js 24 or later** (the plugin runs its TypeScript sources natively via Node's type stripping)
+- **A Claude Code harness that exposes named `opus` and `fable` models for the default pipeline.**
+  Three of its four roles use those models; if they are unavailable, use the
+  [per-role model escape hatches](#choosing-models-per-role).
 
 ## Install
 
@@ -101,6 +105,16 @@ Every multi-role command uses role-named model flags: `--planner`, `--plan-revie
   `model@provider` id—optionally written as `codex:sol`, `codex:glm`, or
   `codex:gpt-5.6-sol@azure`; the companion strips the prefix.
 
+| Alias   | Model id              | Pair-role effort default |
+| ------- | --------------------- | ------------------------ |
+| `spark` | `gpt-5.3-codex-spark` | `max`                    |
+| `sol`   | `gpt-5.6-sol`         | `max`                    |
+| `terra` | `gpt-5.6-terra`       | `max`                    |
+| `luna`  | `gpt-5.6-luna`        | `max`                    |
+
+Third-party aliases (`kimi`, `qwen`, `deepseek`, and `glm`) omit the effort default and are listed
+under [Other model providers](#other-model-providers).
+
 The prefix names the executing runtime, not the model vendor. `claude:` remains required for its
 closed six-value set so those selections are distinguishable from the open Codex passthrough;
 `codex:` is optional because the Codex side cannot be enumerated and includes third-party
@@ -109,8 +123,8 @@ providers. Bare forms remain canonical in defaults, stored state, status output,
 `--effort` remains the command-wide Codex default. Multi-role commands also accept the matching
 role flags: `--planner-effort`, `--plan-reviewer-effort`, `--implementer-effort`, and
 `--implementation-reviewer-effort`. For each Codex-routed role, its role flag wins over
-`--effort`, which wins over stored effort or the model-pair default. Every `gpt-*` selection
-defaults to `max`, while non-OpenAI selections omit an effort override.
+`--effort`, which wins over stored effort or the model-pair default. Every pair-role `gpt-*`
+selection defaults to `max`, while non-OpenAI selections omit an effort override.
 
 Stereo's Claude role agents intentionally omit the agent-definition `effort` field, so they
 inherit the session's effort and extended-thinking configuration. Subagents have no separate
@@ -157,6 +171,13 @@ cross-ecosystem independence back at the implementation gate.
 ### Choosing models per role
 
 These are dogfooded defaults, not enforcement: every role flag remains free-form.
+
+| Role                    | `/stereo:plan` + `/stereo:implement` | `/stereo:quick`  |
+| ----------------------- | ------------------------------------ | ---------------- |
+| Planner                 | `claude:opus`                        | `claude:session` |
+| Plan reviewer           | `claude:fable`                       | `claude:fable`   |
+| Implementer             | stored model, else `sol` at `max`    | `sol` at `max`   |
+| Implementation reviewer | `claude:fable`                       | `claude:fable`   |
 
 | Situation                            | Planner                     | Plan reviewer    | Implementation reviewer |
 | ------------------------------------ | --------------------------- | ---------------- | ----------------------- |
@@ -243,9 +264,14 @@ Use it when you want:
 - a review of your current uncommitted changes
 - a review of your branch compared to a base branch like `main`
 
-Use `--base <ref>` for branch review. It also supports `--wait`, `--background`, and a Codex
-`--model`. It is not steerable and does not take custom focus text. Claude model selections are
-rejected because this command maps to Codex's built-in reviewer; use
+Use `--scope auto|working-tree|branch` to select the review target. `auto` (the default) reviews the
+working tree when `git status --short --untracked-files=all` is non-empty; otherwise it reviews the
+default-base branch diff. `--base <ref>` takes precedence over `--scope`. The `staged` and
+`unstaged` scopes are rejected.
+
+The command also supports `--wait`, `--background`, and a Codex `--model`. It is not steerable and
+does not take custom focus text. Claude model selections are rejected because this command maps to
+Codex's built-in reviewer; use
 [`/stereo:adversarial-review`](#stereoadversarial-review) for a Claude-routed challenge review.
 
 Examples:
@@ -264,9 +290,14 @@ Runs a **steerable** review that questions the chosen implementation and design.
 
 It can be used to pressure-test assumptions, tradeoffs, failure modes, and whether a different approach would have been safer or simpler.
 
-It uses the same review target selection as `/stereo:review`, including `--base <ref>` for branch review.
-It also supports `--wait`, `--background`, and `--model`. Unlike `/stereo:review`, it can take
-extra focus text after the flags. Codex models can run in the foreground or background. All Claude
+It uses the same review target selection as `/stereo:review`.
+`--scope auto|working-tree|branch` controls that target: `auto` (the default) reviews the working
+tree when `git status --short --untracked-files=all` is non-empty and otherwise reviews the
+default-base branch diff. `--base <ref>` takes precedence over `--scope`; `staged` and `unstaged`
+scopes are rejected.
+
+It also supports `--wait`, `--background`, and `--model`. Unlike `/stereo:review`, it can take extra
+focus text after the flags. Codex models can run in the foreground or background. All Claude
 selections, including `claude:session` and `claude:inherit`, use the same adversarial brief and
 structured output contract in the foreground. `--background --model claude:*` is rejected because
 Claude agent reviews are session-bound and not visible in `/stereo:status`; choose a Codex model
@@ -331,8 +362,6 @@ review round 0, so implementation still presents the unapproved-plan gate. Use `
 load the stored plan, run one fresh review round, persist its actual verdict, and stop without
 revising it. The two modes conflict; each also rejects flags for a role or loop it does not run.
 
-`terra` and `luna` map to `gpt-5.6-terra` and `gpt-5.6-luna`.
-
 Examples:
 
 ```bash
@@ -393,7 +422,9 @@ and retry checks. Claude routes retain command-side validation.
 Named-Claude implementation reviewers keep the same agent across fix-loop rounds inside one
 command run when the harness supports follow-ups. Unsupported, erroring, or malformed
 continuations fall back to the fully re-briefed stateless review. Continuation never crosses
-command runs. Codex implementation-review rounds remain fresh read-only tasks by design.
+command runs. Codex implementation-review rounds remain fresh read-only tasks by design: the fully
+filled brief travels with every round, so resuming would add thread history without reducing
+payload cost and would weaken the cross-ecosystem reviewer's per-round independence.
 
 Claude implementation is deliberately file-edits-only: the agent has no shell, network, process,
 or git tool. Before edits, the command detects plan steps requiring version scripts, package
@@ -453,12 +484,15 @@ reviews the plan, `sol` implements at `max`, and a contained `claude:fable` revi
 implementation. The planner stays inline because the scope gate already grounds the task in this
 session.
 
-Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the
-plan cap you can keep iterating in the same Codex thread, implement the reviewed but unapproved
-plan with its findings carried forward, or stop; approved plans also carry their review findings
-forward as advisory context. Dirty worktrees and exhausted fix rounds still produce explicit
-safety gates. If the task needs a plan longer than roughly 120 lines or crosses multiple features
-or subsystems, quick stops before review and directs you to
+Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the plan
+cap you can keep iterating, implement the reviewed but unapproved plan with its findings carried
+forward, or stop. Choosing keep iterating continues automatically through rounds 3-5: a Codex plan
+reviewer resumes its `planReviewThreadId`, while a named Claude reviewer is continued when the
+harness supports follow-ups and fully re-briefed otherwise. Round 6 is an absolute safeguard and
+offers only implement anyway or stop. Approved plans also carry their review findings forward as
+advisory context. Dirty worktrees and exhausted fix rounds still produce explicit safety gates. If
+the task needs a plan longer than roughly 120 lines or crosses multiple features or subsystems,
+quick stops before review and directs you to
 [`/stereo:plan`](#stereoplan).
 
 Use the same four role flags as the phase commands:
@@ -522,7 +556,8 @@ Ask Codex to redesign the database connection to be more resilient.
 **Notes:**
 
 - if you do not pass `--model` or `--effort`, Codex chooses its own defaults.
-- `spark` maps to `gpt-5.3-codex-spark`; third-party aliases are listed under [Other model providers](#other-model-providers)
+- built-in aliases such as `spark` are listed in the [Codex alias table](#workflow-taxonomy);
+  third-party aliases are listed under [Other model providers](#other-model-providers)
 - follow-up rescue requests can continue the latest Codex task in the repo
 
 ### `/stereo:transfer`
@@ -542,16 +577,23 @@ The plugin's existing `SessionStart` hook supplies the current transcript path a
 
 ### `/stereo:status`
 
-Shows running and recent Codex jobs for the current repository.
+The flagless listing shows running and recent Codex jobs for this repository, filtered to the
+current session when a session ID is known. An explicit job ID looks up any job in this repository
+regardless of session.
 
 Examples:
 
 ```bash
 /stereo:status
 /stereo:status task-abc123
+/stereo:status task-abc123 --wait --timeout-ms 60000 --poll-interval-ms 1000
+/stereo:status --all
 /stereo:status --verbose
 ```
 
+`--all` keeps the flagless listing's repository and session scope but includes every older finished
+job instead of limiting that past-finished list to the eight most recent. `--wait` blocks on one
+job and requires a job ID; `--timeout-ms <ms>` and `--poll-interval-ms <ms>` tune that wait.
 Verbose output adds log-file paths, timestamps, and longer progress previews.
 
 Use it to:
@@ -587,6 +629,14 @@ Examples:
 
 Checks whether Codex is installed and authenticated.
 If Codex is missing and npm is available, it can offer to install Codex for you.
+
+The setup report covers:
+
+- Node, npm, and Codex availability, Codex authentication, and the effective write sandbox
+- the active model provider, each configured provider's environment-key status, and per-alias
+  readiness
+- the session runtime, stranded thread reservations, and review-gate state
+- account rate limits, actions taken, and next steps when present
 
 You can also use `/stereo:setup` to manage the optional review gate.
 

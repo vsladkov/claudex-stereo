@@ -335,7 +335,7 @@ test('pair agents keep their role-specific tool and output contracts', () => {
   assert.doesNotMatch(implementer.match(/^---\n[\s\S]*?\n---/)?.[0] ?? '', /\bBash\b/);
 
   const planReviewer = read('agents/plan-reviewer.md');
-  assert.match(planReviewer, /plugins\/stereo\/schemas\/plan-review-output\.schema\.json/);
+  assert.match(planReviewer, /schemas\/plan-review-output\.schema\.json/);
   assert.match(planReviewer, /"section"/);
   assert.match(planReviewer, /"confidence"/);
 

@@ -1,12 +1,12 @@
 ---
 name: codex-prompting
-description: Internal guidance for composing Codex (GPT-5.6-family) prompts for coding, review, diagnosis, and research tasks inside the Codex Claude Code plugin
+description: Internal guidance for composing prompts for Codex CLI models for coding, review, diagnosis, and research tasks inside the Codex Claude Code plugin
 user-invocable: false
 ---
 
-# Codex Prompting (GPT-5.6 family)
+# Codex CLI Model Prompting
 
-Use this skill when `stereo:codex-rescue` needs to ask Codex (GPT-5.6-family models) for help.
+Use this skill when `stereo:codex-rescue` needs to ask a Codex CLI model for help.
 
 Prompt Codex like an operator, not a collaborator. Keep prompts compact and block-structured with XML tags. State the task, the output contract, the follow-through defaults, and the small set of extra constraints that matter.
 

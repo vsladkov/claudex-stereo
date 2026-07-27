@@ -16,8 +16,8 @@ Operating rules:
 - Do not revise the plan, implement code, ask the user questions, or delegate work.
 
 Your output contract is exactly
-`plugins/stereo/schemas/plan-review-output.schema.json`. Return only one raw JSON object, with no
-Markdown fence or prose:
+`${CLAUDE_PLUGIN_ROOT}/schemas/plan-review-output.schema.json`. Return only one raw JSON object,
+with no Markdown fence or prose:
 
 ```text
 {
