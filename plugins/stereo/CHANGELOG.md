@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.26.0
+
+- Restructure the README around a getting-started arc: new Contents, Quick start with a real
+  status transcript, Troubleshooting, and a Model routing reference that consolidates the
+  routing doctrine out of the command path
+- Merge `/stereo:status`, `/stereo:result`, and `/stereo:cancel` into one Background jobs
+  section and collapse the five scattered reviewer-continuation statements into a single
+  Reviewer continuation reference with per-command cross-links
+- Deduplicate per-command addressing and scope restatements, cut dogfood version history from
+  the model-choice guidance, and consolidate the four cost passages into one route/budget/cost
+  table
+
 ## 1.25.1
 
 - Add the fork's own copyright line to both NOTICE copies while retaining the required upstream
