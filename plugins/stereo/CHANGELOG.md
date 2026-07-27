@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.26.3
+
+- Document the public GitHub marketplace install (`vsladkov/claudex-stereo`) as the primary
+  install path, keeping the local-checkout path as the alternative
+- Add repository, homepage, and issues metadata to the package and a CI badge to the README
+
 ## 1.26.2
 
 - Run CI on pushes to main and manual dispatch, not only pull requests, and rename the workflow

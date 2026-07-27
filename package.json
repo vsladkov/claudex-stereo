@@ -1,11 +1,17 @@
 {
   "name": "claudex-stereo",
-  "version": "1.26.2",
+  "version": "1.26.3",
   "private": true,
   "type": "module",
   "description": "Use Codex from Claude Code to review code or delegate tasks.",
   "author": "Veselin Sladkov <veselin.sladkov@gmail.com>",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vsladkov/claudex-stereo.git"
+  },
+  "homepage": "https://claudex-stereo.com",
+  "bugs": "https://github.com/vsladkov/claudex-stereo/issues",
   "engines": {
     "node": ">=24"
   },

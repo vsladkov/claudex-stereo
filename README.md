@@ -1,5 +1,7 @@
 # Claudex Stereo
 
+[![CI](https://github.com/vsladkov/claudex-stereo/actions/workflows/ci.yml/badge.svg)](https://github.com/vsladkov/claudex-stereo/actions/workflows/ci.yml)
+
 Claude and the Codex CLI as one signal: a Claude Code plugin that pairs the two ecosystems across
 planning, implementation, adversarial review, and delegated tasks, with an independent model
 choice for every role.
@@ -46,6 +48,12 @@ thread reservations, plus an optional stop-time review gate.
 ## Install
 
 Add the marketplace in Claude Code:
+
+```bash
+/plugin marketplace add vsladkov/claudex-stereo
+```
+
+From a local checkout, use its path instead:
 
 ```bash
 /plugin marketplace add /path/to/claudex-stereo
