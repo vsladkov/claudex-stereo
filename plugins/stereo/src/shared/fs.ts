@@ -38,3 +38,25 @@ export function readStdinIfPiped(): string {
   }
   return fs.readFileSync(0, 'utf8');
 }
+
+export function readStdinJsonIfPiped(): Record<string, unknown> {
+  // Hook stdin is untrusted: malformed (or unreadable) input must degrade to
+  // empty input, never throw. Throwing exits nonzero before any decision,
+  // which Claude Code treats as a non-blocking hook error - that silently
+  // bypasses an enabled Stop gate and skips SessionEnd job/broker cleanup.
+  let raw: string;
+  try {
+    raw = readStdinIfPiped().trim();
+  } catch {
+    return {};
+  }
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}

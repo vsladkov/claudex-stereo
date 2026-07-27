@@ -20,10 +20,33 @@ export interface RunResult {
 }
 
 const createdTempDirs: string[] = [];
+const allTempDirs: string[] = [];
+let exitCleanupInstalled = false;
+
+function installTempDirCleanup(): void {
+  if (exitCleanupInstalled || process.env.STEREO_KEEP_TEST_TMP) {
+    return;
+  }
+  exitCleanupInstalled = true;
+  // Exit time, not afterEach: registerBrokerReaping() drains dirs during the
+  // run and claude-session-transfer.test.ts creates module-scope dirs that
+  // must outlive every test in the file.
+  process.on('exit', () => {
+    for (const dir of allTempDirs) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+      } catch {
+        // Cleanup is best effort; a leaked dir must never fail a test run.
+      }
+    }
+  });
+}
 
 export function makeTempDir(prefix = 'codex-plugin-test-'): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   createdTempDirs.push(dir);
+  allTempDirs.push(dir);
+  installTempDirCleanup();
   return dir;
 }
 

@@ -6,9 +6,11 @@ import process from 'node:process';
 import {
   BROKER_SESSION_DIR_PREFIX,
   loadBrokerSession,
+  probeBrokerEndpoint,
   sendBrokerShutdown,
   teardownBrokerSession,
 } from '../plugins/stereo/src/broker/lifecycle.ts';
+import { createBrokerEndpoint } from '../plugins/stereo/src/broker/endpoint.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 
 // The companion CLI auto-starts a detached, session-leader broker per
@@ -91,24 +93,31 @@ export interface LeakSweepResult {
 
 export interface LeakSweepOptions {
   cwdFilter?: (brokerCwd: string) => boolean;
+  removeDeadSessionDirs?: boolean;
 }
 
 /**
- * Tmpdir-wide safety net for the suite's global teardown: kill any broker
- * whose pid file lives in a cxc-* session dir AND whose --cwd is itself under
+ * Tmpdir-wide safety net for the suite's global teardown: kill live brokers
+ * whose pid file lives in a cxc-* session dir and whose --cwd is itself under
  * os.tmpdir() (a live user session serves a real workspace and never matches).
- * Callers running before global teardown can narrow eligibility further with
- * cwdFilter so they never reap another concurrently running test file's broker.
+ * Teardown may also opt into removing newly created dead or pid-less session
+ * dirs after proving that their socket is not listening. Callers running
+ * before global teardown can narrow live-broker eligibility with cwdFilter;
+ * dead-dir removal stays disabled for those mid-suite calls.
  * Linux-only (/proc cmdline verification); other platforms rely on the
  * per-file afterEach reapers, which cover every leak path the suite has.
  */
-export function reapLeakedTestBrokers(options: LeakSweepOptions = {}): LeakSweepResult {
+export async function reapLeakedTestBrokers(
+  options: LeakSweepOptions = {},
+): Promise<LeakSweepResult> {
   const result: LeakSweepResult = { reaped: 0, details: [] };
   if (process.platform !== 'linux') {
     return result;
   }
 
   const tmp = os.tmpdir();
+  const runnerStartedAt = Date.now() - process.uptime() * 1000;
+  const minimumDeadSessionAgeMs = 10_000;
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(tmp, { withFileTypes: true });
@@ -121,13 +130,47 @@ export function reapLeakedTestBrokers(options: LeakSweepOptions = {}): LeakSweep
       continue;
     }
     const sessionDir = path.join(tmp, entry.name);
+    let sessionStat: fs.Stats;
+    try {
+      sessionStat = fs.statSync(sessionDir);
+    } catch {
+      continue;
+    }
+    // Only account for directories created during this test-runner process.
+    // Older cxc-* directories may belong to dogfood or sandboxed sessions.
+    if (sessionStat.mtimeMs < runnerStartedAt) {
+      continue;
+    }
+
     let pid = NaN;
     try {
       pid = Number(fs.readFileSync(path.join(sessionDir, 'broker.pid'), 'utf8').trim());
     } catch {
-      continue;
+      // A broker that self-exits removes its pid file and socket but not its
+      // session directory. Global teardown can remove that stale artifact.
     }
     if (!Number.isFinite(pid) || pid <= 0 || !processAlive(pid)) {
+      if (
+        !options.removeDeadSessionDirs ||
+        Date.now() - sessionStat.mtimeMs < minimumDeadSessionAgeMs
+      ) {
+        continue;
+      }
+
+      // PID namespaces can make a live broker's pid look dead from the host.
+      // The filesystem socket is the namespace-independent liveness signal.
+      const endpoint = createBrokerEndpoint(sessionDir);
+      if (await probeBrokerEndpoint(endpoint)) {
+        continue;
+      }
+
+      try {
+        fs.rmSync(sessionDir, { recursive: true, force: true, maxRetries: 2 });
+      } catch {
+        continue;
+      }
+      result.reaped += 1;
+      result.details.push(`session dir ${sessionDir} (dead or pid-less)`);
       continue;
     }
 

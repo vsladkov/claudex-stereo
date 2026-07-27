@@ -10,13 +10,19 @@ export interface SessionRuntimeStatus {
   endpoint: string | null;
 }
 
-export function getCodexAvailability(cwd: string): BinaryAvailability {
-  const versionStatus = binaryAvailable('codex', ['--version'], { cwd });
+export interface CodexAvailabilityOptions {
+  probeImpl?: typeof binaryAvailable;
+}
+
+const availabilityCache = new Map<string, BinaryAvailability>();
+
+function probeCodexAvailability(cwd: string, probe: typeof binaryAvailable): BinaryAvailability {
+  const versionStatus = probe('codex', ['--version'], { cwd });
   if (!versionStatus.available) {
     return versionStatus;
   }
 
-  const appServerStatus = binaryAvailable('codex', ['app-server', '--help'], { cwd });
+  const appServerStatus = probe('codex', ['app-server', '--help'], { cwd });
   if (!appServerStatus.available) {
     return {
       available: false,
@@ -28,6 +34,29 @@ export function getCodexAvailability(cwd: string): BinaryAvailability {
     available: true,
     detail: `${versionStatus.detail}; advanced runtime available`,
   };
+}
+
+// Cleared only by tests: a CLI process is short-lived, and the one long-lived
+// process (the broker) never calls this.
+export function resetCodexAvailabilityCache(): void {
+  availabilityCache.clear();
+}
+
+export function getCodexAvailability(
+  cwd: string,
+  options: CodexAvailabilityOptions = {},
+): BinaryAvailability {
+  // An injected probe always runs: memoizing it would hide a test's intent.
+  if (options.probeImpl) {
+    return probeCodexAvailability(cwd, options.probeImpl);
+  }
+  const cached = availabilityCache.get(cwd);
+  if (cached) {
+    return cached;
+  }
+  const status = probeCodexAvailability(cwd, binaryAvailable);
+  availabilityCache.set(cwd, status);
+  return status;
 }
 
 export function getSessionRuntimeStatus(

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.18.0
+
+- Tolerate malformed or non-object SessionStart, SessionEnd, and Stop hook input so cleanup and
+  enabled review gates still run with empty-input semantics
+- Preserve the last good stored pair plan when a reviewer returns parseable JSON without a
+  verdict-bearing plan-review object, while retaining its result and summary for reporting
+- Reuse Codex availability results within each CLI process instead of launching duplicate version
+  and app-server probes
+- Remove test-created temporary directories at process exit and safely clean newly leaked dead
+  broker session directories during global teardown
+- Consolidate runtime excerpt shortening on the shared text helper without changing existing
+  explicit limits
+- Remove the missing demo-video embed and correct contributor documentation for the release
+  manifest count and test-temp debugging escape hatch
+
 ## 1.17.0
 
 - Publish ordinary durable JSON state updates with same-directory atomic renames so concurrent

@@ -251,6 +251,65 @@ test('session start hook exports the Claude session id, transcript path, and plu
   );
 });
 
+test('malformed session hook stdin degrades to empty input', async (t) => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'slow-turn');
+  const sessionId = 'sess-malformed-input';
+  const env: NodeJS.ProcessEnv = {
+    ...buildEnv(binDir),
+    CODEX_COMPANION_SESSION_ID: sessionId,
+  };
+  registerSessionCleanup(t, repo, env);
+
+  const envFile = path.join(makeTempDir(), 'claude-env.sh');
+  fs.writeFileSync(envFile, '', 'utf8');
+  const started = run(process.execPath, [SESSION_HOOK, 'SessionStart'], {
+    cwd: repo,
+    env: {
+      ...env,
+      CLAUDE_ENV_FILE: envFile,
+    },
+    input: 'not-json{{{',
+  });
+  assert.equal(started.status, 0, started.stderr);
+  assert.equal(
+    fs.readFileSync(envFile, 'utf8'),
+    `export CLAUDE_PLUGIN_DATA='${env.CLAUDE_PLUGIN_DATA}'\n`,
+  );
+
+  const launched = run(
+    process.execPath,
+    [SCRIPT, 'task', '--background', '--json', 'malformed session cleanup'],
+    {
+      cwd: repo,
+      env,
+    },
+  );
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId;
+  await waitFor(
+    () => {
+      const job = readCompanionState(repo, env)?.jobs.find((candidate) => candidate.id === jobId);
+      return job?.turnId ? job : null;
+    },
+    { timeoutMs: 10000 },
+  );
+
+  assert.ok(loadBrokerSession(repo), 'expected the running job to own a workspace broker');
+  const ended = run(process.execPath, [SESSION_HOOK, 'SessionEnd'], {
+    cwd: repo,
+    env,
+    input: 'not-json{{{',
+  });
+  assert.equal(ended.status, 0, ended.stderr);
+  assert.equal(
+    requireCompanionState(repo, env).jobs.some((job) => job.id === jobId),
+    false,
+  );
+  assert.equal(loadBrokerSession(repo), null);
+});
+
 test("session end removes only the ending session's active jobs and preserves finished results", async (t) => {
   const repo = makeTempDir();
   initGitRepo(repo);

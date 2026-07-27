@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import process from 'node:process';
 
-import { readStdinIfPiped } from '../shared/fs.ts';
+import { readStdinJsonIfPiped } from '../shared/fs.ts';
 import { terminateProcessTree } from '../platform/process.ts';
 import { BROKER_ENDPOINT_ENV } from '../transport/app-server-client.ts';
 import { releaseThreadReservationForCancelledJob } from '../runtime/index.ts';
@@ -51,11 +51,7 @@ interface SessionBrokerHandle {
 }
 
 function readHookInput(): SessionHookInput {
-  const raw = readStdinIfPiped().trim();
-  if (!raw) {
-    return {};
-  }
-  return JSON.parse(raw);
+  return readStdinJsonIfPiped() as SessionHookInput;
 }
 
 function shellEscape(value: unknown): string {

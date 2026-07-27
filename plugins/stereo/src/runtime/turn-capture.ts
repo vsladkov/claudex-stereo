@@ -5,7 +5,8 @@ import type {
   TokenUsageBreakdown,
   Turn,
 } from '../protocol/app-server.ts';
-import { extractThreadId, extractTurnId, shorten } from './threads.ts';
+import { shorten } from '../shared/text.ts';
+import { extractThreadId, extractTurnId } from './threads.ts';
 import type { AppServerClient } from './threads.ts';
 
 export type FileChangeItem = Extract<ThreadItem, { type: 'fileChange' }>;

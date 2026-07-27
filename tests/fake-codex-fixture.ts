@@ -400,6 +400,10 @@ function structuredReviewPayload(prompt) {
   }
 
   if (prompt.includes("adversarial plan review")) {
+    if (BEHAVIOR === "plan-review-scalar-json") {
+      return JSON.stringify("needs-revision");
+    }
+
     if (BEHAVIOR === "plan-review-approve") {
       return JSON.stringify({
         verdict: "approve",

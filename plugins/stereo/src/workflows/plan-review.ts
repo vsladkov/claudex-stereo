@@ -66,6 +66,22 @@ export interface PlanReviewRunRequest {
   onProgress?: ProgressReporter | null;
 }
 
+function isPersistablePlanReview(value: unknown): value is ParsedPlanReviewResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const verdict = (value as { verdict?: unknown }).verdict;
+  return typeof verdict === 'string' && verdict.trim().length > 0;
+}
+
+function readObjectSummary(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const summary = (value as { summary?: unknown }).summary;
+  return typeof summary === 'string' && summary.trim().length > 0 ? summary : null;
+}
+
 export async function executePlanReviewRun(
   request: PlanReviewRunRequest,
 ): Promise<CompanionExecution> {
@@ -106,7 +122,9 @@ export async function executePlanReviewRun(
     failureMessage:
       (result.error as { message?: string } | null | undefined)?.message ?? result.stderr,
   });
-  const parsedPlanReview = parsed.parsed as ParsedPlanReviewResult | null;
+  // A parseable answer without a verdict is still reported by the renderer,
+  // but must not replace the last good durable pair-plan state.
+  const parsedPlanReview = isPersistablePlanReview(parsed.parsed) ? parsed.parsed : null;
   const threadId = result.threadId ?? request.threadId ?? null;
   const payload = {
     review: 'Plan Review',
@@ -152,7 +170,7 @@ export async function executePlanReviewRun(
     payload,
     rendered: renderPlanReviewResult(parsed, { round, reasoningSummary: result.reasoningSummary }),
     summary:
-      parsedPlanReview?.summary ??
+      readObjectSummary(parsed.parsed) ??
       parsed.parseError ??
       firstMeaningfulLine(result.finalMessage, 'Plan review finished.'),
     jobTitle: buildPlanReviewTitle(round),

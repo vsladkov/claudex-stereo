@@ -34,6 +34,7 @@ import {
   type PlanStateDeps,
 } from '../plugins/stereo/src/cli/commands/plan.ts';
 import {
+  renderPlanReviewResult,
   renderStoredPlanState,
   type StoredPairPlanState,
 } from '../plugins/stereo/src/render/render.ts';
@@ -412,6 +413,68 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(preservedPayload.round, 2);
   assert.equal(preservedPayload.verdict, 'needs-revision');
   assert.match(preservedPayload.plan, /Revised plan draft/);
+});
+
+test('plan-review preserves stored state when a later round returns scalar JSON', async () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const first = run('node', [SCRIPT, 'plan-review', '--json', 'Initial durable plan'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(first.status, 0, first.stderr);
+  const firstPayload = JSON.parse(first.stdout);
+  const threadId = firstPayload.threadId;
+  assert.ok(threadId);
+  assert.equal(firstPayload.round, 1);
+  assert.equal(firstPayload.result.verdict, 'needs-revision');
+
+  installFakeCodex(binDir, 'plan-review-scalar-json');
+  const brokerSession = loadBrokerSession(repo);
+  if (brokerSession?.endpoint) {
+    await sendBrokerShutdown(brokerSession.endpoint).catch(() => {});
+    await waitFor(async () => !(await waitForBrokerEndpoint(brokerSession.endpoint, 100)));
+    if (brokerSession.pid && processIsAlive(brokerSession.pid)) {
+      terminateProcessTree(brokerSession.pid);
+    }
+  }
+
+  const second = run(
+    'node',
+    [SCRIPT, 'plan-review', '--json', '--thread', threadId, '--round', '2', 'Scalar round plan'],
+    {
+      cwd: repo,
+      env,
+    },
+  );
+  assert.equal(second.status, 0, second.stderr);
+  const secondPayload = JSON.parse(second.stdout);
+  assert.equal(secondPayload.result, 'needs-revision');
+  assert.equal(secondPayload.parseError, null);
+  assert.match(
+    renderPlanReviewResult(
+      {
+        parsed: secondPayload.result,
+        rawOutput: secondPayload.rawOutput,
+        parseError: secondPayload.parseError,
+      },
+      { round: 2 },
+    ),
+    /Codex returned JSON with an unexpected plan-review shape\./,
+  );
+
+  const preserved = run('node', [SCRIPT, 'plan-state', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(preserved.status, 0, preserved.stderr);
+  const preservedPayload = JSON.parse(preserved.stdout);
+  assert.equal(preservedPayload.round, 1);
+  assert.equal(preservedPayload.verdict, 'needs-revision');
+  assert.equal(preservedPayload.plan, 'Initial durable plan');
 });
 
 test('plan-state reports unavailable before any plan review has run', () => {

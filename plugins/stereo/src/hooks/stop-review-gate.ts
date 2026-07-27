@@ -2,7 +2,7 @@ import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 
 import { getCodexAvailability } from '../runtime/index.ts';
-import { readStdinIfPiped } from '../shared/fs.ts';
+import { readStdinJsonIfPiped } from '../shared/fs.ts';
 import { loadPromptTemplate, interpolateTemplate } from '../shared/prompts.ts';
 import { COMPANION_ENTRY, PROMPTS_ROOT } from '../shared/paths.ts';
 import { getConfig, listJobs } from '../workspace/state.ts';
@@ -37,18 +37,8 @@ export function resolveStopReviewTimeoutMs(env: NodeJS.ProcessEnv = process.env)
 }
 
 function readHookInput(): StopHookInput {
-  const raw = readStdinIfPiped().trim();
-  if (!raw) {
-    return {};
-  }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    // Malformed stdin must degrade like empty stdin. Throwing here would exit
-    // 1 before any gate decision, which Claude Code treats as a non-blocking
-    // error - an enabled review gate would be silently bypassed.
-    return {};
-  }
+  // See the shared helper for why malformed hook input must never throw.
+  return readStdinJsonIfPiped() as StopHookInput;
 }
 
 function emitDecision(payload: unknown): void {

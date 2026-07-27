@@ -105,11 +105,15 @@ async function withTestTimeout<T>(promise: Promise<T>, timeoutMs = 1500): Promis
 
 interface EndpointServerFixture {
   endpoint: string;
+  sessionDir: string;
   close: () => Promise<void>;
 }
 
-async function createEndpointServer(t: TestContext): Promise<EndpointServerFixture> {
-  const sessionDir = makeTempDir('broker-probe-');
+async function createEndpointServer(
+  t: TestContext,
+  prefix = 'broker-probe-',
+): Promise<EndpointServerFixture> {
+  const sessionDir = makeTempDir(prefix);
   const endpoint = createBrokerEndpoint(sessionDir);
   const target = parseBrokerEndpoint(endpoint);
   const sockets = new Set<net.Socket>();
@@ -153,7 +157,7 @@ async function createEndpointServer(t: TestContext): Promise<EndpointServerFixtu
     return closing;
   };
   t.after(close);
-  return { endpoint, close };
+  return { endpoint, sessionDir, close };
 }
 
 function createUnusedEndpoint(t: TestContext): string {
@@ -337,6 +341,56 @@ test('reapWorkspaceBroker is a safe no-op without a broker session', async () =>
 });
 
 test(
+  'dead session-dir cleanup requires teardown opt-in and spares live sockets',
+  { skip: !IS_LINUX },
+  async (t) => {
+    const sweepRoot = makeTempDir('reaper-sweep-root-');
+    const previousTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = sweepRoot;
+    t.after(() => {
+      if (previousTmpdir === undefined) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = previousTmpdir;
+      }
+    });
+    // Keep the production age and runner-start checks intact while making
+    // this isolated fixture represent a runner that has been alive >10 s.
+    t.mock.method(process, 'uptime', () => 60);
+
+    const deadSessionDir = makeTempDir(BROKER_SESSION_DIR_PREFIX);
+    fs.writeFileSync(path.join(deadSessionDir, 'broker.pid'), '99999999', 'utf8');
+    const staleTime = new Date(Date.now() - 11_000);
+    fs.utimesSync(deadSessionDir, staleTime, staleTime);
+
+    const freshDeadSessionDir = makeTempDir(BROKER_SESSION_DIR_PREFIX);
+    fs.writeFileSync(path.join(freshDeadSessionDir, 'broker.pid'), '99999999', 'utf8');
+
+    const listening = await createEndpointServer(t, BROKER_SESSION_DIR_PREFIX);
+    fs.utimesSync(listening.sessionDir, staleTime, staleTime);
+
+    const defaultSweep = await reapLeakedTestBrokers({
+      cwdFilter: () => false,
+    });
+    assert.equal(defaultSweep.reaped, 0);
+    assert.equal(fs.existsSync(deadSessionDir), true);
+
+    const teardownSweep = await reapLeakedTestBrokers({
+      cwdFilter: () => false,
+      removeDeadSessionDirs: true,
+    });
+    assert.equal(teardownSweep.reaped, 1);
+    assert.ok(
+      teardownSweep.details.some((detail) => detail.includes(deadSessionDir)),
+      `sweep must report the dead session dir (got: ${teardownSweep.details.join(', ')})`,
+    );
+    assert.equal(fs.existsSync(deadSessionDir), false);
+    assert.equal(fs.existsSync(freshDeadSessionDir), true, 'fresh startup dir must be spared');
+    assert.equal(fs.existsSync(listening.sessionDir), true, 'live socket dir must be spared');
+  },
+);
+
+test(
   'reapLeakedTestBrokers kills tmp-cwd brokers and spares real workspaces',
   { skip: !IS_LINUX },
   async () => {
@@ -351,7 +405,7 @@ test(
       assert.equal(await waitForBrokerEndpoint(leaked.endpoint, 4000), true);
       assert.equal(await waitForBrokerEndpoint(realBroker.endpoint, 4000), true);
 
-      const sweep = reapLeakedTestBrokers({
+      const sweep = await reapLeakedTestBrokers({
         cwdFilter: (brokerCwd) => brokerCwd === leakedCwd,
       });
       assert.ok(

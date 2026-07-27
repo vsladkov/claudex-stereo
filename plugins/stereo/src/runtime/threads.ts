@@ -13,6 +13,7 @@ import {
   CodexAppServerClient,
 } from '../transport/app-server-client.ts';
 import { sendBrokerShutdownIfIdle } from '../broker/lifecycle.ts';
+import { shorten } from '../shared/text.ts';
 import { getCodexAvailability } from './availability.ts';
 import { emitLogEvent } from './turn-capture.ts';
 import type { ProgressReporter } from './turn-capture.ts';
@@ -70,19 +71,6 @@ export function buildResumeParams(
 
 export function buildTurnInput(prompt: string): UserInput[] {
   return [{ type: 'text', text: prompt, text_elements: [] }];
-}
-
-export function shorten(text: unknown, limit = 72): string {
-  const normalized = String(text ?? '')
-    .trim()
-    .replace(/\s+/g, ' ');
-  if (!normalized) {
-    return '';
-  }
-  if (normalized.length <= limit) {
-    return normalized;
-  }
-  return `${normalized.slice(0, limit - 3)}...`;
 }
 
 function buildTaskThreadName(prompt: string): string {

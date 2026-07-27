@@ -7,8 +7,6 @@ Claude and the Codex CLI as one signal: a Claude Code plugin that pairs the two 
 This plugin is for Claude Code users who want an easy way to start using Codex from the workflow
 they already have.
 
-<video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
-
 ## What You Get
 
 - `/stereo:review` for a normal read-only Codex review
