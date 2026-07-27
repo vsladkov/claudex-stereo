@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.26.1
+
+- State the pairing accurately: the plugin pairs the Claude Code and Codex harnesses with an
+  independent model choice for every role, not two fixed models; the manifest descriptions now
+  say mixed-model
+- Lead the README with the plugin's own work: the fork/attribution blockquote moves from the top
+  into the License section, and the intro names the broker runtime, background jobs, thread
+  reservations, and review gate
+
 ## 1.26.0
 
 - Restructure the README around a getting-started arc: new Contents, Quick start with a real

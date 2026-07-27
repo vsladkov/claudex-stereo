@@ -1,11 +1,12 @@
 # Claudex Stereo
 
-Claude and the Codex CLI as one signal: a Claude Code plugin that pairs the two models for planning, implementation, adversarial review, and delegated tasks.
-
-> Based on OpenAI's Codex plugin for Claude Code (`openai/codex-plugin-cc`); see NOTICE for attribution. Heavily extended since: the dual-model pair workflow, shared broker runtime, background jobs, thread reservations, and review gates are additions of this fork.
+Claude and the Codex CLI as one signal: a Claude Code plugin that pairs the two ecosystems across
+planning, implementation, adversarial review, and delegated tasks, with an independent model
+choice for every role.
 
 This plugin is for Claude Code users who want an easy way to start using Codex from the workflow
-they already have.
+they already have. The commands run on a shared broker runtime with durable background jobs and
+thread reservations, plus an optional stop-time review gate.
 
 ## Contents
 
@@ -916,5 +917,6 @@ Codex-side entry point to the same guidance.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE). Based on OpenAI's `openai/codex-plugin-cc`; upstream
+Apache License 2.0 — see [LICENSE](LICENSE). Claudex Stereo began as a fork of OpenAI's Codex
+plugin for Claude Code (`openai/codex-plugin-cc`) and has been heavily extended since; upstream
 attribution is retained in [NOTICE](NOTICE).
