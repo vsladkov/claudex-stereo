@@ -129,7 +129,7 @@ For each round:
 - Named Claude round 1: use `planReviewBrief` as the `stereo:plan-reviewer` prompt and retain its
   continuation handle for this command only.
 - Later named-Claude rounds: apply the routing skill's
-  "Continuing an agent across plan-review rounds" rule. Continue the same reviewer with the round
+  "Continuing an agent across review rounds" rule. Continue the same reviewer with the round
   number, full revised plan, and self-verification instruction when supported; otherwise use the
   fully briefed stateless fallback above. Apply the same schema validation in either mode and
   report whether the round was continued or re-briefed.
@@ -327,7 +327,9 @@ Build input from the plan, baseline, baseline-dirty paths, complete current delt
 report, host results, and `latestPlanFindings`. The canonical result is
 `${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`.
 
-Maintain `implementationReviewHistory` across the otherwise stateless review invocations:
+Maintain `implementationReviewHistory` for every route and, for a named-Claude reviewer, the
+continuation handle for this command run only. Build the history every round even while a reviewer
+is being continued, because a fallback round needs it:
 
 - Round 1 contains the implementer report verbatim plus `latestPlanFindings` verbatim when
   non-empty. Label them as original unapproved findings when the user selected `Implement anyway`
@@ -340,8 +342,9 @@ Maintain `implementationReviewHistory` across the otherwise stateless review inv
 
 Route each review:
 
-- Read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md` and fill it once for the current
-  round without changing any other text:
+- For `claude:session`, named-Claude round 1, every named-Claude stateless fallback round, and
+  every Codex round, read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md` and fill it once
+  for the current round without changing any other text:
   - `{{PLAN_INPUT}}` = the full current plan.
   - `{{BASELINE_CONTEXT}}` = the normal Quick attribution semantics, including `baselineCommit`,
     baseline-dirty paths excluded from attribution, current status/diff, and every attributed
@@ -351,8 +354,16 @@ Route each review:
     summary for the latest delta.
     Use the resulting `implementationReviewBrief` verbatim for the selected route.
 - `claude:session`: apply `implementationReviewBrief` inline.
-- Named Claude: use `implementationReviewBrief` as the routing skill's
-  `stereo:implementation-reviewer` prompt.
+- Named Claude round 1: use `implementationReviewBrief` as the routing skill's
+  `stereo:implementation-reviewer` prompt and retain its continuation handle for this command
+  only.
+- Later named-Claude rounds: apply the routing skill's
+  "Continuing an agent across review rounds" rule. Continue the same reviewer with the round
+  number, the previous round's numbered fixes and their to-be-judged `resolved`/`unresolved`
+  status, the latest fix-round implementer report verbatim, the latest host results, and the
+  instruction to re-inspect the current worktree and verify its own earlier findings when
+  supported; otherwise use the fully briefed stateless fallback above. Apply the same schema
+  validation in either mode and report whether the round was continued or re-briefed.
 - Codex: write `implementationReviewBrief` verbatim to `<payloadFile>` under the routing skill's
   temporary-directory rule, then launch a fresh read-only task:
 
@@ -365,8 +376,8 @@ Save a Codex review task's thread only as `implementationReviewThreadId`. Parse
 the same `--output-schema` flag. Never assign it to `implementationThreadId`.
 
 After every completed review round, report its number, verdict/fix count, and reviewer
-per-invocation usage and duration (or `usage unavailable`). If acceptable, finish. Otherwise send
-exact numbered fixes to the original implementer.
+per-invocation usage and duration (or `usage unavailable`), and whether the round was continued or
+re-briefed. If acceptable, finish. Otherwise send exact numbered fixes to the original implementer.
 
 Codex fix. Write this complete payload to `<payloadFile>` under the routing skill's
 temporary-directory rule:

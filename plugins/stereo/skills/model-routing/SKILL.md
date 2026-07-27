@@ -152,34 +152,57 @@ the full original input. If the retry is also malformed, ask whether to perform 
 stop without inferring a verdict. For an Agent tool or selected-model availability error, report
 the error verbatim and stop immediately; never substitute a different model.
 
-## Continuing an agent across plan-review rounds
+## Continuing an agent across review rounds
 
-This rule applies only to named-Claude plan-review loops. Implementation-review invocations stay
-stateless in both ecosystems. Inline `claude:session` plan reviews already share the main
-conversation and do not use this rule.
+This rule applies to named-Claude plan-review and implementation-review loops within one command
+run. Inline `claude:session` reviews already share the main conversation and do not use it. Codex
+plan reviews resume `planReviewThreadId` under the plan commands' own round rule. Codex
+implementation reviews stay stateless by design: every round launches a fresh read-only `task`,
+and `implementationReviewThreadId` remains a malformed-output retry target only. A Codex round
+must carry the fully filled `implementationReviewBrief` either way, so resuming would add thread
+history without removing payload cost and would weaken the cross-ecosystem reviewer's per-round
+fresh-task independence. A mode that runs exactly one review round, such as
+`/stereo:plan --review-only` or `/stereo:implement --review-only`, keeps no continuation handle.
 
-Round 1 always invokes `stereo:plan-reviewer` with the complete filled `planReviewBrief` and keeps
-the returned agent continuation handle only for the current command run. For every later round:
+Round 1 always invokes the role's agent: `stereo:plan-reviewer` with the complete filled
+`planReviewBrief`, or `stereo:implementation-reviewer` with the complete filled
+`implementationReviewBrief`. Keep the returned continuation handle only for the current command
+run. For every later round:
 
-1. When the harness exposes agent follow-up or resume, continue that same reviewer. Send a compact
-   round message containing the round number, the full revised plan, the instruction to verify its
-   own earlier findings and the recorded responses or descopes, and a reminder to return the same
-   plan-review output contract. Do not resend the full role brief.
-2. Validate the continued result against the same schema. If it is malformed, continue the same
-   agent once more with the exact validation error and the full revised plan.
+1. When the harness exposes agent follow-up or resume, continue that same reviewer with a compact
+   round message; do not resend the full role brief. The message always carries the round number,
+   what changed since the last round, an instruction to verify its own earlier findings, and a
+   reminder to return the same output contract. Its role-specific contents are:
+   - Plan review: the full revised plan plus the recorded responses or descopes for its earlier
+     findings.
+   - Implementation review: every numbered fix from that reviewer's last round with the
+     orchestrator's `resolved`/`unresolved` assessment presented as a claim to be judged, the
+     latest fix-round implementer report verbatim, and the latest host-verification results. The
+     plan, baseline semantics, and round-1 review context are unchanged and are not resent.
+     Because the delta itself is not in the message, instruct the reviewer to re-inspect the
+     current worktree rather than judge from memory.
+2. Validate the continued result against the same schema that route uses. If malformed, continue
+   the same agent once more with the exact validation error and the same round message.
 3. If continuation is unavailable, errors, or remains malformed after that retry, invoke a fresh
-   `stereo:plan-reviewer` of the same selected model for that round. Give it the complete filled
-   brief with the prior findings, responses, open questions, and complete residual risks embedded
-   in `{{REVISION_CONTEXT}}`, exactly as the stateless flow does. Apply the normal validation and
-   one-retry rule to this fresh invocation, and use its continuation handle for any later round.
+   agent of the same selected model for that round with the complete filled brief: a
+   `planReviewBrief` whose `{{REVISION_CONTEXT}}` embeds prior findings, responses, open questions,
+   and complete residual risks, or an `implementationReviewBrief` whose `{{REVIEW_CONTEXT}}`
+   embeds the complete `implementationReviewHistory`, exactly as the stateless flow does. Apply
+   the normal validation and one-retry rule to that fresh invocation, and use its continuation
+   handle for any later round.
+
+Maintain the stateless `## Reviewer responses` history or `implementationReviewHistory` every
+round even while continuing, because a later round can always fall back to a fresh fully briefed
+agent.
 
 A continuation transport or Agent-tool error uses this fresh-agent fallback instead of the
 generic immediate-stop rule above. If that fresh invocation reports a selected-model availability
 error, surface it and stop without substituting a model.
 
 Continuation never crosses command runs or Claude sessions. Every new command starts with a fresh
-round-1 agent. For each continued round, report the token usage and duration from that follow-up's
-result when the harness provides them; otherwise report `usage unavailable`.
+round-1 agent. For every review round, report the token usage and duration from its invocation or
+follow-up when the harness provides them; otherwise report `usage unavailable`. Also report
+whether the round was continued or re-briefed.
 
 ## Codex background jobs
 

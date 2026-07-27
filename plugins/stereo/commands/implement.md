@@ -328,7 +328,9 @@ Build review input from the full plan, `baselineCommit`, baseline-dirty paths, c
 changed and untracked files, implementer report, host results, and `storedPlanFindings`. The
 canonical contract is `${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`.
 
-Maintain `implementationReviewHistory` across the otherwise stateless review invocations:
+Maintain `implementationReviewHistory` for every route and, for a named-Claude reviewer, the
+continuation handle for this command run only. Build the history every round even while a reviewer
+is being continued, because a fallback round needs it:
 
 - Round 1 contains the implementer report verbatim, states that no earlier implementation-review
   fixes exist, and contains `storedPlanFindings` verbatim when non-empty. Label them as "Advisory
@@ -340,10 +342,15 @@ Maintain `implementationReviewHistory` across the otherwise stateless review inv
   `resolved` or `unresolved` from the latest attributed delta and host results, and includes the
   latest fix-round implementer report verbatim.
 
+The same per-round delta those bullets describe—the newly judged fixes, latest fix-round
+implementer report, and latest host results—is what a continued round sends as its compact
+message.
+
 Route every round:
 
-- Read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md` and fill it once for the current
-  round without changing any other text:
+- For `claude:session`, named-Claude round 1, every named-Claude stateless fallback round, and
+  every Codex round, read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md` and fill it once
+  for the current round without changing any other text:
   - `{{PLAN_INPUT}}` = the full stored plan.
   - `{{BASELINE_CONTEXT}}` = the normal phase-flow attribution semantics, including
     `baselineCommit`, baseline-dirty paths excluded from attribution, current status/diff, and all
@@ -354,8 +361,16 @@ Route every round:
     Use the resulting `implementationReviewBrief` verbatim for the selected route.
 - `claude:session`: apply `implementationReviewBrief` inline and produce internal
   `{acceptable, summary, fixes}` data.
-- Named Claude: use `implementationReviewBrief` as the routing skill's
-  `stereo:implementation-reviewer` prompt.
+- Named Claude round 1: use `implementationReviewBrief` as the routing skill's
+  `stereo:implementation-reviewer` prompt and retain its continuation handle for this command
+  only.
+- Later named-Claude rounds: apply the routing skill's
+  "Continuing an agent across review rounds" rule. Continue the same reviewer with the round
+  number, the previous round's numbered fixes and their to-be-judged `resolved`/`unresolved`
+  status, the latest fix-round implementer report verbatim, the latest host results, and the
+  instruction to re-inspect the current worktree and verify its own earlier findings when
+  supported; otherwise use the fully briefed stateless fallback above. Apply the same schema
+  validation in either mode and report whether the round was continued or re-briefed.
 - Codex: write `implementationReviewBrief` verbatim to `<payloadFile>` under the routing skill's
   temporary-directory rule, start a fresh read-only task, and save its id only as
   `implementationReviewThreadId`:
@@ -365,13 +380,16 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json
 ```
 
 Parse named-Claude output directly and Codex output from `storedJob.result.rawOutput`. Apply the
-routing skill's validation and retry. A Codex retry resumes only
+routing skill's validation and retry, including its continuation ladder for later named-Claude
+rounds. A Codex retry resumes only
 `implementationReviewThreadId` and preserves the same `--output-schema` flag; never assign it to
-`implementationThreadId`. After a second malformed result, ask whether to review inline or stop.
+`implementationThreadId`. After the routing skill's retries for that round are exhausted, ask
+whether to review inline or stop.
 
 After every completed review round, report its number, verdict/fix count, and reviewer
-per-invocation usage and duration (or `usage unavailable`). If acceptable, finish. Otherwise send
-the exact numbered fixes to the same implementer kind that produced the delta.
+per-invocation usage and duration (or `usage unavailable`), and whether the round was continued or
+re-briefed. If acceptable, finish. Otherwise send the exact numbered fixes to the same implementer
+kind that produced the delta.
 
 Codex fix. Write this complete payload to `<payloadFile>` under the routing skill's
 temporary-directory rule:

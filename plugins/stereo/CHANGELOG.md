@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.23.0
+
+- Continue named-Claude implementation reviewers across fix-loop rounds within one command run,
+  fall back to a fully re-briefed fresh invocation, and report continued versus re-briefed rounds
+- Generalize the routing skill's continuation rule across both review roles while keeping Codex
+  implementation reviews stateless: their full brief still travels every round, so resume would
+  add thread history without saving payload and weaken fresh cross-ecosystem review independence
+- Restate the README doctrine and usage warning around a fresh round 1, compact later-round
+  continuation, and the fully re-briefed fallback
+
 ## 1.22.0
 
 - Default `/stereo:implement` and `/stereo:quick` implementation review to `claude:fable`

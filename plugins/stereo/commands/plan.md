@@ -180,7 +180,7 @@ For each round:
 - Named Claude round 1: use `planReviewBrief` as the foreground `stereo:plan-reviewer` prompt and
   retain its continuation handle for this command only.
 - Later named-Claude rounds: apply the routing skill's
-  "Continuing an agent across plan-review rounds" rule. Continue the same reviewer with the round
+  "Continuing an agent across review rounds" rule. Continue the same reviewer with the round
   number, full revised plan, and self-verification instruction when supported; otherwise use the
   fully briefed stateless fallback above. Apply the same schema validation in either mode and
   report whether the round was continued or re-briefed.

@@ -80,6 +80,7 @@ test('directly-wired commands disable model invocation of the command file', () 
 });
 
 test('pair commands load the canonical routing skill and keep workflow wiring', () => {
+  const continuationSection = 'Continuing an agent across review rounds';
   const routing = read('skills/model-routing/SKILL.md');
   assert.match(routing, /status <jobId> --wait --timeout-ms 90000 --json/);
   for (const role of [
@@ -101,7 +102,7 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     'all explicit Claude aliases must keep passing an invocation-level model',
   );
   assert.match(routing, /\|\s*`claude:inherit`\s*\|/);
-  assert.match(routing, /^## Continuing an agent across plan-review rounds$/m);
+  assert.match(routing, new RegExp(`^## ${continuationSection}$`, 'm'));
   assert.equal(
     (routing.match(/--findings-file "<findingsPayloadFile>"/g) ?? []).length,
     1,
@@ -247,6 +248,17 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     1,
     'the Quick implementation-review task template must keep runtime schema enforcement',
   );
+  for (const [file, source] of [
+    ['plan.md', plan],
+    ['implement.md', implement],
+    ['quick.md', quick],
+  ] as const) {
+    assert.equal(
+      source.includes(`"${continuationSection}" rule`),
+      true,
+      `${file} must cite the canonical continuation rule`,
+    );
+  }
 
   const adversarial = read('commands/adversarial-review.md');
   assert.match(adversarial, /skills\/model-routing\/SKILL\.md/);

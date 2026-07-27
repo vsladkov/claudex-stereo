@@ -201,12 +201,15 @@ with its revision history, rebuttals, and descope rationale. Since v1.20 the sto
 findings themselves travel into every implementation-review brief as labeled advisory context,
 so what a named reviewer misses is the argument around them, not the findings.
 
-The cost is real and per round. Implementation reviews are stateless in both ecosystems: unlike
-plan reviews, there is no continuation rule, so every round—including each fix-loop re-review—
-spawns a fresh top-tier contained reviewer with no warm cache, where the inline session reviewed
-inside an already-warm conversation. In dogfooded runs, contained `claude:fable` review turns
-have ranged from roughly 40k tokens for a small documentation delta to 130k for a full plan-review
-round—cost scales with how much the reviewer must read.
+The cost is real but now front-loaded. Round 1 of each implementation review spawns a fresh
+top-tier contained reviewer that must read the delta from scratch. From v1.23, later named-Claude
+rounds, including fix-loop re-reviews, continue that same reviewer with a compact round message
+when the harness supports follow-ups and fall back to a fully re-briefed fresh reviewer otherwise.
+Observed plan-review rounds motivated the extension: continued reviewers use far fewer tools than
+the fresh round because they can argue from what they already read. No continued
+implementation-review token figure has been measured yet. In dogfooded runs, fresh contained
+`claude:fable` review turns have ranged from roughly 40k tokens for a small documentation delta to
+130k for a full plan-review round—cost scales with how much the reviewer must read.
 
 Two flags price it differently: `--implementation-reviewer claude:session` restores the cheap
 inline review, and `--implementation-reviewer sol` (or another Codex model) moves the cost to the
@@ -308,7 +311,8 @@ are judged against the plan's own `## Goal` and `## Out of scope`.
 
 Named-Claude plan reviewers keep the same agent context across later rounds when the running
 Claude Code harness supports follow-ups. Unsupported or malformed continuations fall back to the
-fully re-briefed stateless review used previously. Implementation-review rounds remain stateless.
+fully re-briefed stateless review used previously. The same continuation rule now covers
+named-Claude implementation reviewers in `/stereo:implement` and `/stereo:quick`.
 
 The review loop is capped at 6 rounds by default (healthy reviews approve in 2-5); use
 `--max-plan-rounds <n>` to change the cap. At the cap Claude offers to split the plan rather than
@@ -378,6 +382,11 @@ Codex implementation-review tasks pass the shipped implementation-review schema 
 so their final messages are schema-constrained before the command performs its normal validation
 and retry checks. Claude routes retain command-side validation.
 
+Named-Claude implementation reviewers keep the same agent across fix-loop rounds inside one
+command run when the harness supports follow-ups. Unsupported, erroring, or malformed
+continuations fall back to the fully re-briefed stateless review. Continuation never crosses
+command runs. Codex implementation-review rounds remain fresh read-only tasks by design.
+
 Claude implementation is deliberately file-edits-only: the agent has no shell, network, process,
 or git tool. Before edits, the command detects plan steps requiring version scripts, package
 installation, code generation, migrations, or interactive processes and asks whether to switch to
@@ -403,7 +412,14 @@ The final report lists the stored `residualRisks`, verification results, selecte
 user-owned command steps. Nothing is committed; you review and commit the result yourself.
 
 > [!WARNING]
-> The pair workflow iterates until accepted by default, which can take a long time and consume usage limits quickly. Default planning, plan review, and implementation review consume Claude usage, while implementation and fix rounds consume Codex usage at `max`. Every implementation-review round, including a fix-loop re-review, spawns a fresh contained reviewer with no cache reuse. Start from a clean worktree, use `--implementation-reviewer claude:session` for the cheaper inline path, bound the loops with `--max-plan-rounds`/`--max-fix-rounds` if you want a budget, and consider `/stereo:setup --disable-review-gate` during long pair sessions.
+> The pair workflow iterates until accepted by default, which can take a long time and consume
+> usage limits quickly. Default planning, plan review, and implementation review consume Claude
+> usage, while implementation and fix rounds consume Codex usage at `max`. Implementation-review
+> round 1 is fresh; later named-Claude fix-loop re-reviews continue that reviewer when supported
+> and use a fully re-briefed fresh reviewer otherwise. Start from a clean worktree, use
+> `--implementation-reviewer claude:session` for the cheaper inline path, bound the loops with
+> `--max-plan-rounds`/`--max-fix-rounds` if you want a budget, and consider
+> `/stereo:setup --disable-review-gate` during long pair sessions.
 
 ### `/stereo:plan-state`
 
