@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.21.0
+
+- Default `/stereo:plan` to a fresh contained `claude:opus` planner and `claude:fable` plan
+  reviewer, and default `/stereo:quick` plan review to `claude:fable` while keeping its grounded
+  inline planner
+- Default every `gpt-*` pair role to `max` effort, replacing the non-`gpt-5.6` `xhigh` fallback
+- Rewrite the README's dogfooded model doctrine and record the default tradeoffs: no resumable
+  Codex review thread, Claude-budget planning, intra-Claude plan-phase independence, and
+  `--plan-reviewer sol` as the one-flag restore
+
 ## 1.20.0
 
 - Carry non-empty approving plan-review findings into approved implementation payloads as advisory

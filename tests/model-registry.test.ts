@@ -50,22 +50,17 @@ test('normalizeRequestedModel returns null for null and empty input', () => {
   assert.equal(normalizeRequestedModel('   '), null);
 });
 
-test('defaultPairEffort preserves OpenAI defaults and omits effort for unknown non-OpenAI models', () => {
+test('defaultPairEffort defaults every gpt-* model to max and omits unknown non-OpenAI effort', () => {
   assert.equal(defaultPairEffort('gpt-5.6'), 'max');
   assert.equal(defaultPairEffort('gpt-5.6-sol'), 'max');
   assert.equal(defaultPairEffort('gpt-5.6-terra'), 'max');
-  assert.equal(defaultPairEffort('gpt-5.5'), 'xhigh');
-  assert.equal(defaultPairEffort('gpt-5.3-codex-spark'), 'xhigh');
+  assert.equal(defaultPairEffort('gpt-5.5'), 'max');
+  assert.equal(defaultPairEffort('gpt-5.3-codex-spark'), 'max');
+  assert.equal(defaultPairEffort('gpt-5.60'), 'max');
   assert.equal(defaultPairEffort('some-chat-model'), null);
   assert.equal(defaultPairEffort('gpt-5.6-custom@azure'), 'max');
-  assert.equal(defaultPairEffort('gpt-5.5@azure'), 'xhigh');
+  assert.equal(defaultPairEffort('gpt-5.5@azure'), 'max');
   assert.equal(defaultPairEffort('some-chat-model@local'), null);
-});
-
-test('defaultPairEffort enforces the family prefix boundary', () => {
-  // "gpt-5.60" starts with "gpt-5.6" but is not "gpt-5.6" or "gpt-5.6-*".
-  assert.equal(defaultPairEffort('gpt-5.60'), 'xhigh');
-  assert.equal(defaultPairEffort('gpt-5.61-sol'), 'xhigh');
 });
 
 test('normalizeReasoningEffort accepts the seven valid efforts', () => {
@@ -93,14 +88,14 @@ test('normalizeReasoningEffort rejects unknown efforts with the exact error text
   );
 });
 
-test('registry entries drive defaultPairEffort ahead of the family prefix rule', () => {
+test('registry entries drive defaultPairEffort ahead of the gpt-* fallback rule', () => {
   // Every registry row's declared effort is what defaultPairEffort returns
   // for its resolved model - the row is authoritative, not the string rule.
   for (const entry of Object.values(MODEL_REGISTRY)) {
     assert.equal(defaultPairEffort(entry.model), entry.defaultPairEffort);
     assert.deepEqual(registryEntryForModel(entry.model), entry);
   }
-  // Unregistered models still use the family prefix fallback.
+  // Unregistered OpenAI models still use the gpt-* fallback.
   assert.equal(registryEntryForModel('gpt-5.6-nova'), null);
   assert.equal(defaultPairEffort('gpt-5.6-nova'), 'max');
   assert.deepEqual(registryEntryForModel('kimi-k3'), MODEL_REGISTRY.kimi);

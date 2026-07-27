@@ -20,14 +20,16 @@ Raw slash-command arguments:
 After reading the routing skill, parse every argument before inspecting the repository or starting
 a routed step:
 
-- `--planner <model>` selects the drafter and defaults to `claude:session`.
+- `--planner <model>` selects the drafter and defaults to `claude:opus`.
 - `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed planner.
-- `--plan-reviewer <model>` selects the plan reviewer and defaults to `sol`.
+- `--plan-reviewer <model>` selects the plan reviewer and defaults to `claude:fable`.
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
+  When no active role is Codex-routed, as under the command defaults, accept `--effort` but report
+  that it is inert rather than silently dropping it.
 - `--max-plan-rounds <n>` defaults to 6.
 - `--draft-only` runs one draft step, stores it, and stops.
 - `--review-only` reviews the stored plan exactly once and stops.
@@ -98,8 +100,13 @@ or implement.
 
 ## Draft step
 
-For the full phase or `--draft-only`, inspect the repository read-only until the draft can name
-exact files, symbols, callers, configuration, registration points, and tests.
+For the full phase or `--draft-only`, the selected planner must inspect the repository read-only
+until the draft can name exact files, symbols, callers, configuration, registration points, and
+tests. For `claude:session`, the orchestrator performs that exploration before drafting inline;
+otherwise the named Claude or Codex planner performs it in the routed step and the orchestrator
+skips a separate up-front exploration. During the full review loop, the orchestrator still
+inspects the repository as needed to judge findings, revise the plan, and support rebuttals with
+concrete evidence.
 
 Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-draft.md` and fill it without changing any other text:
 

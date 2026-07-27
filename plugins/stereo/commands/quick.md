@@ -20,10 +20,11 @@ Raw slash-command arguments:
 
 After reading the routing skill, parse all arguments before repository work:
 
-- `--planner <model>` defaults to `claude:session`.
+- `--planner <model>` defaults to `claude:session`; the scope gate already grounds the task in
+  this session.
 - `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed planner.
-- `--plan-reviewer <model>` defaults to `sol`.
+- `--plan-reviewer <model>` defaults to `claude:fable`.
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
 - `--implementer <model>` defaults to the model/effort resolved by the latest Codex plan-review

@@ -180,7 +180,7 @@ test('plan-review routes provider aliases per thread and omits provider-unsafe e
   assert.equal(openAiState.lastTurnStart.effort, 'max');
 });
 
-test('plan-review defaults 5.6-family model overrides to max', () => {
+test('plan-review defaults registered OpenAI model selections to max', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   const statePath = path.join(binDir, 'fake-codex-state.json');
@@ -219,7 +219,7 @@ test('plan-review defaults 5.6-family model overrides to max', () => {
   assert.equal(aliasState.lastTurnStart.effort, 'max');
 });
 
-test('plan-review keeps the xhigh default for non-5.6 gpt models', () => {
+test('plan-review defaults every gpt model to max effort', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   const statePath = path.join(binDir, 'fake-codex-state.json');
@@ -241,10 +241,10 @@ test('plan-review keeps the xhigh default for non-5.6 gpt models', () => {
   assert.equal(result.status, 0, result.stderr);
   const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(fakeState.lastTurnStart.model, 'gpt-5.5');
-  assert.equal(fakeState.lastTurnStart.effort, 'xhigh');
+  assert.equal(fakeState.lastTurnStart.effort, 'max');
 });
 
-test('plan-review resolves classifier boundaries safely', () => {
+test('plan-review resolves blank and prefix-similar model selections safely', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   const statePath = path.join(binDir, 'fake-codex-state.json');
@@ -266,7 +266,7 @@ test('plan-review resolves classifier boundaries safely', () => {
   assert.equal(collisionResult.status, 0, collisionResult.stderr);
   const collisionState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   assert.equal(collisionState.lastTurnStart.model, 'gpt-5.60');
-  assert.equal(collisionState.lastTurnStart.effort, 'xhigh');
+  assert.equal(collisionState.lastTurnStart.effort, 'max');
 
   const blankResult = run(
     'node',

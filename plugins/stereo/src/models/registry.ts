@@ -17,12 +17,10 @@ export const VALID_REASONING_EFFORTS: ReadonlySet<string> = new Set([
 ]);
 
 export const PAIR_DEFAULT_MODEL = 'sol';
-export const PAIR_DEFAULT_EFFORT: ReasoningEffort = 'max'; // gpt-5.6-family models
-export const PAIR_MODEL_OVERRIDE_EFFORT: ReasoningEffort = 'xhigh'; // other gpt-* models
-export const PAIR_MAX_EFFORT_MODEL_FAMILY = 'gpt-5.6';
+export const PAIR_DEFAULT_EFFORT: ReasoningEffort = 'max'; // every OpenAI `gpt-*` pair role
 
 export const MODEL_REGISTRY = {
-  spark: { model: 'gpt-5.3-codex-spark', defaultPairEffort: PAIR_MODEL_OVERRIDE_EFFORT },
+  spark: { model: 'gpt-5.3-codex-spark', defaultPairEffort: PAIR_DEFAULT_EFFORT },
   sol: { model: 'gpt-5.6-sol', defaultPairEffort: PAIR_DEFAULT_EFFORT },
   terra: { model: 'gpt-5.6-terra', defaultPairEffort: PAIR_DEFAULT_EFFORT },
   luna: { model: 'gpt-5.6-luna', defaultPairEffort: PAIR_DEFAULT_EFFORT },
@@ -71,14 +69,9 @@ export function defaultPairEffort(resolvedModel: string): ReasoningEffort | null
   if (entry) {
     return entry.defaultPairEffort;
   }
-  // Raw OpenAI model strings fall back to the family rule. Unknown
+  // Raw OpenAI model strings fall back to the gpt-* rule. Unknown
   // third-party models omit effort because their accepted knobs vary.
-  const inMaxFamily =
-    model === PAIR_MAX_EFFORT_MODEL_FAMILY || model.startsWith(`${PAIR_MAX_EFFORT_MODEL_FAMILY}-`);
-  if (inMaxFamily) {
-    return PAIR_DEFAULT_EFFORT;
-  }
-  return model.startsWith('gpt-') ? PAIR_MODEL_OVERRIDE_EFFORT : null;
+  return model.startsWith('gpt-') ? PAIR_DEFAULT_EFFORT : null;
 }
 
 export function modelProviderFor(resolvedModel: string): string | null {
