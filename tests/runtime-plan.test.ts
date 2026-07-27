@@ -24,6 +24,7 @@ import {
 } from '../plugins/stereo/src/broker/lifecycle.ts';
 import {
   resolveDurableStateDir,
+  resolvePairPlanFile,
   resolvePairPlanMarkdownFile,
   savePairPlanState,
 } from '../plugins/stereo/src/workspace/state.ts';
@@ -354,6 +355,16 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(planPayload.verdict, 'needs-revision');
   assert.equal(planPayload.threadId, threadId);
   assert.match(planPayload.plan, /Revised plan draft/);
+  assert.deepEqual(planPayload.findings, [
+    {
+      severity: 'high',
+      title: 'Missing verification step',
+      body: 'The plan never states how the change will be verified.',
+      section: 'Approach',
+      confidence: 0.9,
+      recommendation: 'Add a testing and verification step to the plan.',
+    },
+  ]);
 
   const renderedPlanState = run('node', [SCRIPT, 'plan-state'], {
     cwd: repo,
@@ -416,7 +427,28 @@ test('plan-state reports unavailable before any plan review has run', () => {
 
 test('plan-store persists a Claude-reviewed plan and round-trips through plan-state', () => {
   const workspace = makeTempDir();
+  const payloadDir = makeTempDir();
   const plan = '# Approved mixed plan\n\nImplement the selected changes.\n';
+  const findings = [
+    {
+      severity: 'medium',
+      title: 'Retain the compatibility test',
+      body: 'The existing test protects the legacy behavior.',
+      section: 'Testing and verification',
+      confidence: 0.8,
+      recommendation: 'Keep the compatibility assertion.',
+    },
+    {
+      severity: 'low',
+      title: 'Document the fallback',
+      body: 'The fallback remains useful during rollout.',
+      section: 'Risks and edge cases',
+      confidence: 0.65,
+      recommendation: 'Mention the fallback in the release notes.',
+    },
+  ] as const;
+  const findingsPath = path.join(payloadDir, 'findings.json');
+  fs.writeFileSync(findingsPath, `${JSON.stringify(findings, null, 2)}\n`, 'utf8');
   const openQuestions = [`Should "quotes" survive?`, 'Can this span\nmultiple lines?'] as const;
   const residualRisks = ['-leading dash', 'Literal $(command); `ticks` & symbols'] as const;
 
@@ -434,6 +466,8 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
       'claude:opus',
       '--summary',
       'Claude approved the mixed plan.',
+      '--findings-file',
+      findingsPath,
       '--open-question',
       openQuestions[0],
       '--open-question',
@@ -459,6 +493,7 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.equal(storedPayload.verdict, 'approve');
   assert.equal(storedPayload.reviewedBy, 'claude:opus');
   assert.equal(storedPayload.summary, 'Claude approved the mixed plan.');
+  assert.deepEqual(storedPayload.findings, findings);
   assert.deepEqual(storedPayload.openQuestions, [...openQuestions]);
   assert.deepEqual(storedPayload.residualRisks, [...residualRisks]);
   assert.match(storedPayload.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
@@ -476,6 +511,10 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   const rendered = run('node', [SCRIPT, 'plan-state'], { cwd: workspace });
   assert.equal(rendered.status, 0, rendered.stderr);
   assert.match(rendered.stdout, /^Stored plan \(verdict: approve, round 4, updated /);
+  assert.match(
+    rendered.stdout,
+    /Findings \(2\):\n- medium: Retain the compatibility test\n- low: Document the fallback/,
+  );
   assert.match(rendered.stdout, /Open questions:\n- Should "quotes" survive\?/);
   assert.match(rendered.stdout, /Residual risks:\n- -leading dash/);
   assert.match(rendered.stdout, /# Approved mixed plan/);
@@ -516,6 +555,7 @@ test('plan-store preserves round zero for drafts and keeps other round validatio
   assert.equal(draftPayload.verdict, 'draft');
   assert.equal(draftPayload.round, 0);
   assert.equal(draftPayload.reviewedBy, null);
+  assert.deepEqual(draftPayload.findings, []);
 
   const state = run('node', [SCRIPT, 'plan-state', '--json'], { cwd: workspace });
   assert.equal(state.status, 0, state.stderr);
@@ -572,6 +612,51 @@ test('plan-store rejects a missing verdict and empty stdin with JSON usage error
   assert.deepEqual(JSON.parse(emptyPlan.stdout), {
     error: 'Provide the plan via piped stdin.',
   });
+});
+
+test('plan-store rejects invalid findings files before writing plan state', () => {
+  const invalidCases = [
+    {
+      contents: '{ not valid JSON\n',
+      error: 'Could not parse --findings-file as JSON.',
+    },
+    {
+      contents: '{"severity":"high"}\n',
+      error: 'Provide --findings-file containing a JSON array.',
+    },
+  ];
+
+  for (const [index, invalidCase] of invalidCases.entries()) {
+    const workspace = makeTempDir();
+    const payloadDir = makeTempDir();
+    const findingsPath = path.join(payloadDir, `invalid-findings-${index}.json`);
+    fs.writeFileSync(findingsPath, invalidCase.contents, 'utf8');
+
+    const result = run(
+      'node',
+      [
+        SCRIPT,
+        'plan-store',
+        '--json',
+        '--verdict',
+        'needs-revision',
+        '--findings-file',
+        findingsPath,
+      ],
+      {
+        cwd: workspace,
+        input: '# Unapproved plan\n',
+      },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(JSON.parse(result.stdout), { error: invalidCase.error });
+    assert.match(
+      result.stderr,
+      new RegExp(invalidCase.error.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+    assert.equal(fs.existsSync(resolvePairPlanFile(workspace)), false);
+  }
 });
 
 test('plan-state --open materializes and refreshes the exact rendered plan', async () => {

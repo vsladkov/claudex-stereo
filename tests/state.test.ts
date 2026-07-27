@@ -16,8 +16,10 @@ import {
   resolvePairPlanFile,
   resolveStateDir,
   resolveStateFile,
+  savePairPlanState,
   saveState,
   upsertJob,
+  writeJobFile,
 } from '../plugins/stereo/src/workspace/state.ts';
 import type { JobRecord } from '../plugins/stereo/src/workspace/state.ts';
 
@@ -343,6 +345,79 @@ test('missing legacy and durable state loads a fresh default', () => {
       jobs: [],
     });
   });
+});
+
+test('ordinary durable JSON writers preserve bytes and leave no temporary files', () => {
+  const workspace = makeTempDir();
+  const state = saveState(workspace, {
+    version: 1,
+    config: { stopReviewGate: true },
+    jobs: [],
+  });
+  const stateFile = resolveStateFile(workspace);
+  assert.equal(fs.readFileSync(stateFile, 'utf8'), `${JSON.stringify(state, null, 2)}\n`);
+
+  const jobFile = writeJobFile(workspace, 'atomic-job', {
+    id: 'atomic-job',
+    status: 'running',
+  });
+  writeJobFile(workspace, 'atomic-job', {
+    id: 'atomic-job',
+    status: 'completed',
+    summary: 'Replacement contents',
+  });
+  assert.equal(
+    fs.readFileSync(jobFile, 'utf8'),
+    `${JSON.stringify(
+      {
+        id: 'atomic-job',
+        status: 'completed',
+        summary: 'Replacement contents',
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  const pairPlan = {
+    plan: '# Atomic plan\n',
+    verdict: 'approve',
+  };
+  savePairPlanState(workspace, pairPlan);
+  assert.equal(
+    fs.readFileSync(resolvePairPlanFile(workspace), 'utf8'),
+    `${JSON.stringify(pairPlan, null, 2)}\n`,
+  );
+
+  const durableFiles = fs.readdirSync(resolveDurableStateDir(workspace), {
+    recursive: true,
+    encoding: 'utf8',
+  });
+  assert.equal(
+    durableFiles.some((file) => file.endsWith('.tmp')),
+    false,
+  );
+});
+
+test('ordinary durable JSON writers clean up a temporary file after rename failure', () => {
+  const workspace = makeTempDir();
+  const jobFile = resolveJobFile(workspace, 'rename-failure');
+  fs.mkdirSync(jobFile);
+
+  assert.throws(() =>
+    writeJobFile(workspace, 'rename-failure', {
+      id: 'rename-failure',
+      status: 'running',
+    }),
+  );
+
+  const tempPrefix = `${path.basename(jobFile)}.`;
+  assert.deepEqual(
+    fs
+      .readdirSync(path.dirname(jobFile))
+      .filter((file) => file.startsWith(tempPrefix) && file.endsWith('.tmp')),
+    [],
+  );
 });
 
 test('state index strips request payloads from legacy, updated, and new jobs', () => {

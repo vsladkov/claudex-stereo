@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
 import test from 'node:test';
 
@@ -129,14 +130,15 @@ test(
     const workspace = makeWorkspace();
     const job = baseJob(workspace, 'job-degraded');
 
-    // Make the per-job FILE itself unwritable mid-run: overwriting an
-    // existing file needs write permission on the file (a read-only jobs
-    // dir would not block it), so this genuinely fails the terminal
-    // writeJobFile and exercises the fallback.
+    // Atomic replacement creates and renames a temporary file beside the
+    // destination, so remove directory write permission to make the terminal
+    // writeJobFile fail and exercise the fallback.
     const jobFile = resolveJobFile(workspace, 'job-degraded');
+    const jobsDir = path.dirname(jobFile);
+    const jobsDirMode = fs.statSync(jobsDir).mode & 0o777;
 
     const execution = await runTrackedJob(job, async () => {
-      fs.chmodSync(jobFile, 0o400);
+      fs.chmodSync(jobsDir, 0o500);
       return {
         exitStatus: 0,
         threadId: null,
@@ -146,7 +148,7 @@ test(
         summary: 'Succeeded despite bookkeeping trouble.',
       };
     }).finally(() => {
-      fs.chmodSync(jobFile, 0o600);
+      fs.chmodSync(jobsDir, jobsDirMode);
     });
 
     // The successful outcome survives the bookkeeping failure...

@@ -32,6 +32,7 @@ import {
   outputCommandResult,
   parseCommandInput,
   readPlanInput,
+  readUserFile,
   resolveCommandCwd,
   resolveCommandWorkspace,
 } from '../io.ts';
@@ -77,6 +78,23 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
     : [];
+}
+
+function readFindingsFile(cwd: string, value: unknown): unknown[] {
+  if (typeof value !== 'string' || !value.trim()) {
+    return [];
+  }
+  const contents = readUserFile(cwd, '--findings-file', value);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    throw new Error('Could not parse --findings-file as JSON.');
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error('Provide --findings-file containing a JSON array.');
+  }
+  return parsed;
 }
 
 function normalizeStoredPlanRound(round: unknown): number {
@@ -189,7 +207,7 @@ export async function handlePlanState(
 
 export function handlePlanStore(argv: string[]): void {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['cwd', 'verdict', 'round', 'reviewed-by', 'summary'],
+    valueOptions: ['cwd', 'verdict', 'round', 'reviewed-by', 'summary', 'findings-file'],
     arrayOptions: ['open-question', 'residual-risk'],
     booleanOptions: ['json'],
   });
@@ -208,6 +226,8 @@ export function handlePlanStore(argv: string[]): void {
     throw new Error('Provide the plan via piped stdin.');
   }
 
+  const cwd = resolveCommandCwd(options);
+  const findings = readFindingsFile(cwd, options['findings-file']);
   const workspaceRoot = resolveCommandWorkspace(options);
   const record = savePairPlanState(workspaceRoot, {
     plan,
@@ -217,6 +237,7 @@ export function handlePlanStore(argv: string[]): void {
     round: normalizeStoredPlanRound(options.round),
     verdict,
     summary: optionalString(options.summary),
+    findings,
     openQuestions: stringArray(options['open-question']),
     residualRisks: stringArray(options['residual-risk']),
     reviewedBy: optionalString(options['reviewed-by']),

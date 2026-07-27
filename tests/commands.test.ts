@@ -100,6 +100,11 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   );
   assert.match(routing, /\|\s*`claude:inherit`\s*\|/);
   assert.match(routing, /^## Continuing an agent across plan-review rounds$/m);
+  assert.equal(
+    (routing.match(/--findings-file "<findingsPayloadFile>"/g) ?? []).length,
+    1,
+    'the canonical Claude persistence rule must deliver findings separately',
+  );
 
   const plan = read('commands/plan.md');
   assert.match(plan, /skills\/model-routing\/SKILL\.md/);
@@ -122,6 +127,11 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     2,
     'Plan must deliver both stored-plan payloads by stdin redirect',
   );
+  assert.equal(
+    (plan.match(/--findings-file "<findingsPayloadFile>"/g) ?? []).length,
+    1,
+    'Plan review-only must deliver findings separately while draft-only stays findings-free',
+  );
   assert.doesNotMatch(plan, /<<'CODEX_PAIR_/);
   const planHint = plan.match(/^argument-hint:.*$/m)?.[0] ?? '';
   for (const flag of [
@@ -139,6 +149,11 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(implement, /task --background --json --write --model <effectiveModel> <effortArg>/);
   assert.match(implement, /approved outside\s+this Codex thread/);
   assert.match(implement, /reviewed but unapproved/);
+  assert.equal(
+    (implement.match(/Latest stored review findings:/g) ?? []).length,
+    3,
+    'both Codex variants and the Claude implementer must receive unapproved findings',
+  );
   assert.match(implement, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
   assert.equal(
     (implement.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
@@ -187,6 +202,11 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     (quick.match(/^node .*plan-store .* < "<payloadFile>"$/gm) ?? []).length,
     1,
     'Quick must deliver its stored-plan payload by stdin redirect',
+  );
+  assert.equal(
+    (quick.match(/--findings-file "<findingsPayloadFile>"/g) ?? []).length,
+    1,
+    'Quick must deliver terminal Claude review findings separately',
   );
   assert.doesNotMatch(quick, /<<'CODEX_PAIR_/);
   assert.match(quick, /plannerThreadId/);

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -188,6 +188,22 @@ function writeJsonExclusive(destination: string, value: unknown): void {
   }
 }
 
+function writeJsonAtomic(filePath: string, value: unknown): void {
+  const serialized = `${JSON.stringify(value, null, 2)}\n`;
+  const tempFile = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tempFile, serialized, 'utf8');
+    fs.renameSync(tempFile, filePath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(tempFile);
+    } catch {
+      // Best-effort cleanup: preserve the original write/rename failure.
+    }
+    throw error;
+  }
+}
+
 function copyFileExclusive(source: string, destination: string): void {
   try {
     fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
@@ -364,7 +380,7 @@ export function saveState(cwd: string, state: StereoStateInput): StereoState {
     jobs: nextJobs,
   };
 
-  fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, 'utf8');
+  writeJsonAtomic(resolveStateFile(cwd), nextState);
   return nextState;
 }
 
@@ -419,7 +435,7 @@ export function getConfig(cwd: string): StereoConfig {
 export function writeJobFile(cwd: string, jobId: string, payload: unknown): string {
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
-  fs.writeFileSync(jobFile, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  writeJsonAtomic(jobFile, payload);
   return jobFile;
 }
 
@@ -453,7 +469,7 @@ export function resolvePairPlanMarkdownFile(cwd: string): string {
 
 export function savePairPlanState<T>(cwd: string, record: T): T {
   ensureStateDir(cwd);
-  fs.writeFileSync(resolvePairPlanFile(cwd), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  writeJsonAtomic(resolvePairPlanFile(cwd), record);
   return record;
 }
 

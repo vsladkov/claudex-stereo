@@ -38,9 +38,19 @@ export function buildPlanReviewTitle(round: number): string {
 }
 
 // The structured reviewer verdict as far as the plan-state store reads it.
+interface ParsedPlanReviewFinding {
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  title: string;
+  body: string;
+  section: string;
+  confidence: number;
+  recommendation: string;
+}
+
 interface ParsedPlanReviewResult {
   verdict?: string | null;
   summary?: string | null;
+  findings?: ParsedPlanReviewFinding[] | null;
   open_questions?: unknown[] | null;
   residual_risks?: unknown[] | null;
 }
@@ -125,6 +135,7 @@ export async function executePlanReviewRun(
       round,
       verdict: parsedPlanReview.verdict ?? null,
       summary: parsedPlanReview.summary ?? null,
+      findings: parsedPlanReview.findings ?? [],
       openQuestions: parsedPlanReview.open_questions ?? [],
       // Stored camelCase deliberately (pair-plan state is a companion-internal
       // record); the reviewer-facing schema field is snake_case residual_risks.

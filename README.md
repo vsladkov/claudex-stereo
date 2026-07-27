@@ -325,7 +325,10 @@ user-owned command steps. Nothing is committed; you review and commit the result
 
 ### `/stereo:plan-state`
 
-Shows the complete plan most recently stored by `/stereo:plan` or `/stereo:quick`, together with its verdict, review round, model and Codex thread, update time, open questions, and residual risks.
+Shows the complete plan most recently stored by `/stereo:plan` or `/stereo:quick`, together with
+its verdict, review round, model and Codex thread, update time, review findings, open questions,
+and residual risks. Findings are rendered as a compact severity-and-title list;
+`/stereo:plan-state --json` returns their complete stored objects.
 
 ```bash
 /stereo:plan-state

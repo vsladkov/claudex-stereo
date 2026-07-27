@@ -54,6 +54,7 @@ export interface StoredPairPlanState {
   round?: unknown;
   verdict?: unknown;
   updatedAt?: unknown;
+  findings?: unknown;
   openQuestions?: unknown;
   residualRisks?: unknown;
   [key: string]: unknown;
@@ -612,6 +613,12 @@ function storedPlanList(value: unknown): string[] {
     .map((entry) => entry.trim());
 }
 
+function storedPlanFindings(value: unknown): NormalizedPlanReviewFinding[] {
+  return Array.isArray(value)
+    ? value.map((finding, index) => normalizePlanReviewFinding(finding, index))
+    : [];
+}
+
 export function renderStoredPlanState(record: StoredPairPlanState | null): string {
   if (!record) {
     return 'No stored plan for this repository. Run /stereo:plan first.\n';
@@ -643,6 +650,14 @@ export function renderStoredPlanState(record: StoredPairPlanState | null): strin
   }
   if (runtimeParts.length > 0) {
     lines.push(runtimeParts.join(' · '));
+  }
+
+  const findings = storedPlanFindings(record.findings);
+  if (findings.length > 0) {
+    lines.push(
+      `Findings (${findings.length}):`,
+      ...findings.map((finding) => `- ${finding.severity}: ${finding.title}`),
+    );
   }
 
   const openQuestions = storedPlanList(record.openQuestions);

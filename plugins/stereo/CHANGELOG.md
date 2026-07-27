@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.17.0
+
+- Publish ordinary durable JSON state updates with same-directory atomic renames so concurrent
+  readers never observe a partially written state, job, or pair-plan record
+- Persist structured plan-review findings from both Codex and Claude review routes, render their
+  severity and title in `/stereo:plan-state`, and carry them into every unapproved implementation
+  route
+- Preserve the legacy migration publisher's exclusive no-clobber behavior and keep terminal-state
+  persistence failure coverage aligned with atomic replacement permissions
+
 ## 1.16.0
 
 - Deliver every Codex pair-workflow payload through a temporary file instead of a fixed-delimiter

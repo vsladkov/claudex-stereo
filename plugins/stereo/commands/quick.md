@@ -156,10 +156,11 @@ risks.
 
 On approval, continue without a user gate. Before leaving a terminal Claude-side review, write
 the full current plan verbatim to `<payloadFile>` under the routing skill's temporary-directory
-rule, then persist:
+rule. Write the reviewer's findings array as JSON to a distinct `<findingsPayloadFile>` under the
+same rule, then persist:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> --reviewed-by '<reviewer label>' --summary '<summary>' <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
 ```
 
 Codex plan reviews already store each parsed round.

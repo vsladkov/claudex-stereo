@@ -75,7 +75,9 @@ If the stored verdict is not `approve`, ask once:
 - `Stop here`
 
 Show the summary, verdict, round (including round 0 for a draft), `updatedAt`, reviewer label when
-present, and whether residual risks exist. Mention `/stereo:plan-state` for the complete plan.
+present, whether residual risks exist, and the stored finding count when the verdict is not
+`approve` (treat missing or non-array `findings` as zero). Mention `/stereo:plan-state` for the
+complete plan.
 
 ## Standalone implementation-review step
 
@@ -216,12 +218,17 @@ Unapproved, resumed (only after the preflight gate):
 <task>
 Implement the reviewed but unapproved plan below in this repository. You reviewed this plan
 earlier in this thread, and the user explicitly chose to continue despite its stored verdict.
+Implement only the plan's scope and do not silently discard the known findings.
 
 [full stored plan, verbatim]
+
+Latest stored review findings:
+[stored findings, verbatim]
 </task>
 ```
 
 Use this task block in the approved-resumed command and retain all four safety/output contracts.
+Include the findings block only when the stored findings array is non-empty.
 
 Unapproved, fresh (only after the preflight gate):
 
@@ -230,13 +237,18 @@ Unapproved, fresh (only after the preflight gate):
 Implement the reviewed but unapproved plan below in this repository. The plan was reviewed
 outside this Codex thread<, by reviewedBy when present>, and the user explicitly chose to
 continue despite its stored verdict.
+Implement only the plan's scope and do not silently discard the known findings.
 
 [full stored plan, verbatim]
+
+Latest stored review findings:
+[stored findings, verbatim]
 </task>
 ```
 
 Use this task block in the approved-fresh command and retain all four safety/output contracts.
-`--fresh` always selects the corresponding fresh variant, even when a stored review thread exists.
+Include the findings block only when the stored findings array is non-empty. `--fresh` always
+selects the corresponding fresh variant, even when a stored review thread exists.
 
 Poll and fetch through the routing skill. If resume fails, or Codex claims changes while both
 `touchedFiles` and the actual delta are empty, retry once fresh with the identical full prompt.
@@ -246,7 +258,15 @@ each implementation or retry invocation's per-job usage from `storedJob.tokenUsa
 ### Claude implementer
 
 Use the routing skill's foreground `stereo:implementer` template with the full plan, baseline-dirty
-paths, and user-owned command steps. After every Claude implementation or fix:
+paths, and user-owned command steps. On an unapproved run with stored findings, also append this
+block to the implementer prompt:
+
+```text
+Latest stored review findings:
+[stored findings, verbatim]
+```
+
+After every Claude implementation or fix:
 
 - Record the Agent result's token usage and duration, or `usage unavailable` when omitted.
 - Compare `git rev-parse HEAD` with `baselineCommit`.

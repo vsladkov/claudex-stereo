@@ -223,8 +223,9 @@ the user's repository, using the Write tool. Prefer the session scratch director
 harness provides one; otherwise use a unique `mktemp -d`-style location under the operating
 system's temporary directory. Never write payload files into the user's repository. Deliver plan
 documents with `plan-review --plan-file "<payloadFile>"`, task and brief payloads with
-`task --prompt-file "<payloadFile>"`, and stored plans with
-`plan-store ... < "<payloadFile>"`. The payload file's content must never pass through the shell.
+`task --prompt-file "<payloadFile>"`, and stored plans through stdin. Store a Claude review's
+findings array as JSON in a distinct `<findingsPayloadFile>`; never overwrite the plan payload with
+the findings payload. Payload file contents must never pass through the shell.
 Shell-quote each short metadata argument independently with single quotes, replacing an embedded
 `'` with `'"'"'`. Never interpolate reviewer or task text unquoted into a shell command.
 
@@ -232,6 +233,12 @@ Shell-quote each short metadata argument independently with single quotes, repla
 
 Codex `plan-review` stores every successfully parsed round automatically. Claude-side review
 results do not. Whenever a command reaches a terminal Claude-side plan verdict, persist the full
-current plan with `plan-store`, the actual verdict and round, the reviewer label, summary, and each
-open question and residual risk as its own repeatable option. Do this before transitioning to
-implementation or returning control to the user.
+current plan with `plan-store`, the actual verdict and round, the reviewer label, summary,
+findings, and each open question and residual risk. Write the full plan to `<payloadFile>` and the
+findings array as JSON to the distinct `<findingsPayloadFile>`, then run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+```
+
+Do this before transitioning to implementation or returning control to the user.

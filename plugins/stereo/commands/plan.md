@@ -85,10 +85,11 @@ the invocation usage using the routing skill's `storedJob.tokenUsage` rule.
 Codex plan review stores a successfully parsed result automatically. For a Claude-side result,
 persist the actual verdict, even `needs-revision`, with the full plan and one option per question
 and risk. Write the full stored plan verbatim to `<payloadFile>` under the routing skill's
-temporary-directory rule, then run:
+temporary-directory rule. Write the reviewer's findings array as JSON to a distinct
+`<findingsPayloadFile>` under the same rule, then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 --reviewed-by '<reviewer label>' --summary '<summary>' <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
 ```
 
 Report the verdict, findings, revision instructions, open questions, complete residual risks, and
