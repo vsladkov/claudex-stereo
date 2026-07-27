@@ -156,6 +156,11 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     3,
     'both Codex variants and the Claude implementer must receive unapproved findings',
   );
+  assert.equal(
+    (implement.match(/^Advisory review findings/gm) ?? []).length,
+    3,
+    'both approved Codex variants and the Claude implementer must receive advisory findings',
+  );
   assert.match(implement, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
   assert.equal(
     (implement.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
@@ -171,10 +176,12 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     '--implement-only',
     '--review-only',
     '--implementer-effort',
-    '--impl-reviewer-effort',
+    '--implementation-reviewer',
+    '--implementation-reviewer-effort',
   ]) {
     assert.match(implementHint, new RegExp(flag));
   }
+  assert.doesNotMatch(implementHint, /--impl-reviewer\b/);
   assert.equal(
     (
       implement.match(
@@ -215,15 +222,22 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(quick, /planReviewThreadId/);
   assert.match(quick, /implementationThreadId/);
   assert.match(quick, /implementationReviewThreadId/);
+  assert.equal(
+    (quick.match(/^Advisory review findings/gm) ?? []).length,
+    2,
+    'both approved Codex variants must receive advisory findings',
+  );
   const quickHint = quick.match(/^argument-hint:.*$/m)?.[0] ?? '';
   for (const flag of [
     '--planner-effort',
     '--plan-reviewer-effort',
     '--implementer-effort',
-    '--impl-reviewer-effort',
+    '--implementation-reviewer',
+    '--implementation-reviewer-effort',
   ]) {
     assert.match(quickHint, new RegExp(flag));
   }
+  assert.doesNotMatch(quickHint, /--impl-reviewer\b/);
   assert.equal(
     (
       quick.match(

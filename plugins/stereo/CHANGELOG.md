@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.20.0
+
+- Carry non-empty approving plan-review findings into approved implementation payloads as advisory
+  context and into every implementation-review brief
+- Rename `--impl-reviewer` and `--impl-reviewer-effort` to `--implementation-reviewer` and
+  `--implementation-reviewer-effort`, rejecting the abbreviated spellings with their replacements
+- Document the dogfooded model-selection doctrine for routine work, critical changes,
+  implementation review, and full-discovery sweeps
+
 ## 1.19.0
 
 - Bound SessionEnd cleanup within an internal deadline below its hook timeout so reservation

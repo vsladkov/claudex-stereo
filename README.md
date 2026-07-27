@@ -89,7 +89,7 @@ Stereo's pair workflow is organized at four levels:
 | Role  | The model performing one kind of work              | Planner, plan-reviewer, implementer, implementation-reviewer, or adversarial-reviewer |
 
 Every multi-role command uses role-named model flags: `--planner`, `--plan-reviewer`,
-`--implementer`, and `--impl-reviewer`. Model selections use one addressing convention:
+`--implementer`, and `--implementation-reviewer`. Model selections use one addressing convention:
 
 - `claude:session` runs the role inline when that role allows it.
 - `claude:inherit` runs the contained foreground agent with its invocation-level model parameter
@@ -101,9 +101,10 @@ Every multi-role command uses role-named model flags: `--planner`, `--plan-revie
 
 `--effort` remains the command-wide Codex default. Multi-role commands also accept the matching
 role flags: `--planner-effort`, `--plan-reviewer-effort`, `--implementer-effort`, and
-`--impl-reviewer-effort`. For each Codex-routed role, its role flag wins over `--effort`, which
-wins over stored effort or the model-pair default. gpt-5.6-family selections default to `max`,
-other `gpt-*` selections default to `xhigh`, and non-OpenAI selections omit an effort override.
+`--implementation-reviewer-effort`. For each Codex-routed role, its role flag wins over
+`--effort`, which wins over stored effort or the model-pair default. gpt-5.6-family selections
+default to `max`, other `gpt-*` selections default to `xhigh`, and non-OpenAI selections omit an
+effort override.
 
 Stereo's Claude role agents intentionally omit the agent-definition `effort` field, so they
 inherit the session's effort and extended-thinking configuration. Subagents have no separate
@@ -142,6 +143,53 @@ contained in the file-edit-only implementer agent.
 
 An inline `claude:session` review is convenient but not independent when the session produced the
 work. Prefer a named Claude reviewer or Codex when you want genuinely fresh eyes.
+
+### Choosing models per role
+
+These are dogfooded defaults, not enforcement: every role flag remains free-form.
+
+| Situation                              | Planner          | Plan reviewer    | Implementation reviewer |
+| -------------------------------------- | ---------------- | ---------------- | ----------------------- |
+| Routine work                           | `claude:session` | `sol`            | `claude:session`        |
+| Infrastructure-critical or deep audits | `claude:opus`    | `claude:fable`   | `claude:session`        |
+| Independent implementation gate        | Task-appropriate | Task-appropriate | Named Claude or Codex   |
+
+For routine work, use the default `--planner claude:session` with the default
+`--plan-reviewer sol`. This cross-ecosystem pairing keeps review independent, keeps the Claude and
+OpenAI budgets separate, and leaves a resumable Codex plan-review thread. `/stereo:implement`
+continues in the thread that approved the plan unless you pass `--fresh`.
+
+```bash
+/stereo:plan add rate limiting to the public API
+```
+
+For infrastructure-critical changes and periodic deep audits, use:
+
+```bash
+/stereo:plan --planner claude:opus --plan-reviewer claude:fable <task>
+```
+
+A fresh contained planner is not anchored on the session's earlier conclusions, and the strongest
+model belongs at the approval gate because a wrongly approved plan costs more than an extra
+revision round. The tradeoff is that a Claude-reviewed plan leaves no resumable Codex thread, so
+implementation starts fresh with the complete plan embedded. Do not pair a `claude:*` role with
+its role effort flag; the command rejects a role effort flag for a Claude-routed role.
+
+Keep the implementation reviewer as `claude:session` by default. The session carries the whole
+plan phase—revision history, rebuttals, descope rationale, and its own observations—into the
+implementation gate. Stored plan-review findings also reach named reviewers through the review
+brief; the session uniquely carries the rest of that context. When independence matters, switch
+to a named reviewer such as `--implementation-reviewer claude:opus` or a Codex model, or run
+`/stereo:adversarial-review` on the result. This matters above all when the orchestrating session
+edited code itself; the [independence note above](#workflow-taxonomy) still applies.
+
+For rare full-discovery sweeps, run two independent `--draft-only` passes with different planners,
+compare and merge their discoveries at the findings level, then plan once and review normally.
+Durable state holds exactly one stored plan per repository in `pair-plan.json`, so the second
+`/stereo:plan --draft-only` overwrites the first. After the first pass, export it with
+`/stereo:plan-state --open`; that command writes and prints `<state dir>/pair-plan.md`. Copy that
+file somewhere outside the repository before the second draft because the next `--open` overwrites
+it too.
 
 ### `/stereo:review`
 
@@ -267,16 +315,16 @@ Implements the plan reviewed by [`/stereo:plan`](#stereoplan). The implementer a
 reviewer are independently selectable while the current Claude session keeps ownership of the
 gates, verification, fix loop, and final report:
 
-| Step                  | Flag              | Default                | Claude execution                      | Codex execution      |
-| --------------------- | ----------------- | ---------------------- | ------------------------------------- | -------------------- |
-| Implementation        | `--implementer`   | Stored model or `sol`  | Foreground file-edit-only implementer | Workspace-write task |
-| Implementation review | `--impl-reviewer` | Current Claude session | Foreground read-only reviewer         | Fresh read-only task |
+| Step                  | Flag                        | Default                | Claude execution                      | Codex execution      |
+| --------------------- | --------------------------- | ---------------------- | ------------------------------------- | -------------------- |
+| Implementation        | `--implementer`             | Stored model or `sol`  | Foreground file-edit-only implementer | Workspace-write task |
+| Implementation review | `--implementation-reviewer` | Current Claude session | Foreground read-only reviewer         | Fresh read-only task |
 
 The same Claude and Codex model values accepted by `/stereo:plan` work here, except
 `claude:session` is not a valid implementer: Claude writes are always isolated in the contained
-file-edit agent. `--implementer-effort` and `--impl-reviewer-effort` override their respective
-Codex roles; `--effort` remains the fallback for either. A role effort flag is rejected for a
-Claude-routed role or a mode that does not run that role.
+file-edit agent. `--implementer-effort` and `--implementation-reviewer-effort` override their
+respective Codex roles; `--effort` remains the fallback for either. A role effort flag is rejected
+for a Claude-routed role or a mode that does not run that role.
 
 Use [`/stereo:plan-state`](#stereoplan-state) to read the complete stored plan, its review metadata, open questions, and residual risks before starting implementation.
 
@@ -285,6 +333,9 @@ exists, and Claude reviews inline exactly as before. The fix loop is capped at 4
 use `--max-fix-rounds <n>` to change the cap, and `--fresh` to start a new Codex thread instead of
 resuming the stored one. A Claude-reviewed plan also starts a fresh Codex thread with a truthful
 outside-thread preamble.
+
+Stored plan-review findings travel with the plan into implementation and implementation review:
+they are binding known findings on an unapproved run and advisory context on an approved one.
 
 Use `--implement-only` to run preflight, implementation, and host-side checks, then stop before
 review. Use `--review-only` to treat the current dirty and untracked worktree as the complete
@@ -306,13 +357,13 @@ Examples:
 ```bash
 /stereo:implement
 /stereo:implement --implementer claude:sonnet
-/stereo:implement --impl-reviewer terra
-/stereo:implement --implementer sol --impl-reviewer claude:opus --effort high
-/stereo:implement --implementer spark --implementer-effort xhigh --impl-reviewer sol --impl-reviewer-effort max
+/stereo:implement --implementation-reviewer terra
+/stereo:implement --implementer sol --implementation-reviewer claude:opus --effort high
+/stereo:implement --implementer spark --implementer-effort xhigh --implementation-reviewer sol --implementation-reviewer-effort max
 /stereo:implement --max-fix-rounds 3
 /stereo:implement --fresh
 /stereo:implement --implement-only
-/stereo:implement --review-only --impl-reviewer claude:opus
+/stereo:implement --review-only --implementation-reviewer claude:opus
 ```
 
 The final report lists the stored `residualRisks`, verification results, selected models, and any
@@ -344,16 +395,22 @@ roles is independently routable. Defaults preserve the original cycle: the curre
 drafts, `sol` reviews at `max`, Codex implements with the resolved plan-review model and effort,
 and the current Claude session reviews the implementation.
 
-Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the plan cap you can keep iterating in the same Codex thread, implement the reviewed but unapproved plan with its findings carried forward, or stop. Dirty worktrees and exhausted fix rounds still produce explicit safety gates. If the task needs a plan longer than roughly 120 lines or crosses multiple features or subsystems, quick stops before review and directs you to [`/stereo:plan`](#stereoplan).
+Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the
+plan cap you can keep iterating in the same Codex thread, implement the reviewed but unapproved
+plan with its findings carried forward, or stop; approved plans also carry their review findings
+forward as advisory context. Dirty worktrees and exhausted fix rounds still produce explicit
+safety gates. If the task needs a plan longer than roughly 120 lines or crosses multiple features
+or subsystems, quick stops before review and directs you to
+[`/stereo:plan`](#stereoplan).
 
 Use the same four role flags as the phase commands:
 
-| Role                    | Model flag        | Effort flag              | Default                                   |
-| ----------------------- | ----------------- | ------------------------ | ----------------------------------------- |
-| Planner                 | `--planner`       | `--planner-effort`       | `claude:session`                          |
-| Plan reviewer           | `--plan-reviewer` | `--plan-reviewer-effort` | `sol`                                     |
-| Implementer             | `--implementer`   | `--implementer-effort`   | Latest Codex plan-review model and effort |
-| Implementation reviewer | `--impl-reviewer` | `--impl-reviewer-effort` | `claude:session`                          |
+| Role                    | Model flag                  | Effort flag                        | Default                                   |
+| ----------------------- | --------------------------- | ---------------------------------- | ----------------------------------------- |
+| Planner                 | `--planner`                 | `--planner-effort`                 | `claude:session`                          |
+| Plan reviewer           | `--plan-reviewer`           | `--plan-reviewer-effort`           | `sol`                                     |
+| Implementer             | `--implementer`             | `--implementer-effort`             | Latest Codex plan-review model and effort |
+| Implementation reviewer | `--implementation-reviewer` | `--implementation-reviewer-effort` | `claude:session`                          |
 
 When a Claude plan reviewer leaves no Codex thread to resume, quick starts a fresh Codex
 implementation task. Its implementer default is `sol` with `--implementer-effort`, then
@@ -365,7 +422,7 @@ accurate.
 ```bash
 /stereo:quick fix the retry delay calculation
 /stereo:quick --planner claude:haiku --plan-reviewer terra --effort high add a validation check
-/stereo:quick --plan-reviewer claude:sonnet --impl-reviewer claude:opus fix a small bug
+/stereo:quick --plan-reviewer claude:sonnet --implementation-reviewer claude:opus fix a small bug
 /stereo:quick --plan-reviewer spark --plan-reviewer-effort xhigh --implementer sol --implementer-effort high fix a small bug
 ```
 

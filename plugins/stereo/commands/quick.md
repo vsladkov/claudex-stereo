@@ -1,6 +1,6 @@
 ---
 description: Plan, review, implement, and verify one small task with independently routed Claude or Codex roles
-argument-hint: '[--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--impl-reviewer <model>] [--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [small task description]'
+argument-hint: '[--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [small task description]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -31,9 +31,9 @@ After reading the routing skill, parse all arguments before repository work:
   command-wide effort, or `max`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer, including the effort from a Codex plan-review payload.
-- `--impl-reviewer <model>` defaults to `claude:session`.
-- `--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
-  Codex-routed implementation reviewer.
+- `--implementation-reviewer <model>` defaults to `claude:session`.
+- `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
+  for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
 - Remaining text is the task. Ask for it if empty.
@@ -46,7 +46,9 @@ routing skill's pair default. When `--implementer` is omitted, use the plan-revi
 resolved model and effort at the last level; either `--implementer-effort` or `--effort` overrides
 that payload effort. An explicit implementer model instead uses that model's pair default when
 neither effort flag is present. The removed `--model` flag is unknown; report the role-named
-alternatives. Quick has no configurable round-count flags.
+alternatives. The renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
+`--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements. Quick
+has no configurable round-count flags.
 
 Keep these ids distinct:
 
@@ -149,6 +151,8 @@ restart becomes round 1 and carries accumulated `## Reviewer responses`.
 
 After every completed round, report its number, verdict, finding count, and reviewer
 per-invocation usage and duration (or `usage unavailable`).
+Retain that round's findings array as `latestPlanFindings`; the terminal round's array feeds the
+implementation and implementation-review payloads.
 
 On `needs-revision`, address every finding by changing the plan, rebutting with repository
 evidence, or explicitly descoping scope-expanding/pre-existing hazards. Carry complete residual
@@ -206,6 +210,9 @@ Implement the approved plan below in this repository. You reviewed and approved 
 in this thread.
 
 [current full plan, verbatim]
+
+Advisory review findings (the approved plan takes precedence where they conflict):
+[latest findings, verbatim]
 </task>
 <action_safety>
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
@@ -236,6 +243,9 @@ Implement the approved plan below in this repository. The plan was reviewed and 
 this Codex thread, by <reviewer label>.
 
 [current full plan, verbatim]
+
+Advisory review findings (the approved plan takes precedence where they conflict):
+[latest findings, verbatim]
 </task>
 <action_safety>
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
@@ -256,6 +266,9 @@ Then launch:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <effectiveModel> <effortArg> --prompt-file "<payloadFile>"
 ```
+
+Include the advisory findings block in both approved variants only when `latestPlanFindings` is
+non-empty; it never authorizes work outside the approved plan.
 
 For `Implement anyway` with `planReviewThreadId`, replace the approved task block with:
 
@@ -298,23 +311,27 @@ implementation or retry invocation's per-job usage from `storedJob.tokenUsage.jo
 ### Claude implementer
 
 Use the routing skill's foreground `stereo:implementer` template with the plan, baseline-dirty
-paths, original unapproved findings when present, and user-owned steps. After every invocation,
-record the Agent result's token usage and duration (or `usage unavailable`), compare HEAD with
-`baselineCommit`, and inspect the actual delta. Stop and retract the never-commit claim if HEAD
-moved.
+paths, `latestPlanFindings` when non-empty, and user-owned steps. Frame those findings as original
+unapproved findings after `Implement anyway`; otherwise use the same advisory findings heading the
+approved Codex payloads use. After every invocation, record the Agent result's token usage and
+duration (or `usage unavailable`), compare HEAD with `baselineCommit`, and inspect the actual
+delta. Stop and retract the never-commit claim if HEAD moved.
 
 After either implementer, run identifiable host tests/builds and record commands and results.
 
 ## Implementation-review and fix loop
 
 Build input from the plan, baseline, baseline-dirty paths, complete current delta, implementer
-report, host results, and original unapproved findings. The canonical result is
+report, host results, and `latestPlanFindings`. The canonical result is
 `${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`.
 
 Maintain `implementationReviewHistory` across the otherwise stateless review invocations:
 
-- Round 1 contains the implementer report verbatim and the original unapproved plan findings when
-  the user selected `Implement anyway`; otherwise it states that there are no original findings.
+- Round 1 contains the implementer report verbatim plus `latestPlanFindings` verbatim when
+  non-empty. Label them as original unapproved findings when the user selected `Implement anyway`
+  and as "Advisory findings from the approving plan review, context only: the approved plan takes
+  precedence, and the reviewer must not report a fix solely because an advisory finding was not
+  adopted" otherwise; state that there are none when the array is empty.
 - Every later round preserves that round-1 context, retains every prior numbered
   implementation-review fix with its `resolved`/`unresolved` status from the latest delta and host
   results, and includes the latest fix-round implementer report verbatim.

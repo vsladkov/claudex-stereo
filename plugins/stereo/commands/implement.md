@@ -1,6 +1,6 @@
 ---
 description: Implement or review the stored plan with independently selected Claude or Codex role models
-argument-hint: '[--implement-only|--review-only] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--impl-reviewer <model>] [--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
+argument-hint: '[--implement-only|--review-only] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -22,10 +22,10 @@ After reading the routing skill, parse all arguments before loading state:
   is null, use `sol`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer.
-- `--impl-reviewer <model>` selects the implementation reviewer and defaults to
+- `--implementation-reviewer <model>` selects the implementation reviewer and defaults to
   `claude:session`.
-- `--impl-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
-  Codex-routed implementation reviewer.
+- `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
+  for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
 - `--max-fix-rounds <n>` defaults to 4.
@@ -38,11 +38,13 @@ Reject missing values, duplicates, positionals, invalid effort/round values, unk
 unknown `claude:*` values, and both mode flags together. Accept `claude:inherit` alongside
 `claude:session` and the four explicit Claude aliases. The removed implementer `--model` and
 `--review-model` flags are unknown; report the role-named replacements.
+The renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
+`--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements.
 
 For `--review-only`, reject `--implementer`, `--implementer-effort`, `--fresh`, and
-`--max-fix-rounds`. For `--implement-only`, reject `--impl-reviewer`,
-`--impl-reviewer-effort`, and `--max-fix-rounds`. Reject a role effort flag when its selected role
-is Claude-routed.
+`--max-fix-rounds`. For `--implement-only`, reject `--implementation-reviewer`,
+`--implementation-reviewer-effort`, and `--max-fix-rounds`. Reject a role effort flag when its
+selected role is Claude-routed.
 
 Reject `claude:session` as the implementer; Claude writes must use the contained named agent.
 
@@ -51,7 +53,7 @@ stored effort > the selected model's pair default. Either effort flag replaces t
 If the user overrides the implementer model while supplying neither effort flag, clear the stored
 effort because it belonged to the old model, then use the new model's pair default. When both
 stored values are null, use `sol` and the user's matching role/command effort or `max`. Omit a
-null effort. For a Codex implementation reviewer, resolve `--impl-reviewer-effort` >
+null effort. For a Codex implementation reviewer, resolve `--implementation-reviewer-effort` >
 command-wide `--effort` > the routing skill's pair default.
 
 Inside the full fix loop, act on findings automatically. The stop-after-review rule applies to
@@ -67,6 +69,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 
 If `available` is false, stop and tell the user to run `/stereo:plan`. Save a non-null stored
 thread only as `storedPlanReviewThreadId`, never as an implementation thread.
+Retain the stored `findings` array as `storedPlanFindings`, treating a missing or non-array value
+as empty.
 
 If the stored verdict is not `approve`, ask once:
 
@@ -75,9 +79,8 @@ If the stored verdict is not `approve`, ask once:
 - `Stop here`
 
 Show the summary, verdict, round (including round 0 for a draft), `updatedAt`, reviewer label when
-present, whether residual risks exist, and the stored finding count when the verdict is not
-`approve` (treat missing or non-array `findings` as zero). Mention `/stereo:plan-state` for the
-complete plan.
+present, whether residual risks exist, and the stored finding count (treat missing or non-array
+`findings` as zero). Mention `/stereo:plan-state` for the complete plan.
 
 ## Standalone implementation-review step
 
@@ -89,7 +92,7 @@ For `--review-only`, do not use the normal dirty-worktree attribution rule:
 4. If the worktree is clean, stop with `Nothing to review.`
 5. Run the repository's identifiable host checks and record every command and exit result.
 6. Build review input from the full stored plan, `HEAD`, current status/diff, every untracked file,
-   and the host-check results.
+   the host-check results, and `storedPlanFindings`.
 
 Read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md` and fill it once without changing
 any other text:
@@ -99,13 +102,17 @@ any other text:
   untracked worktree is the delta against `HEAD`, with the recorded HEAD, status, diff, and
   untracked-file inventory. Explicitly say not to apply the normal baseline-dirty exclusion.
 - `{{REVIEW_CONTEXT}}` = `This is a standalone implementation review. There is no implementer
-report and there are no prior implementation-review rounds.`
+report and there are no prior implementation-review rounds.` Append `storedPlanFindings` verbatim
+  when non-empty, labeled as "Advisory findings from the approving plan review, context only: the
+  approved plan takes precedence, and the reviewer must not report a fix solely because an
+  advisory finding was not adopted" when the stored verdict is `approve` and as known unapproved
+  findings otherwise.
 - `{{HOST_RESULTS}}` = every named host-verification command and its exact exit result/output
   summary.
 
 The result is the single `implementationReviewBrief` for every route.
 
-Route exactly one review through `--impl-reviewer`:
+Route exactly one review through `--implementation-reviewer`:
 
 - `claude:session`: apply `implementationReviewBrief` inline to the complete delta.
 - Named Claude: use `implementationReviewBrief` verbatim as the routing skill's
@@ -161,6 +168,9 @@ Implement the approved plan below in this repository. You reviewed and approved 
 in this thread.
 
 [full stored plan, verbatim]
+
+Advisory review findings (the approved plan takes precedence where they conflict):
+[stored findings, verbatim]
 </task>
 <action_safety>
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
@@ -175,6 +185,9 @@ Run the repository's relevant tests or build and fix regressions.
 Report changes, touched files, verification results, and deviations with reasons.
 </compact_output_contract>
 ```
+
+Include the advisory findings block only when `storedPlanFindings` is non-empty; it never
+authorizes work outside the approved plan.
 
 Then launch:
 
@@ -191,6 +204,9 @@ Implement the approved plan below in this repository. The plan was reviewed and 
 this Codex thread<, by reviewedBy when present>.
 
 [full stored plan, verbatim]
+
+Advisory review findings (the approved plan takes precedence where they conflict):
+[stored findings, verbatim]
 </task>
 <action_safety>
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
@@ -205,6 +221,9 @@ Run the repository's relevant tests or build and fix regressions.
 Report changes, touched files, verification results, and deviations with reasons.
 </compact_output_contract>
 ```
+
+Include the advisory findings block only when `storedPlanFindings` is non-empty; it never
+authorizes work outside the approved plan.
 
 Then launch:
 
@@ -266,6 +285,13 @@ Latest stored review findings:
 [stored findings, verbatim]
 ```
 
+On an approved run with stored findings, append this advisory block instead:
+
+```text
+Advisory review findings (the approved plan takes precedence where they conflict):
+[stored findings, verbatim]
+```
+
 After every Claude implementation or fix:
 
 - Record the Agent result's token usage and duration, or `usage unavailable` when omitted.
@@ -297,13 +323,17 @@ fix round.
 ## Full implementation-review and fix loop
 
 Build review input from the full plan, `baselineCommit`, baseline-dirty paths, current status/diff,
-changed and untracked files, implementer report, and host results. The canonical contract is
-`${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`.
+changed and untracked files, implementer report, host results, and `storedPlanFindings`. The
+canonical contract is `${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json`.
 
 Maintain `implementationReviewHistory` across the otherwise stateless review invocations:
 
-- Round 1 contains the implementer report verbatim and states that no earlier
-  implementation-review fixes exist.
+- Round 1 contains the implementer report verbatim, states that no earlier implementation-review
+  fixes exist, and contains `storedPlanFindings` verbatim when non-empty. Label them as "Advisory
+  findings from the approving plan review, context only: the approved plan takes precedence, and
+  the reviewer must not report a fix solely because an advisory finding was not adopted" when the
+  stored verdict is `approve` and as known unapproved findings otherwise; explicitly state that
+  there are no stored plan-review findings when the array is empty.
 - Every later round preserves the round-1 context, retains every prior numbered fix, marks each
   `resolved` or `unresolved` from the latest attributed delta and host results, and includes the
   latest fix-round implementer report verbatim.
