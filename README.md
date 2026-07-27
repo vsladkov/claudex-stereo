@@ -140,10 +140,12 @@ There are three deliberate boundaries. `/stereo:review` remains Codex-native; us
 remain Codex bridges. `claude:session` is rejected for implementation so Claude writes stay
 contained in the file-edit-only implementer agent.
 
-An inline `claude:session` review is convenient but not independent when the session produced the
-work. Prefer a named Claude reviewer or Codex when you want genuinely fresh eyes. Two
-Claude-routed plan-phase roles still share an ecosystem even when both are contained; use
-`--plan-reviewer sol` or `/stereo:adversarial-review` to buy cross-ecosystem independence back.
+Implementation review defaults to a contained `claude:fable`, independent of the orchestrating
+session that produced and fixed the work. The cheaper `claude:session` route remains available as
+an explicit inline choice, but it is not independent. Containment is not cross-ecosystem
+independence: under the defaults three of four roles are Claude-routed while Codex `sol` remains
+the implementer. Use `--implementation-reviewer sol` or `/stereo:adversarial-review` to buy
+cross-ecosystem independence back at the implementation gate.
 
 ### Choosing models per role
 
@@ -151,9 +153,9 @@ These are dogfooded defaults, not enforcement: every role flag remains free-form
 
 | Situation                            | Planner                     | Plan reviewer    | Implementation reviewer |
 | ------------------------------------ | --------------------------- | ---------------- | ----------------------- |
-| Default and most work                | `claude:opus`               | `claude:fable`   | `claude:session`        |
-| Cross-ecosystem or budget-split work | `claude:session` (or Codex) | `sol`            | `claude:session`        |
-| Independent implementation gate      | Task-appropriate            | Task-appropriate | Named Claude or Codex   |
+| Default and most work                | `claude:opus`               | `claude:fable`   | `claude:fable`          |
+| Cross-ecosystem or budget-split work | `claude:session` (or Codex) | `sol`            | `sol`                   |
+| Cheapest implementation gate         | Task-appropriate            | Task-appropriate | `claude:session`        |
 
 For most work, use the defaults:
 
@@ -181,19 +183,35 @@ the inline planner as well restores the full previous behavior:
 /stereo:plan --planner claude:session --plan-reviewer sol <task>
 ```
 
-Named Claude model availability is now a default-path dependency. If the harness does not expose
-`opus` or `fable`, select `--planner claude:session`, use `claude:inherit` for a contained role, or
-select `--plan-reviewer sol`; Stereo surfaces the original availability error and never silently
-substitutes a model. Do not pair a `claude:*` role with its role effort flag; the command rejects a
-role effort flag for a Claude-routed role.
+Named Claude model availability is now a default-path dependency in both the planning and
+implementation phases. If the harness does not expose `opus` or `fable`, select
+`--planner claude:session`, use `claude:inherit` for a contained role, select
+`--plan-reviewer sol`, or select `--implementation-reviewer claude:session`, `claude:inherit`, or
+a Codex model. Stereo surfaces the original availability error and never silently substitutes a
+model. Do not pair a `claude:*` role with its role effort flag; the command rejects a role effort
+flag for a Claude-routed role.
 
-Keep the implementation reviewer as `claude:session` by default. The session carries the whole
-plan phase—revision history, rebuttals, descope rationale, and its own observations—into the
-implementation gate. Stored plan-review findings also reach named reviewers through the review
-brief; the session uniquely carries the rest of that context. When independence matters, switch
-to a named reviewer such as `--implementation-reviewer claude:opus` or a Codex model, or run
-`/stereo:adversarial-review` on the result. This matters above all when the orchestrating session
-edited code itself; the [independence note above](#workflow-taxonomy) still applies.
+The implementation reviewer defaults to `claude:fable`, the same model that gates plans. It is
+the last gate before you commit, and it is the one review the orchestrating session should not
+perform: the session produced the delta, wrote the fix instructions, and has every reason to read
+its own work generously. A contained reviewer inspects the repository itself against the plan.
+
+The session keeps one advantage the contained reviewer does not have—the plan-phase conversation,
+with its revision history, rebuttals, and descope rationale. Since v1.20 the stored plan-review
+findings themselves travel into every implementation-review brief as labeled advisory context,
+so what a named reviewer misses is the argument around them, not the findings.
+
+The cost is real and per round. Implementation reviews are stateless in both ecosystems: unlike
+plan reviews, there is no continuation rule, so every round—including each fix-loop re-review—
+spawns a fresh top-tier contained reviewer with no warm cache, where the inline session reviewed
+inside an already-warm conversation. In dogfooded runs, contained `claude:fable` review turns
+have ranged from roughly 40k tokens for a small documentation delta to 130k for a full plan-review
+round—cost scales with how much the reviewer must read.
+
+Two flags price it differently: `--implementation-reviewer claude:session` restores the cheap
+inline review, and `--implementation-reviewer sol` (or another Codex model) moves the cost to the
+OpenAI budget and buys cross-ecosystem independence. The
+[independence note above](#workflow-taxonomy) describes that boundary in context.
 
 For rare full-discovery sweeps, run two independent `--draft-only` passes with different planners,
 compare and merge their discoveries at the findings level, then plan once and review normally.
@@ -329,10 +347,10 @@ Implements the plan reviewed by [`/stereo:plan`](#stereoplan). The implementer a
 reviewer are independently selectable while the current Claude session keeps ownership of the
 gates, verification, fix loop, and final report:
 
-| Step                  | Flag                        | Default                | Claude execution                      | Codex execution      |
-| --------------------- | --------------------------- | ---------------------- | ------------------------------------- | -------------------- |
-| Implementation        | `--implementer`             | Stored model or `sol`  | Foreground file-edit-only implementer | Workspace-write task |
-| Implementation review | `--implementation-reviewer` | Current Claude session | Foreground read-only reviewer         | Fresh read-only task |
+| Step                  | Flag                        | Default               | Claude execution                      | Codex execution      |
+| --------------------- | --------------------------- | --------------------- | ------------------------------------- | -------------------- |
+| Implementation        | `--implementer`             | Stored model or `sol` | Foreground file-edit-only implementer | Workspace-write task |
+| Implementation review | `--implementation-reviewer` | `claude:fable`        | Foreground read-only reviewer         | Fresh read-only task |
 
 The same Claude and Codex model values accepted by `/stereo:plan` work here, except
 `claude:session` is not a valid implementer: Claude writes are always isolated in the contained
@@ -343,10 +361,10 @@ for a Claude-routed role or a mode that does not run that role.
 Use [`/stereo:plan-state`](#stereoplan-state) to read the complete stored plan, its review metadata, open questions, and residual risks before starting implementation.
 
 With no new flags, Codex implements with the stored model in the stored review thread when one
-exists, and Claude reviews inline. The default Claude-reviewed plan stores no Codex model or
-thread, so implementation starts a fresh `sol` thread at `max` with the complete plan embedded and
-a truthful outside-thread preamble; `--fresh` is redundant on that path. The fix loop is capped at
-4 rounds by default; use `--max-fix-rounds <n>` to change the cap.
+exists, and a contained `claude:fable` reviewer gates every round. The default Claude-reviewed
+plan stores no Codex model or thread, so implementation starts a fresh `sol` thread at `max` with
+the complete plan embedded and a truthful outside-thread preamble; `--fresh` is redundant on that
+path. The fix loop is capped at 4 rounds by default; use `--max-fix-rounds <n>` to change the cap.
 
 Stored plan-review findings travel with the plan into implementation and implementation review:
 they are binding known findings on an unapproved run and advisory context on an approved one.
@@ -372,6 +390,7 @@ Examples:
 /stereo:implement
 /stereo:implement --implementer claude:sonnet
 /stereo:implement --implementation-reviewer terra
+/stereo:implement --implementation-reviewer claude:session
 /stereo:implement --implementer sol --implementation-reviewer claude:opus --effort high
 /stereo:implement --implementer spark --implementer-effort xhigh --implementation-reviewer sol --implementation-reviewer-effort max
 /stereo:implement --max-fix-rounds 3
@@ -384,7 +403,7 @@ The final report lists the stored `residualRisks`, verification results, selecte
 user-owned command steps. Nothing is committed; you review and commit the result yourself.
 
 > [!WARNING]
-> The pair workflow iterates until accepted by default, which can take a long time and consume usage limits quickly. Default planning, plan review, and inline implementation review consume Claude usage, while implementation and fix rounds consume Codex usage at `max`. Start from a clean worktree, bound the loops with `--max-plan-rounds`/`--max-fix-rounds` if you want a budget, and consider `/stereo:setup --disable-review-gate` during long pair sessions.
+> The pair workflow iterates until accepted by default, which can take a long time and consume usage limits quickly. Default planning, plan review, and implementation review consume Claude usage, while implementation and fix rounds consume Codex usage at `max`. Every implementation-review round, including a fix-loop re-review, spawns a fresh contained reviewer with no cache reuse. Start from a clean worktree, use `--implementation-reviewer claude:session` for the cheaper inline path, bound the loops with `--max-plan-rounds`/`--max-fix-rounds` if you want a budget, and consider `/stereo:setup --disable-review-gate` during long pair sessions.
 
 ### `/stereo:plan-state`
 
@@ -406,7 +425,7 @@ The durable state directory is normally `~/.codex/companion-state/<workspace>/`,
 
 Runs the complete pair workflow in one command for a small, single-feature task. Each of the four
 roles is independently routable. By default, the current Claude session drafts, `claude:fable`
-reviews the plan, `sol` implements at `max`, and the current Claude session reviews the
+reviews the plan, `sol` implements at `max`, and a contained `claude:fable` reviews the
 implementation. The planner stays inline because the scope gate already grounds the task in this
 session.
 
@@ -425,7 +444,7 @@ Use the same four role flags as the phase commands:
 | Planner                 | `--planner`                 | `--planner-effort`                 | `claude:session`                                                                                |
 | Plan reviewer           | `--plan-reviewer`           | `--plan-reviewer-effort`           | `claude:fable`                                                                                  |
 | Implementer             | `--implementer`             | `--implementer-effort`             | `sol` at `max` after default Claude review; latest Codex plan-review model and effort otherwise |
-| Implementation reviewer | `--implementation-reviewer` | `--implementation-reviewer-effort` | `claude:session`                                                                                |
+| Implementation reviewer | `--implementation-reviewer` | `--implementation-reviewer-effort` | `claude:fable`                                                                                  |
 
 Because the default Claude plan reviewer leaves no Codex thread to resume, quick starts a fresh
 Codex implementation task by default. Its implementer is `sol` with `--implementer-effort`, then

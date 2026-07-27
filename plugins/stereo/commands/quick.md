@@ -32,7 +32,8 @@ After reading the routing skill, parse all arguments before repository work:
   command-wide effort, or `max`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer, including the effort from a Codex plan-review payload.
-- `--implementation-reviewer <model>` defaults to `claude:session`.
+- `--implementation-reviewer <model>` defaults to `claude:fable`; the contained reviewer is
+  independent of this orchestrating session.
 - `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
   for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for

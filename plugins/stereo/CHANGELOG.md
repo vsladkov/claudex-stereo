@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.22.0
+
+- Default `/stereo:implement` and `/stereo:quick` implementation review to `claude:fable`
+- Invert the implementation-review doctrine so `--implementation-reviewer claude:session` is the
+  economy path and `--implementation-reviewer sol` is the cross-ecosystem path
+- Record the per-round cost of stateless implementation review: no continuation and one fresh
+  top-tier contained reviewer for every round, including fix-loop re-reviews
+
 ## 1.21.0
 
 - Default `/stereo:plan` to a fresh contained `claude:opus` planner and `claude:fable` plan

@@ -23,7 +23,9 @@ After reading the routing skill, parse all arguments before loading state:
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer.
 - `--implementation-reviewer <model>` selects the implementation reviewer and defaults to
-  `claude:session`.
+  `claude:fable`: the implementation review is the last gate before commit, and a contained
+  reviewer is independent of the orchestrator that produced and fixed the delta. `claude:session`
+  remains valid and is the cheaper inline choice.
 - `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
   for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
