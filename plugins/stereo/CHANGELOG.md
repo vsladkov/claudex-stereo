@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.26.2
+
+- Run CI on pushes to main and manual dispatch, not only pull requests, and rename the workflow
+  to CI accordingly
+- Pin the CI Codex CLI install to the locally verified version so upstream releases cannot break
+  unrelated runs; bump the pin when upgrading Codex
+- Add the package author and remove two empty stray directories from the repository root
+
 ## 1.26.1
 
 - State the pairing accurately: the plugin pairs the Claude Code and Codex harnesses with an

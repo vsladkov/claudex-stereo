@@ -1,6 +1,6 @@
 {
   "name": "stereo",
-  "version": "1.26.1",
+  "version": "1.26.2",
   "description": "Pair Claude with the Codex CLI: mixed-model planning and implementation, adversarial reviews, delegated tasks, and background jobs.",
   "author": {
     "name": "Veselin Sladkov"

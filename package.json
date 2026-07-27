@@ -1,9 +1,10 @@
 {
   "name": "claudex-stereo",
-  "version": "1.26.1",
+  "version": "1.26.2",
   "private": true,
   "type": "module",
   "description": "Use Codex from Claude Code to review code or delegate tasks.",
+  "author": "Veselin Sladkov <veselin.sladkov@gmail.com>",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=24"

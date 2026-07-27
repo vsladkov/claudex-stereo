@@ -58,7 +58,9 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   `npm run check-version` to keep the four manifests (six version fields) in
   sync.
 - CI also runs `npm test` and `npm run build` (an alias for typecheck, still
-  with no emit); its `continue-on-error` Windows lane is advisory.
+  with no emit); its `continue-on-error` Windows lane is advisory. CI installs
+  a pinned Codex CLI for the codegen prestep — bump the pin in
+  `.github/workflows/ci.yml` when upgrading Codex locally.
 - Codex write runs need `sysctl kernel.apparmor_restrict_unprivileged_userns=0`
   (Ubuntu 24.04; not persisted across reboots).
 

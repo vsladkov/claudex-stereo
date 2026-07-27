@@ -1,7 +1,10 @@
-name: Pull Request CI
+name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Install Codex CLI
-        run: npm install -g @openai/codex
+        run: npm install -g @openai/codex@0.145.0
 
       - name: Check version metadata
         run: npm run check-version
@@ -64,7 +67,7 @@ jobs:
         run: npm ci
 
       - name: Install Codex CLI
-        run: npm install -g @openai/codex
+        run: npm install -g @openai/codex@0.145.0
 
       - name: Check version metadata
         run: npm run check-version
