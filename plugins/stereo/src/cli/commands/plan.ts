@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 
 import {
   defaultPairEffort,
@@ -9,10 +8,12 @@ import {
 } from '../../models/registry.ts';
 import { readStdinIfPiped } from '../../shared/fs.ts';
 import {
+  ensureStateDir,
   loadPairPlanState,
   nowIso,
   resolvePairPlanMarkdownFile,
   savePairPlanState,
+  writeTextAtomic,
 } from '../../workspace/state.ts';
 import {
   createCompanionJob,
@@ -193,7 +194,8 @@ export async function handlePlanState(
   }
 
   const exportedPath = resolvePairPlanMarkdownFile(workspaceRoot);
-  fs.writeFileSync(exportedPath, rendered, 'utf8');
+  ensureStateDir(workspaceRoot);
+  writeTextAtomic(exportedPath, rendered);
   const openedInEditor = await deps.openInEditor(exportedPath);
   const openMessage = openedInEditor
     ? 'Opened in VS Code.'

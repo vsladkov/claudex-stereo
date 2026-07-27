@@ -1090,6 +1090,22 @@ test('garbage input gets a -32700 reply and cannot crash the shared broker', asy
   assert.equal(processIsAlive(broker.child.pid), true);
 });
 
+test('an oversized unterminated client line is disconnected without stopping the broker', async (t) => {
+  const broker = await startBroker(t);
+  const oversized = createJsonlClient(broker.endpoint);
+  t.after(() => oversized.close());
+  await initializeClient(oversized);
+
+  oversized.socket.write('x'.repeat(8 * 1024 * 1024 + 1));
+  await waitFor(() => oversized.isClosed);
+  assert.equal(processIsAlive(broker.child.pid), true);
+
+  const survivor = createJsonlClient(broker.endpoint);
+  t.after(() => survivor.close());
+  await initializeClient(survivor);
+  assert.equal(processIsAlive(broker.child.pid), true);
+});
+
 test('a turn that completes inside its start response does not wedge the broker busy', async (t) => {
   const broker = await startBroker(t, 'fast-turn');
   const first = createJsonlClient(broker.endpoint);

@@ -19,6 +19,7 @@ import {
   savePairPlanState,
   saveState,
   upsertJob,
+  writeTextAtomic,
   writeJobFile,
 } from '../plugins/stereo/src/workspace/state.ts';
 import type { JobRecord } from '../plugins/stereo/src/workspace/state.ts';
@@ -415,6 +416,39 @@ test('ordinary durable JSON writers clean up a temporary file after rename failu
   assert.deepEqual(
     fs
       .readdirSync(path.dirname(jobFile))
+      .filter((file) => file.startsWith(tempPrefix) && file.endsWith('.tmp')),
+    [],
+  );
+});
+
+test('writeTextAtomic preserves exact bytes and leaves no temporary files', () => {
+  const workspace = makeTempDir();
+  const durableDir = resolveDurableStateDir(workspace);
+  const textFile = path.join(durableDir, 'atomic-text.md');
+  const contents = '# Atomic text\n\nExact trailing bytes.\n';
+  fs.mkdirSync(durableDir, { recursive: true });
+
+  writeTextAtomic(textFile, contents);
+
+  assert.equal(fs.readFileSync(textFile, 'utf8'), contents);
+  assert.equal(
+    fs.readdirSync(durableDir).some((file) => file.endsWith('.tmp')),
+    false,
+  );
+});
+
+test('writeTextAtomic cleans up a temporary file after rename failure', () => {
+  const workspace = makeTempDir();
+  const durableDir = resolveDurableStateDir(workspace);
+  const textFile = path.join(durableDir, 'rename-failure.md');
+  fs.mkdirSync(textFile, { recursive: true });
+
+  assert.throws(() => writeTextAtomic(textFile, 'replacement contents'));
+
+  const tempPrefix = `${path.basename(textFile)}.`;
+  assert.deepEqual(
+    fs
+      .readdirSync(durableDir)
       .filter((file) => file.startsWith(tempPrefix) && file.endsWith('.tmp')),
     [],
   );

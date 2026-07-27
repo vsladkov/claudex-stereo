@@ -188,11 +188,10 @@ function writeJsonExclusive(destination: string, value: unknown): void {
   }
 }
 
-function writeJsonAtomic(filePath: string, value: unknown): void {
-  const serialized = `${JSON.stringify(value, null, 2)}\n`;
+export function writeTextAtomic(filePath: string, contents: string): void {
   const tempFile = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    fs.writeFileSync(tempFile, serialized, 'utf8');
+    fs.writeFileSync(tempFile, contents, 'utf8');
     fs.renameSync(tempFile, filePath);
   } catch (error) {
     try {
@@ -202,6 +201,10 @@ function writeJsonAtomic(filePath: string, value: unknown): void {
     }
     throw error;
   }
+}
+
+function writeJsonAtomic(filePath: string, value: unknown): void {
+  writeTextAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function copyFileExclusive(source: string, destination: string): void {

@@ -8,7 +8,6 @@
 
 import js from '@eslint/js';
 import eslintConfigPrettier from 'eslint-config-prettier';
-import importPlugin from 'eslint-plugin-import-x';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -18,9 +17,6 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    plugins: {
-      import: importPlugin,
-    },
     rules: {
       // Project convention (matches the maestro baseline).
       '@typescript-eslint/consistent-type-imports': 'error',

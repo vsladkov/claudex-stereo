@@ -168,7 +168,7 @@ Examples:
 /stereo:review --background
 ```
 
-This command is read-only and will not perform any changes. When run in the background you can use [`/stereo:status`](#codexstatus) to check on the progress and [`/stereo:cancel`](#codexcancel) to cancel the ongoing task.
+This command is read-only and will not perform any changes. When run in the background you can use [`/stereo:status`](#stereostatus) to check on the progress and [`/stereo:cancel`](#stereocancel) to cancel the ongoing task.
 
 ### `/stereo:adversarial-review`
 
@@ -615,7 +615,7 @@ work. Provider API-key billing and quotas are independent of ChatGPT plan quotas
 
 ### Moving The Work Over To Codex
 
-Delegated tasks and any [stop gate](#what-does-the-review-gate-do) run can also be directly resumed inside Codex by running `codex resume` either with the specific session ID you received from running `/stereo:result` or `/stereo:status` or by selecting it from the list.
+Delegated tasks and any [stop gate](#enabling-review-gate) run can also be directly resumed inside Codex by running `codex resume` either with the specific session ID you received from running `/stereo:result` or `/stereo:status` or by selecting it from the list.
 
 This way you can review the Codex work or continue the work there.
 

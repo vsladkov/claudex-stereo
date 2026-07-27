@@ -549,68 +549,51 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
     sockets.add(socket);
     socket.setEncoding('utf8');
     let buffer = '';
+    const lineQueue: string[] = [];
+    let draining = false;
 
-    socket.on('data', async (chunk) => {
-      buffer += chunk;
-      let newlineIndex = buffer.indexOf('\n');
-      while (newlineIndex !== -1) {
-        const line = buffer.slice(0, newlineIndex);
-        buffer = buffer.slice(newlineIndex + 1);
-        newlineIndex = buffer.indexOf('\n');
+    async function handleLine(line: string): Promise<void> {
+      let message: BrokerClientMessage;
+      try {
+        message = JSON.parse(line);
+      } catch (error) {
+        send(socket, {
+          id: null,
+          error: buildJsonRpcError(-32700, `Invalid JSON: ${(error as SyntaxError).message}`),
+        });
+        return;
+      }
 
-        if (!line.trim()) {
-          continue;
-        }
+      if (message.id !== undefined && message.method === 'initialize') {
+        send(socket, {
+          id: message.id,
+          result: {
+            userAgent: 'codex-companion-broker',
+          },
+        });
+        return;
+      }
 
-        let message: BrokerClientMessage;
-        try {
-          message = JSON.parse(line);
-        } catch (error) {
-          send(socket, {
-            id: null,
-            error: buildJsonRpcError(-32700, `Invalid JSON: ${(error as SyntaxError).message}`),
-          });
-          continue;
-        }
+      if (message.method === 'initialized' && message.id === undefined) {
+        return;
+      }
 
-        if (message.id !== undefined && message.method === 'initialize') {
-          send(socket, {
-            id: message.id,
-            result: {
-              userAgent: 'codex-companion-broker',
-            },
-          });
-          continue;
-        }
-
-        if (message.method === 'initialized' && message.id === undefined) {
-          continue;
-        }
-
-        if (message.id !== undefined && message.method === 'broker/shutdown') {
-          if (message.params?.ifIdle) {
-            // Deliberately ignores orphanedTurn: SessionEnd must be able to
-            // reap a broker whose own worker just died - shutdown closes the
-            // codex child, which kills the abandoned turn with it.
-            const anotherClientConnected = [...sockets].some(
-              (candidate) => candidate !== socket && !candidate.destroyed,
-            );
-            if (anotherClientConnected || activeRequestSocket || inFlightStream || activeStream) {
-              send(socket, { id: message.id, result: { busy: true } });
-              continue;
-            }
-
-            shuttingDown = true;
-            closeListener(server);
-            send(socket, { id: message.id, result: { ok: true, pid: process.pid } });
-            try {
-              await shutdown(server);
-            } finally {
-              process.exit(0);
-            }
+      if (message.id !== undefined && message.method === 'broker/shutdown') {
+        if (message.params?.ifIdle) {
+          // Deliberately ignores orphanedTurn: SessionEnd must be able to
+          // reap a broker whose own worker just died - shutdown closes the
+          // codex child, which kills the abandoned turn with it.
+          const anotherClientConnected = [...sockets].some(
+            (candidate) => candidate !== socket && !candidate.destroyed,
+          );
+          if (anotherClientConnected || activeRequestSocket || inFlightStream || activeStream) {
+            send(socket, { id: message.id, result: { busy: true } });
+            return;
           }
 
-          send(socket, { id: message.id, result: {} });
+          shuttingDown = true;
+          closeListener(server);
+          send(socket, { id: message.id, result: { ok: true, pid: process.pid } });
           try {
             await shutdown(server);
           } finally {
@@ -618,184 +601,225 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
           }
         }
 
-        if (message.id === undefined) {
-          continue;
+        send(socket, { id: message.id, result: {} });
+        try {
+          await shutdown(server);
+        } finally {
+          process.exit(0);
         }
+      }
 
-        if (shuttingDown) {
-          send(socket, {
-            id: message.id,
-            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, 'Shared Codex broker is shutting down.'),
-          });
-          continue;
-        }
+      if (message.id === undefined) {
+        return;
+      }
 
-        const isStreaming = STREAMING_METHODS.has(message.method as string);
-        const allowInterruptDuringActiveStream =
-          isInterruptRequest(message) &&
-          activeStream &&
-          activeStream.socket !== socket &&
-          !activeRequestSocket &&
-          !inFlightStream;
+      if (shuttingDown) {
+        send(socket, {
+          id: message.id,
+          error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, 'Shared Codex broker is shutting down.'),
+        });
+        return;
+      }
 
-        // A disconnected in-flight stream keeps only the streaming gate; as
-        // before this state existed, unrelated non-streaming probes remain
-        // usable while the response/watchdog race resolves.
-        const occupiedSocket =
-          (inFlightStream && !inFlightStream.disconnected
-            ? inFlightStream.socket
-            : activeRequestSocket) ?? activeStream?.socket;
+      const isStreaming = STREAMING_METHODS.has(message.method as string);
+      const allowInterruptDuringActiveStream =
+        isInterruptRequest(message) &&
+        activeStream &&
+        activeStream.socket !== socket &&
+        !activeRequestSocket &&
+        !inFlightStream;
 
-        if (occupiedSocket && occupiedSocket !== socket && !allowInterruptDuringActiveStream) {
-          send(socket, {
-            id: message.id,
-            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, 'Shared Codex broker is busy.'),
-          });
-          continue;
-        }
+      // A disconnected in-flight stream keeps only the streaming gate; as
+      // before this state existed, unrelated non-streaming probes remain
+      // usable while the response/watchdog race resolves.
+      const occupiedSocket =
+        (inFlightStream && !inFlightStream.disconnected
+          ? inFlightStream.socket
+          : activeRequestSocket) ?? activeStream?.socket;
 
-        if (allowInterruptDuringActiveStream) {
-          try {
-            const result = await appClient.request(
-              message.method as AppServerMethod,
-              (message.params ?? {}) as AppServerRequestParams<AppServerMethod>,
-            );
-            send(socket, { id: message.id, result });
-          } catch (error) {
-            const rpcError = error as RpcCapableError;
-            send(socket, {
-              id: message.id,
-              error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message),
-            });
-          }
-          continue;
-        }
+      if (occupiedSocket && occupiedSocket !== socket && !allowInterruptDuringActiveStream) {
+        send(socket, {
+          id: message.id,
+          error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, 'Shared Codex broker is busy.'),
+        });
+        return;
+      }
 
-        if (orphanedTurn && Date.now() - orphanedTurn.at >= ORPHAN_GRACE_MS) {
-          // A turn that never completed keeps its reservation for the existing
-          // stranded-lock scan and manual remedy.
-          orphanedTurn = null;
-        }
-        if (isStreaming && (inFlightStream || activeStream)) {
-          send(socket, {
-            id: message.id,
-            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, 'Shared Codex broker is busy.'),
-          });
-          continue;
-        }
-        if (isStreaming && orphanedTurn) {
-          send(socket, {
-            id: message.id,
-            error: buildJsonRpcError(
-              BROKER_BUSY_RPC_CODE,
-              'Shared Codex broker is finishing an abandoned turn.',
-            ),
-          });
-          continue;
-        }
-
-        if (isStreaming) {
-          const params = message.params ?? {};
-          const paramsThreadIds = buildParamsThreadIds(params);
-          const record: InFlightStreamRecord = {
-            socket,
-            method: message.method as string,
-            routingThreadIds: new Set(paramsThreadIds),
-            expectedCompletionIds: new Set(paramsThreadIds),
-            identities: captureThreadLockIdentities(paramsThreadIds),
-            disconnected: socket.destroyed,
-            observedCompletions: new Set(),
-            watchdog: null,
-          };
-          pendingStreamCompletions.clear();
-          inFlightStream = record;
-          if (record.disconnected) {
-            startNoResponseWatchdog(record);
-          }
-
-          try {
-            const result = await appClient.request(
-              message.method as AppServerMethod,
-              params as AppServerRequestParams<AppServerMethod>,
-            );
-            // A watchdog or shutdown may have retired this request and a new
-            // request may now own the global slot. Never let the late
-            // continuation mutate that successor (request-record ABA guard).
-            if (inFlightStream !== record) {
-              send(socket, { id: message.id, result });
-              continue;
-            }
-
-            record.routingThreadIds = buildStreamThreadIds(record.method, params, result);
-            record.expectedCompletionIds = buildExpectedCompletionIds(
-              record.method,
-              paramsThreadIds,
-              result,
-            );
-            for (const threadId of record.routingThreadIds) {
-              if (!record.identities.has(threadId)) {
-                record.identities.set(threadId, null);
-              }
-            }
-            const alreadyCompleted = streamCompletionWasObserved(record);
-            const disconnected = record.disconnected || socket.destroyed;
-            discardInFlightStream(record);
-
-            if (!disconnected && !alreadyCompleted) {
-              activeStream = {
-                socket,
-                routingThreadIds: new Set(record.routingThreadIds),
-                expectedCompletionIds: new Set(record.expectedCompletionIds),
-                identities: new Map(record.identities),
-              };
-            } else if (disconnected && alreadyCompleted) {
-              releaseCapturedIdentities(record.identities);
-            } else if (disconnected) {
-              armOrphanedTurn(
-                record.routingThreadIds,
-                record.expectedCompletionIds,
-                record.identities,
-              );
-            }
-            send(socket, { id: message.id, result });
-          } catch (error) {
-            // As above, a retired request must not clear a successor's record.
-            if (inFlightStream === record) {
-              discardInFlightStream(record);
-            }
-            const rpcError = error as RpcCapableError;
-            send(socket, {
-              id: message.id,
-              error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message),
-            });
-          }
-          continue;
-        }
-
-        activeRequestSocket = socket;
+      if (allowInterruptDuringActiveStream) {
         try {
           const result = await appClient.request(
             message.method as AppServerMethod,
             (message.params ?? {}) as AppServerRequestParams<AppServerMethod>,
           );
           send(socket, { id: message.id, result });
-          if (activeRequestSocket === socket) {
-            activeRequestSocket = null;
-          }
         } catch (error) {
           const rpcError = error as RpcCapableError;
           send(socket, {
             id: message.id,
             error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message),
           });
-          if (activeRequestSocket === socket) {
-            activeRequestSocket = null;
+        }
+        return;
+      }
+
+      if (orphanedTurn && Date.now() - orphanedTurn.at >= ORPHAN_GRACE_MS) {
+        // A turn that never completed keeps its reservation for the existing
+        // stranded-lock scan and manual remedy.
+        orphanedTurn = null;
+      }
+      if (isStreaming && (inFlightStream || activeStream)) {
+        send(socket, {
+          id: message.id,
+          error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, 'Shared Codex broker is busy.'),
+        });
+        return;
+      }
+      if (isStreaming && orphanedTurn) {
+        send(socket, {
+          id: message.id,
+          error: buildJsonRpcError(
+            BROKER_BUSY_RPC_CODE,
+            'Shared Codex broker is finishing an abandoned turn.',
+          ),
+        });
+        return;
+      }
+
+      if (isStreaming) {
+        const params = message.params ?? {};
+        const paramsThreadIds = buildParamsThreadIds(params);
+        const record: InFlightStreamRecord = {
+          socket,
+          method: message.method as string,
+          routingThreadIds: new Set(paramsThreadIds),
+          expectedCompletionIds: new Set(paramsThreadIds),
+          identities: captureThreadLockIdentities(paramsThreadIds),
+          disconnected: socket.destroyed,
+          observedCompletions: new Set(),
+          watchdog: null,
+        };
+        pendingStreamCompletions.clear();
+        inFlightStream = record;
+        if (record.disconnected) {
+          startNoResponseWatchdog(record);
+        }
+
+        try {
+          const result = await appClient.request(
+            message.method as AppServerMethod,
+            params as AppServerRequestParams<AppServerMethod>,
+          );
+          // A watchdog or shutdown may have retired this request and a new
+          // request may now own the global slot. Never let the late
+          // continuation mutate that successor (request-record ABA guard).
+          if (inFlightStream !== record) {
+            send(socket, { id: message.id, result });
+            return;
           }
-          if (activeStream?.socket === socket) {
-            activeStream = null;
+
+          record.routingThreadIds = buildStreamThreadIds(record.method, params, result);
+          record.expectedCompletionIds = buildExpectedCompletionIds(
+            record.method,
+            paramsThreadIds,
+            result,
+          );
+          for (const threadId of record.routingThreadIds) {
+            if (!record.identities.has(threadId)) {
+              record.identities.set(threadId, null);
+            }
           }
+          const alreadyCompleted = streamCompletionWasObserved(record);
+          const disconnected = record.disconnected || socket.destroyed;
+          discardInFlightStream(record);
+
+          if (!disconnected && !alreadyCompleted) {
+            activeStream = {
+              socket,
+              routingThreadIds: new Set(record.routingThreadIds),
+              expectedCompletionIds: new Set(record.expectedCompletionIds),
+              identities: new Map(record.identities),
+            };
+          } else if (disconnected && alreadyCompleted) {
+            releaseCapturedIdentities(record.identities);
+          } else if (disconnected) {
+            armOrphanedTurn(
+              record.routingThreadIds,
+              record.expectedCompletionIds,
+              record.identities,
+            );
+          }
+          send(socket, { id: message.id, result });
+        } catch (error) {
+          // As above, a retired request must not clear a successor's record.
+          if (inFlightStream === record) {
+            discardInFlightStream(record);
+          }
+          const rpcError = error as RpcCapableError;
+          send(socket, {
+            id: message.id,
+            error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message),
+          });
+        }
+        return;
+      }
+
+      activeRequestSocket = socket;
+      try {
+        const result = await appClient.request(
+          message.method as AppServerMethod,
+          (message.params ?? {}) as AppServerRequestParams<AppServerMethod>,
+        );
+        send(socket, { id: message.id, result });
+        if (activeRequestSocket === socket) {
+          activeRequestSocket = null;
+        }
+      } catch (error) {
+        const rpcError = error as RpcCapableError;
+        send(socket, {
+          id: message.id,
+          error: buildJsonRpcError(rpcError.rpcCode ?? -32000, rpcError.message),
+        });
+        if (activeRequestSocket === socket) {
+          activeRequestSocket = null;
+        }
+        if (activeStream?.socket === socket) {
+          activeStream = null;
         }
       }
+    }
+
+    async function drainLineQueue(): Promise<void> {
+      if (draining) {
+        return;
+      }
+      draining = true;
+      try {
+        while (lineQueue.length > 0) {
+          const line = lineQueue.shift() as string;
+          if (!line.trim()) {
+            continue;
+          }
+          await handleLine(line);
+        }
+      } finally {
+        draining = false;
+      }
+    }
+
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      if (buffer.length > MAX_CLIENT_BUFFER_BYTES) {
+        // A client streaming an unterminated line must not grow broker memory.
+        socket.destroy();
+        return;
+      }
+      let newlineIndex = buffer.indexOf('\n');
+      while (newlineIndex !== -1) {
+        lineQueue.push(buffer.slice(0, newlineIndex));
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf('\n');
+      }
+      void drainLineQueue();
     });
 
     socket.on('close', () => {

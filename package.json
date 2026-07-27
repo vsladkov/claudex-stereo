@@ -1,6 +1,6 @@
 {
   "name": "claudex-stereo",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "private": true,
   "type": "module",
   "description": "Use Codex from Claude Code to review code or delegate tasks.",
@@ -26,7 +26,6 @@
     "@types/node": "^25.5.0",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-import-x": "^4.17.1",
     "husky": "^9.1.7",
     "lint-staged": "^15.5.2",
     "prettier": "^3.9.6",

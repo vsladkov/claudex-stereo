@@ -4,6 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
+import { SESSION_END_BUDGET_MS } from '../plugins/stereo/src/hooks/session-lifecycle.ts';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PLUGIN_ROOT = path.join(ROOT, 'plugins', 'stereo');
 
@@ -357,4 +359,12 @@ test('hooks keep session-end cleanup and stop gating enabled', () => {
   assert.match(source, /SessionEnd/);
   assert.match(source, /stop-review-gate-hook\.ts/);
   assert.match(source, /session-lifecycle-hook\.ts/);
+
+  const hooks = JSON.parse(source) as {
+    hooks: { SessionEnd: Array<{ hooks?: Array<{ timeout: number }> }> };
+  };
+  const sessionEnd = hooks.hooks.SessionEnd.flatMap((entry) => entry.hooks ?? [])[0];
+  assert.ok(sessionEnd);
+  assert.equal(typeof sessionEnd.timeout, 'number');
+  assert.equal(SESSION_END_BUDGET_MS + 5000 <= sessionEnd.timeout * 1000, true);
 });

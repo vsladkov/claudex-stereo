@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.19.0
+
+- Bound SessionEnd cleanup within an internal deadline below its hook timeout so reservation
+  release, guarded broker shutdown, and synchronous session teardown can finish reliably
+- Serialize each broker client's inbound JSONL dispatch and disconnect clients whose unterminated
+  input exceeds the shared buffer cap
+- Publish rendered pair-plan Markdown with the durable state's same-directory atomic rename helper
+  and cover exact text writes plus temporary-file cleanup
+- Remove the unused `eslint-plugin-import-x` registration and development dependency
+- Repair the README links for Stereo status, cancellation, and review-gate documentation
+
 ## 1.18.0
 
 - Tolerate malformed or non-object SessionStart, SessionEnd, and Stop hook input so cleanup and

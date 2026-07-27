@@ -32,6 +32,14 @@ import type { JobRecord } from '../workspace/state.ts';
 import { TRANSCRIPT_PATH_ENV } from '../workspace/claude-session-transfer.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 
+// Must stay comfortably below the SessionEnd timeout in hooks.json so every
+// awaited step finishes before the hook harness kills this process. A kill
+// here lands between the job sweep and teardownBrokerSession, stranding
+// broker.json, the cxc-* session dir, and possibly a live broker. In-flight
+// clamped waits may finish up to a few seconds past the budget, so hooks.json
+// must keep several seconds of headroom beyond SESSION_END_BUDGET_MS.
+export const SESSION_END_BUDGET_MS = 20_000;
+
 interface SessionHookInput {
   session_id?: string;
   transcript_path?: string;
@@ -68,7 +76,11 @@ function appendEnvVar(name: string, value: string | null | undefined): void {
   fs.appendFileSync(process.env.CLAUDE_ENV_FILE, `export ${name}=${shellEscape(value)}\n`, 'utf8');
 }
 
-async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): Promise<number> {
+async function cleanupSessionJobs(
+  cwd: string,
+  sessionId: string | undefined,
+  deadline: number,
+): Promise<number> {
   if (!cwd || !sessionId) {
     return 0;
   }
@@ -111,13 +123,17 @@ async function cleanupSessionJobs(cwd: string, sessionId: string | undefined): P
       // Ignore teardown failures during session shutdown.
     }
     try {
-      await releaseThreadReservationForCancelledJob({
-        threadId: storedJob?.threadId ?? job.threadId ?? null,
-        requestThreadId:
-          (storedJob?.request as { threadId?: string | null } | null | undefined)?.threadId ?? null,
-        jobId: job.id,
-        pid,
-      });
+      await releaseThreadReservationForCancelledJob(
+        {
+          threadId: storedJob?.threadId ?? job.threadId ?? null,
+          requestThreadId:
+            (storedJob?.request as { threadId?: string | null } | null | undefined)?.threadId ??
+            null,
+          jobId: job.id,
+          pid,
+        },
+        { timeoutMs: Math.max(0, Math.min(2500, deadline - Date.now())) },
+      );
     } catch {
       // Reservation cleanup is best effort during session shutdown.
     }
@@ -152,7 +168,17 @@ function handleSessionStart(input: SessionHookInput): void {
   appendEnvVar(PLUGIN_DATA_ENV, process.env[PLUGIN_DATA_ENV]);
 }
 
+function sendBrokerShutdownBeforeDeadline(
+  endpoint: string,
+  deadline: number,
+): Promise<ShutdownOutcome> {
+  return sendBrokerShutdownIfIdle(endpoint, {
+    timeoutMs: Math.max(0, Math.min(1500, deadline - Date.now())),
+  });
+}
+
 async function handleSessionEnd(input: SessionHookInput): Promise<void> {
+  const deadline = Date.now() + SESSION_END_BUDGET_MS;
   const cwd = input.cwd || process.cwd();
   const brokerSession: SessionBrokerHandle | null =
     loadBrokerSession(cwd) ??
@@ -173,7 +199,11 @@ async function handleSessionEnd(input: SessionHookInput): Promise<void> {
   // mid-turn would otherwise answer the idle probe with busy and the broker
   // would outlive the session (killing the worker closes its socket, the
   // broker interrupts the orphaned turn, and idleness follows within ~ms-s).
-  const killedJobs = await cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
+  const killedJobs = await cleanupSessionJobs(
+    cwd,
+    input.session_id || process.env[SESSION_ID_ENV],
+    deadline,
+  );
 
   // Guarded shutdown: the workspace broker is shared by every session in
   // this cwd, so an unconditional kill here would abort another session's
@@ -181,14 +211,20 @@ async function handleSessionEnd(input: SessionHookInput): Promise<void> {
   // AND closed endpoint were verified, so no kill fallback is needed then.
   let shutdown: ShutdownOutcome | null = null;
   if (brokerEndpoint) {
-    shutdown = await sendBrokerShutdownIfIdle(brokerEndpoint, { timeoutMs: 1500 });
+    shutdown = await sendBrokerShutdownBeforeDeadline(brokerEndpoint, deadline);
     // busy + we just killed jobs = plausibly our own worker's orphaned turn
     // still winding down; retry briefly. busy + nothing killed = another live
     // session owns the broker; leave immediately.
     let retries = killedJobs > 0 ? 6 : 0;
-    while (retries > 0 && shutdown && !shutdown.accepted && shutdown.busy) {
+    while (
+      retries > 0 &&
+      Date.now() < deadline &&
+      shutdown &&
+      !shutdown.accepted &&
+      shutdown.busy
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 250));
-      shutdown = await sendBrokerShutdownIfIdle(brokerEndpoint, { timeoutMs: 1500 });
+      shutdown = await sendBrokerShutdownBeforeDeadline(brokerEndpoint, deadline);
       retries -= 1;
     }
   }
