@@ -28,7 +28,7 @@ After reading the routing skill, parse all arguments before repository work:
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
 - `--implementer <model>` defaults to the model/effort resolved by the latest Codex plan-review
-  payload. If the plan reviewer is Claude-side, default to `sol` with the matching role effort,
+  payload. If the plan reviewer is Claude-side, default to `codex:sol` with the matching role effort,
   command-wide effort, or `max`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer, including the effort from a Codex plan-review payload.
@@ -42,8 +42,8 @@ After reading the routing skill, parse all arguments before repository work:
 
 Reject missing values, duplicate role or role-effort flags, invalid effort, unknown flags, unknown
 `claude:*` values, and `claude:session` as implementer. Accept `claude:inherit` alongside
-`claude:session` and the four explicit Claude aliases. Accept an optional `codex:` prefix on a Codex
-selection and reject `codex:claude:*`. Reject a role effort flag when its selected role is
+`claude:session` and the four explicit Claude aliases. Accept a Codex selection with or without the
+`codex:` prefix and reject `codex:claude:*`. Reject a role effort flag when its selected role is
 Claude-routed. Resolve every Codex role through role effort > command-wide effort > the routing
 skill's pair default. When `--implementer` is omitted, use the plan-review payload's resolved model
 and effort at the last level; either `--implementer-effort` or `--effort` overrides that payload
@@ -194,7 +194,7 @@ commit/stash (recommended) or continue. Mention an enabled stop-review gate.
 
 If the selected implementer is Claude, scan for command-requiring work beyond host verification:
 version bumps, dependency installation, code generation, migrations, or interactive/long-running
-processes. If found, ask whether to switch to canonical Codex `sol`, leave each command user-owned,
+processes. If found, ask whether to switch to the canonical `codex:sol` implementer, leave each command user-owned,
 or stop. Never execute shell text on a Claude agent's behalf.
 
 ## Implementation routing

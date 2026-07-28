@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://claudex-stereo.com/sitemap.xml

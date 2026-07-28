@@ -83,8 +83,8 @@ test('OpenAI-only setup reports the default provider with one optional alias sum
   assert.match(rendered, /Model provider: openai \(default\)/);
   assert.doesNotMatch(rendered, /Custom provider/);
   assert.equal(providerSteps.length, 1);
-  assert.match(providerSteps[0]!, /kimi \(moonshot\)/);
-  assert.match(providerSteps[0]!, /glm \(zhipu\)/);
+  assert.match(providerSteps[0]!, /codex:kimi \(moonshot\)/);
+  assert.match(providerSteps[0]!, /codex:glm \(zhipu\)/);
 });
 
 test('configured providers report ready aliases without provider next steps when all keys are set', async () => {
@@ -105,7 +105,7 @@ test('configured providers report ready aliases without provider next steps when
     envKey: 'MOONSHOT_API_KEY',
     keySet: true,
   });
-  assert.match(rendered, /Custom provider moonshot \(kimi → kimi-k3\): MOONSHOT_API_KEY set/);
+  assert.match(rendered, /Custom provider moonshot \(codex:kimi → kimi-k3\): MOONSHOT_API_KEY set/);
   assert.equal(
     report.nextSteps.some((step) => /third-party aliases|configured provider/.test(step)),
     false,
@@ -150,8 +150,8 @@ test('an unconfigured provider is represented once in the optional aliases summa
   const providerSteps = report.nextSteps.filter((step) => step.includes('third-party aliases'));
 
   assert.equal(providerSteps.length, 1);
-  assert.match(providerSteps[0]!, /qwen \(dashscope\)/);
-  assert.doesNotMatch(providerSteps[0]!, /kimi \(moonshot\)/);
+  assert.match(providerSteps[0]!, /codex:qwen \(dashscope\)/);
+  assert.doesNotMatch(providerSteps[0]!, /codex:kimi \(moonshot\)/);
 });
 
 test('an auth read failure leaves configured providers empty and still renders', async () => {

@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.27.0
+
+- Adopt the codex: prefix as the written form for every Codex-side model selection across the
+  docs, command prompts, site, and orchestrator reports, symmetric with claude:; the runtime
+  accepts bare forms unchanged and keeps resolved model ids in storage and output, and setup's
+  per-alias readiness lines now print the prefixed alias
+- Add the claudex-stereo.com marketing site under docs/ for GitHub Pages: a single
+  self-contained static page with the workflow walkthrough, feature grid, routing table, command
+  reference, and a labeled schematic session; no external requests, CNAME and .nojekyll included
+- Rebuild the page light-first around the mockup direction as a full project overview: the
+  two-column Claude/Codex channel diagram, a twelve-command reference, an interactive routing
+  console with the per-role defaults table, typical flows, an FAQ, honest feature and
+  credibility rows, and the schematic pair session, with every claim checked against the
+  shipped commands and README
+- Add a 404 page, robots.txt, sitemap.xml, a rendered social-preview image with large-card
+  metadata, and structural site tests guarding README anchors, install commands, and the page's
+  no-external-request property
+- Skip CI on docs-only pushes via paths-ignore while keeping full CI on pull requests
+
 ## 1.26.3
 
 - Document the public GitHub marketplace install (`vsladkov/claudex-stereo`) as the primary

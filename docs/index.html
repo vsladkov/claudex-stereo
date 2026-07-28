@@ -1,0 +1,2248 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claudex Stereo — Code in stereo. Ship with confidence.</title>
+    <meta
+      name="description"
+      content="Claudex Stereo is a Claude Code plugin pairing Claude and the OpenAI Codex CLI: adversarially reviewed planning, gated implementation, and a model choice for every role."
+    />
+    <link rel="canonical" href="https://claudex-stereo.com/" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f4ee" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#131109" />
+    <meta property="og:title" content="Claudex Stereo — Code in stereo. Ship with confidence." />
+    <meta
+      property="og:description"
+      content="Claude plans. A second model challenges. Codex builds. A fresh reviewer gates the diff. You decide what ships."
+    />
+    <meta property="og:url" content="https://claudex-stereo.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Claudex Stereo" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content="https://claudex-stereo.com/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Claudex Stereo: plan, challenge, build, gate, and decide what ships"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://claudex-stereo.com/og.png" />
+    <meta name="twitter:title" content="Claudex Stereo — Code in stereo. Ship with confidence." />
+    <meta
+      name="twitter:description"
+      content="Claude plans. A second model challenges. Codex builds. A fresh reviewer gates the diff. You decide what ships."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='9' width='4.6' height='14' rx='2.3' fill='%23d97a1f'/%3E%3Crect x='10.4' y='5' width='4.6' height='22' rx='2.3' fill='%23d97a1f'/%3E%3Crect x='16.8' y='11' width='4.6' height='10' rx='2.3' fill='%233aa8bd'/%3E%3Crect x='23.2' y='7' width='4.6' height='18' rx='2.3' fill='%233aa8bd'/%3E%3C/svg%3E"
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Claudex Stereo",
+        "description": "A Claude Code plugin that pairs Claude and the OpenAI Codex CLI: adversarially reviewed planning, gated implementation, and an independent model choice for every role.",
+        "applicationCategory": "DeveloperApplication",
+        "url": "https://claudex-stereo.com/",
+        "sameAs": ["https://github.com/vsladkov/claudex-stereo"],
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "author": { "@type": "Person", "name": "Veselin Sladkov" },
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f4ee;
+        --surface: #fffefb;
+        --surface-2: #f0ebe1;
+        --ink: #211d16;
+        --muted: #6f6759;
+        --faint: #766d60;
+        --hairline: #e5dfd2;
+        --claude: #d97a1f;
+        --claude-deep: #b45309;
+        --claude-soft: rgba(217, 122, 31, 0.1);
+        --codex: #3aa8bd;
+        --codex-deep: #0e7490;
+        --codex-soft: rgba(58, 168, 189, 0.12);
+        --btn-bg: #211d16;
+        --btn-ink: #f7f4ee;
+        --term-bg: #16130d;
+        --term-ink: #e8e4da;
+        --term-muted: #8f8778;
+        --ok: #4d9e46;
+        --panel-line: #d9d1c3;
+        --shadow-sm: 0 1px 2px rgba(33, 29, 22, 0.05);
+        --shadow-md: 0 1px 2px rgba(33, 29, 22, 0.06), 0 16px 40px -28px rgba(33, 29, 22, 0.35);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #131109;
+          --surface: #1b1810;
+          --surface-2: #211d13;
+          --ink: #ede8dd;
+          --muted: #a49b8a;
+          --faint: #756d5d;
+          --hairline: #2c2719;
+          --claude: #e8a33d;
+          --claude-deep: #e8a33d;
+          --claude-soft: rgba(232, 163, 61, 0.1);
+          --codex: #3fc1d4;
+          --codex-deep: #3fc1d4;
+          --codex-soft: rgba(63, 193, 212, 0.1);
+          --btn-bg: #ede8dd;
+          --btn-ink: #16130d;
+          --term-bg: #0d0b07;
+          --ok: #7fbf6a;
+          --panel-line: #393323;
+          --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+          --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.45), 0 16px 40px -28px rgba(0, 0, 0, 0.7);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-padding-top: 4.6rem;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        html {
+          scroll-behavior: smooth;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          16px/1.65 system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      code,
+      pre,
+      .chip,
+      .wordsub,
+      .stepnum {
+        font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+      }
+      a {
+        color: inherit;
+        text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        text-decoration-color: currentColor;
+      }
+      :focus-visible {
+        outline: 2px solid var(--codex-deep);
+        outline-offset: 2px;
+        border-radius: 3px;
+      }
+      .shell {
+        max-width: 72rem;
+        margin-inline: auto;
+        padding-inline: 1.4rem;
+      }
+      @media (max-width: 34rem) {
+        .shell {
+          padding-inline: 1.1rem;
+        }
+      }
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+      .skip {
+        position: absolute;
+        left: -9999px;
+        top: 0;
+        z-index: 30;
+        background: var(--btn-bg);
+        color: var(--btn-ink);
+        padding: 0.6rem 1.1rem;
+        border-radius: 0 0 10px 0;
+        text-decoration: none;
+      }
+      .skip:focus {
+        left: 0;
+      }
+      svg {
+        display: block;
+      }
+
+      /* ---------- nav ---------- */
+      .site-nav {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: color-mix(in srgb, var(--bg) 86%, transparent);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--hairline);
+      }
+      .nav-inner {
+        max-width: 72rem;
+        margin: 0 auto;
+        padding: 0.6rem 1.4rem;
+        display: flex;
+        align-items: center;
+        gap: 1.4rem;
+      }
+      .lockup {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        text-decoration: none;
+      }
+      .wordmark {
+        line-height: 1.15;
+      }
+      .wordmark b {
+        display: block;
+        font-size: 0.92rem;
+        font-weight: 750;
+        letter-spacing: 0.08em;
+      }
+      .wordsub {
+        display: block;
+        font-size: 0.56rem;
+        letter-spacing: 0.32em;
+        color: var(--claude-deep);
+        font-weight: 600;
+      }
+      .nav-links {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 1.35rem;
+        font-size: 0.88rem;
+      }
+      .nav-links a {
+        text-decoration: none;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .nav-links a:hover {
+        color: var(--ink);
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        background: var(--btn-bg);
+        border: 1px solid var(--btn-bg);
+        border-radius: 10px;
+        padding: 0.5rem 1.05rem;
+        font-weight: 600;
+        font-size: 0.88rem;
+        text-decoration: none;
+      }
+      .nav-links a.btn,
+      .nav-links a.btn:hover,
+      .btn,
+      .btn:hover {
+        color: var(--btn-ink);
+      }
+      .btn:hover {
+        opacity: 0.88;
+      }
+      @media (max-width: 46rem) {
+        .nav-links a:not(.keep) {
+          display: none;
+        }
+      }
+      @media (max-width: 22rem) {
+        .wordsub {
+          display: none;
+        }
+        .wordmark b {
+          white-space: nowrap;
+          font-size: 0.8rem;
+          letter-spacing: 0.05em;
+        }
+        .nav-inner {
+          gap: 0.7rem;
+          padding-inline: 0.85rem;
+        }
+        .nav-links {
+          gap: 0.55rem;
+        }
+        .nav-links a.keep:not(.btn) {
+          display: none;
+        }
+      }
+
+      /* ---------- hero ---------- */
+      .hero {
+        display: grid;
+        grid-template-columns: 1fr 1.05fr;
+        gap: 3rem;
+        align-items: center;
+        padding-block: 4.2rem 3.4rem;
+      }
+      @media (max-width: 62rem) {
+        .hero {
+          grid-template-columns: 1fr;
+          gap: 2.6rem;
+          padding-block: 3rem 2.6rem;
+        }
+      }
+      .chips {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        border: 1px solid var(--hairline);
+        background: var(--surface);
+        border-radius: 999px;
+        padding: 0.32rem 0.9rem;
+        margin: 0 0 1.5rem;
+      }
+      .chip {
+        font-size: 0.66rem;
+        font-weight: 650;
+        letter-spacing: 0.13em;
+      }
+      .chip.c1 {
+        color: var(--codex-deep);
+      }
+      .chip.c2 {
+        color: var(--claude-deep);
+      }
+      .chips i {
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: var(--faint);
+      }
+      h1 {
+        font-size: clamp(2.5rem, 5.4vw, 3.6rem);
+        line-height: 1.08;
+        letter-spacing: -0.03em;
+        font-weight: 750;
+        margin: 0 0 1.15rem;
+        text-wrap: balance;
+      }
+      h1 em {
+        font-style: normal;
+        color: var(--claude-deep);
+      }
+      .hero-copy {
+        color: var(--muted);
+        font-size: 1.04rem;
+        max-width: 30rem;
+        margin: 0 0 1.7rem;
+        text-wrap: pretty;
+      }
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.7rem;
+        margin-bottom: 1.5rem;
+      }
+      @media (max-width: 30rem) {
+        .cta-row {
+          display: grid;
+        }
+        .cta-row > a {
+          justify-content: center;
+        }
+      }
+      .btn-lg {
+        padding: 0.72rem 1.35rem;
+        font-size: 0.95rem;
+        border-radius: 11px;
+      }
+      .btn-ghost {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        border: 1px solid var(--hairline);
+        background: var(--surface);
+        color: var(--ink);
+        border-radius: 11px;
+        padding: 0.72rem 1.3rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .btn-ghost:hover {
+        border-color: var(--faint);
+      }
+      .cred {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem 1.5rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .cred li {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+      }
+      .cred svg {
+        color: var(--claude-deep);
+      }
+
+      /* ---------- duo diagram ---------- */
+      .duo-heads {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 1.1rem;
+        padding: 0 0.2rem;
+      }
+      .duo-heads .h {
+        line-height: 1.25;
+      }
+      .duo-heads .h.x {
+        text-align: right;
+      }
+      .duo-heads b {
+        display: block;
+        font-size: 0.95rem;
+        font-weight: 750;
+        letter-spacing: 0.14em;
+      }
+      .duo-heads .h.c b {
+        color: var(--claude-deep);
+      }
+      .duo-heads .h.x b {
+        color: var(--codex-deep);
+      }
+      .duo-heads span {
+        font-size: 0.74rem;
+        color: var(--muted);
+      }
+      .duo-steps {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.65rem;
+        position: relative;
+      }
+      .duo-steps::before,
+      .duo-steps::after {
+        content: '';
+        position: absolute;
+        top: 0.4rem;
+        bottom: 0.4rem;
+        width: 2px;
+        border-radius: 2px;
+        z-index: -1;
+        background-size: 2px 14px;
+        animation: rail 1.4s linear infinite;
+      }
+      .duo-steps::before {
+        left: calc(1.3rem - 1px);
+        background-image: repeating-linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--claude) 55%, transparent) 0 6px,
+          transparent 6px 14px
+        );
+      }
+      .duo-steps::after {
+        right: calc(1.3rem - 1px);
+        background-image: repeating-linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--codex) 55%, transparent) 0 6px,
+          transparent 6px 14px
+        );
+      }
+      @keyframes rail {
+        to {
+          background-position: 0 14px;
+        }
+      }
+      .duo-steps li {
+        display: grid;
+        grid-template-columns: 2.6rem 1fr 2.6rem;
+        gap: 0.85rem;
+        align-items: center;
+      }
+      .med {
+        width: 2.6rem;
+        height: 2.6rem;
+        border-radius: 50%;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        box-shadow: var(--shadow-sm);
+        display: grid;
+        place-items: center;
+      }
+      .side-c .med {
+        color: var(--claude-deep);
+        grid-column: 1;
+      }
+      .side-x .med {
+        color: var(--codex-deep);
+        grid-column: 3;
+        grid-row: 1;
+      }
+      .duo-card {
+        grid-column: 2;
+        grid-row: 1;
+        position: relative;
+        background: var(--surface);
+        border: 1px solid var(--panel-line);
+        border-radius: 12px;
+        box-shadow: var(--shadow-md);
+        padding: 0.65rem 1rem 0.7rem;
+      }
+      .side-c .duo-card::before,
+      .side-x .duo-card::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        width: 0.85rem;
+        height: 0;
+      }
+      .side-c .duo-card::before {
+        left: -0.86rem;
+        border-top: 2px solid color-mix(in srgb, var(--claude) 45%, transparent);
+      }
+      .side-x .duo-card::after {
+        right: -0.86rem;
+        border-top: 2px dotted color-mix(in srgb, var(--codex) 55%, transparent);
+      }
+      .stepnum {
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+      .side-c .stepnum {
+        color: var(--claude-deep);
+      }
+      .side-x .stepnum {
+        color: var(--codex-deep);
+      }
+      .duo-card h3 {
+        margin: 0.05rem 0 0.1rem;
+        font-size: 0.95rem;
+        letter-spacing: -0.01em;
+      }
+      .duo-card p {
+        margin: 0;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .duo-card code {
+        font-size: 0.68rem;
+        color: var(--muted);
+      }
+      .duo-ship {
+        margin: 0.9rem auto 0;
+        width: fit-content;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        background: var(--surface);
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
+        box-shadow: var(--shadow-sm);
+        padding: 0.5rem 1.15rem;
+        font-size: 0.88rem;
+        font-weight: 600;
+      }
+      .duo-ship svg {
+        color: var(--ok);
+      }
+      @media (max-width: 34rem) {
+        .duo-steps::before,
+        .duo-steps::after {
+          display: none;
+        }
+        .duo-steps li {
+          grid-template-columns: 2.2rem 1fr;
+          gap: 0.7rem;
+        }
+        .side-c .med,
+        .side-x .med {
+          grid-column: 1;
+          width: 2.2rem;
+          height: 2.2rem;
+        }
+        .duo-card,
+        .side-x .duo-card {
+          grid-column: 2;
+        }
+        .side-c .duo-card::before,
+        .side-x .duo-card::after {
+          display: none;
+        }
+      }
+
+      /* ---------- quote band ---------- */
+      .band {
+        background: var(--surface-2);
+        border-radius: 16px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem 2.5rem;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.4rem 1.8rem;
+        margin: 0.6rem 0 0;
+      }
+      .band-quote {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+        max-width: 34rem;
+      }
+      .band-quote svg {
+        flex: none;
+        margin-top: 0.2rem;
+      }
+      .band-quote p {
+        margin: 0;
+        font-weight: 600;
+        font-size: 0.98rem;
+        line-height: 1.5;
+      }
+      .band-note {
+        color: var(--muted);
+        font-size: 0.85rem;
+        max-width: 22rem;
+        margin: 0;
+      }
+
+      /* ---------- sections ---------- */
+      section {
+        padding-block: 3.6rem;
+      }
+      section + section {
+        border-top: 1px solid var(--hairline);
+      }
+      h2 {
+        font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+        letter-spacing: -0.025em;
+        line-height: 1.15;
+        font-weight: 750;
+        margin: 0 0 0.9rem;
+        text-wrap: balance;
+      }
+      .lede {
+        color: var(--muted);
+        max-width: 42rem;
+        margin: 0 0 2rem;
+        text-wrap: pretty;
+      }
+      .lede code {
+        color: var(--ink);
+        font-size: 0.9em;
+      }
+
+      /* ---------- features ---------- */
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1.6rem 0;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .features li {
+        padding: 0.4rem 1.4rem;
+        border-left: 1px solid var(--hairline);
+      }
+      .features li:nth-child(3n + 1) {
+        border-left: none;
+        padding-left: 0;
+      }
+      .features svg {
+        color: var(--claude-deep);
+        margin-bottom: 0.55rem;
+      }
+      .features li:nth-child(even) svg {
+        color: var(--codex-deep);
+      }
+      .features h3 {
+        margin: 0 0 0.3rem;
+        font-size: 0.98rem;
+        letter-spacing: -0.01em;
+      }
+      .features p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.87rem;
+      }
+      @media (max-width: 52rem) {
+        .features {
+          grid-template-columns: 1fr 1fr;
+        }
+        .features li,
+        .features li:nth-child(3n + 1) {
+          border-left: none;
+          padding-left: 0;
+        }
+        .features li:nth-child(2n) {
+          border-left: 1px solid var(--hairline);
+          padding-left: 1.4rem;
+        }
+      }
+      @media (max-width: 30rem) {
+        .features {
+          grid-template-columns: 1fr;
+        }
+        .features li,
+        .features li:nth-child(2n) {
+          border-left: none;
+          padding-left: 0;
+        }
+      }
+
+      /* ---------- flows ---------- */
+      .flows {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.7rem;
+        list-style: none;
+        margin: 1.6rem 0 0;
+        padding: 0;
+      }
+      .flows li {
+        background: var(--surface);
+        border: 1px solid var(--panel-line);
+        border-radius: 12px;
+        box-shadow: var(--shadow-sm);
+        padding: 0.75rem 0.95rem;
+      }
+      .flows code {
+        font-size: 0.78rem;
+        font-weight: 650;
+      }
+      .flows p {
+        margin: 0.25rem 0 0;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+      @media (max-width: 52rem) {
+        .flows {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 30rem) {
+        .flows {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ---------- commands ---------- */
+      .cmds {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+        gap: 0.7rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .cmds li {
+        background: var(--surface);
+        border: 1px solid var(--panel-line);
+        border-radius: 12px;
+        box-shadow: var(--shadow-sm);
+        padding: 0.75rem 0.95rem;
+      }
+      .cmds a {
+        font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+        font-size: 0.82rem;
+        font-weight: 650;
+        text-decoration: none;
+      }
+      .cmds a:hover {
+        text-decoration: underline;
+      }
+      .cmds span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.84rem;
+        margin-top: 0.2rem;
+      }
+      @media (min-width: 64rem) {
+        .cmds {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+        .cmds li:nth-last-child(-n + 2) {
+          grid-column: span 2;
+        }
+      }
+
+      /* ---------- routing console ---------- */
+      .console {
+        background: var(--surface);
+        border: 1px solid var(--panel-line);
+        border-radius: 16px;
+        box-shadow: var(--shadow-md);
+        padding: 1.2rem 1.4rem;
+        margin: 0 0 1rem;
+      }
+      .console fieldset {
+        border: 0;
+        margin: 0;
+        padding: 0.5rem 0;
+      }
+      .console fieldset + fieldset {
+        border-top: 1px solid var(--hairline);
+      }
+      .console legend {
+        float: left;
+        width: 11.5rem;
+        padding: 0.28rem 0 0;
+        font-size: 0.8rem;
+        font-weight: 650;
+      }
+      .console label {
+        display: inline-block;
+        margin: 0 0.3rem 0.25rem 0;
+        cursor: pointer;
+      }
+      .console input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .console label span {
+        display: inline-block;
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 0.74rem;
+        border: 1px solid var(--hairline);
+        border-radius: 999px;
+        padding: 0.22rem 0.7rem;
+        color: var(--muted);
+      }
+      .console label.lc input:checked + span {
+        border-color: var(--claude);
+        background: var(--claude-soft);
+        color: var(--claude-deep);
+        font-weight: 650;
+      }
+      .console label.lx input:checked + span {
+        border-color: var(--codex);
+        background: var(--codex-soft);
+        color: var(--codex-deep);
+        font-weight: 650;
+      }
+      .console input:focus-visible + span {
+        outline: 2px solid var(--codex-deep);
+        outline-offset: 2px;
+      }
+      .console-note {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin: 0.8rem 0 1.6rem;
+        max-width: 42rem;
+      }
+      @media (max-width: 44rem) {
+        .console legend {
+          float: none;
+          width: auto;
+          padding: 0 0 0.35rem;
+        }
+      }
+
+      /* ---------- routing table ---------- */
+      .routing-defaults {
+        max-width: 46rem;
+        margin: 0 0 1.4rem;
+      }
+      .routing-defaults summary {
+        cursor: pointer;
+        font-weight: 650;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      .routing-defaults summary:hover {
+        color: var(--ink);
+      }
+      .routing-defaults[open] summary {
+        margin-bottom: 0.7rem;
+        color: var(--ink);
+      }
+      .rt {
+        overflow-x: auto;
+        margin: 0 0 1.4rem;
+        max-width: 46rem;
+      }
+      .rt table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 32rem;
+        font-size: 0.88rem;
+      }
+      .rt th,
+      .rt td {
+        text-align: left;
+        padding: 0.5rem 1rem 0.5rem 0;
+        border-bottom: 1px solid var(--hairline);
+      }
+      .rt th {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--muted);
+      }
+      .rt code {
+        font-size: 0.84em;
+      }
+      .rt .cc {
+        color: var(--claude-deep);
+        font-weight: 650;
+      }
+      .rt .cx {
+        color: var(--codex-deep);
+        font-weight: 650;
+      }
+
+      /* ---------- faq ---------- */
+      .faq {
+        display: grid;
+        gap: 0.7rem;
+        max-width: 46rem;
+      }
+      .faq details {
+        background: var(--surface);
+        border: 1px solid var(--panel-line);
+        border-radius: 12px;
+        box-shadow: var(--shadow-sm);
+        padding: 0.85rem 1.1rem;
+      }
+      .faq summary {
+        cursor: pointer;
+        font-weight: 650;
+        font-size: 0.95rem;
+      }
+      .faq p {
+        margin: 0.6rem 0 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      /* ---------- how ---------- */
+      .term {
+        background: var(--term-bg);
+        border: 1px solid color-mix(in srgb, var(--term-bg) 60%, var(--hairline));
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: var(--shadow-md);
+        margin: 0;
+      }
+      .term-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.55rem 1rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        color: var(--term-muted);
+        font-size: 0.72rem;
+        font-family: ui-monospace, Consolas, monospace;
+      }
+      .term-bar i {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.12);
+      }
+      .term pre {
+        margin: 0;
+        padding: 1rem 1.15rem 1.15rem;
+        overflow-x: auto;
+        font-size: 0.8rem;
+        line-height: 1.75;
+        color: var(--term-ink);
+      }
+      .term .c {
+        color: #e8a33d;
+      }
+      .term .x {
+        color: #3fc1d4;
+      }
+      .term .d {
+        color: var(--term-muted);
+      }
+      .term .ok {
+        color: #7fbf6a;
+      }
+      figure {
+        margin: 0;
+      }
+      @media (max-width: 34rem) {
+        .term {
+          position: relative;
+        }
+        .term::after {
+          content: '';
+          position: absolute;
+          top: 2.2rem;
+          right: 0;
+          bottom: 0;
+          width: 1.6rem;
+          background: linear-gradient(90deg, transparent, var(--term-bg));
+          pointer-events: none;
+        }
+        .rt {
+          position: relative;
+        }
+        .rt::after {
+          content: '';
+          position: absolute;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          width: 1.6rem;
+          background: linear-gradient(90deg, transparent, var(--bg));
+          pointer-events: none;
+        }
+      }
+      figcaption {
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin-top: 0.75rem;
+        max-width: 40rem;
+      }
+      .how-links {
+        margin: 1.6rem 0 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      /* ---------- why ---------- */
+      .why-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2.5rem;
+      }
+      @media (max-width: 52rem) {
+        .why-grid {
+          grid-template-columns: 1fr;
+          gap: 1rem;
+        }
+      }
+      .why-grid p {
+        margin: 0;
+        color: var(--muted);
+        text-wrap: pretty;
+      }
+      .why-grid strong {
+        color: var(--ink);
+      }
+      .why-grid code {
+        color: var(--ink);
+        font-size: 0.88em;
+      }
+
+      /* ---------- install ---------- */
+      .quickstart {
+        background: var(--surface);
+        border: 1px solid var(--panel-line);
+        border-radius: 16px;
+        box-shadow: var(--shadow-md);
+        padding: 1.8rem 1.9rem;
+        max-width: 44rem;
+      }
+      .quickstart h2 {
+        margin-top: 0;
+      }
+      .quickstart + .quickstart {
+        margin-top: 1rem;
+      }
+      #install .quickstart {
+        max-width: none;
+      }
+      #install .quickstart + .quickstart {
+        margin-top: 1rem;
+      }
+      /* First run becomes a compact horizontal band on wider screens. */
+      @media (min-width: 58rem) {
+        #install .quickstart:last-child {
+          display: grid;
+          grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.7fr);
+          gap: 0.55rem 2rem;
+          align-items: start;
+          background: color-mix(in srgb, var(--surface-2) 28%, var(--surface));
+          box-shadow: var(--shadow-sm);
+        }
+        #install .quickstart:last-child h3 {
+          grid-column: 1;
+          grid-row: 1;
+        }
+        #install .quickstart:last-child .cmd {
+          grid-column: 2;
+        }
+        #install .quickstart:last-child .cmd + .cmd {
+          margin-top: 0;
+        }
+        #install .quickstart:last-child .req {
+          grid-column: 1;
+          grid-row: 2 / span 3;
+          margin-top: 0.1rem;
+        }
+      }
+      .quickstart h3 {
+        margin: 0 0 0.9rem;
+        font-size: 1.15rem;
+        letter-spacing: -0.015em;
+      }
+      .fourbeat {
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 0.66rem;
+        letter-spacing: 0.18em;
+        color: var(--claude-deep);
+        margin: 0 0 0.6rem;
+      }
+      .cmd {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        background: var(--term-bg);
+        color: var(--term-ink);
+        border-radius: 10px;
+        padding: 0.72rem 0.95rem;
+        font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+        font-size: 0.83rem;
+      }
+      .cmd + .cmd {
+        margin-top: 0.55rem;
+      }
+      .cmd .p {
+        color: var(--term-muted);
+        user-select: none;
+      }
+      .cmd code {
+        white-space: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .cmd button {
+        margin-left: auto;
+        flex: none;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: transparent;
+        color: var(--term-muted);
+        border-radius: 6px;
+        font-family: inherit;
+        font-size: 0.72rem;
+        padding: 0.16rem 0.6rem;
+        cursor: pointer;
+      }
+      .cmd button:hover {
+        color: var(--term-ink);
+        border-color: var(--term-muted);
+      }
+      .cmd button.done {
+        color: #7fbf6a;
+        border-color: #7fbf6a;
+      }
+      .req {
+        color: var(--muted);
+        font-size: 0.88rem;
+        margin: 1.2rem 0 0;
+        text-wrap: pretty;
+      }
+      .req code {
+        color: var(--ink);
+      }
+
+      footer {
+        border-top: 1px solid var(--hairline);
+        padding: 2rem 0 3.2rem;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+      .foot {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+        gap: 1.5rem 3rem;
+      }
+      .foot-brand {
+        display: grid;
+        gap: 0.35rem;
+        max-width: 38rem;
+      }
+      .foot-brand p {
+        margin: 0;
+      }
+      .foot-name {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        width: fit-content;
+        color: var(--ink);
+        font-weight: 750;
+        letter-spacing: 0.02em;
+        text-decoration: none;
+      }
+      .foot-name:hover {
+        text-decoration: underline;
+      }
+      .foot-links {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0.6rem 1.35rem;
+      }
+      .foot-links a {
+        text-decoration: none;
+      }
+      .foot-links a:hover {
+        text-decoration: underline;
+      }
+      @media (max-width: 44rem) {
+        .foot {
+          grid-template-columns: 1fr;
+        }
+        .foot-links {
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#content">Skip to content</a>
+    <nav class="site-nav" aria-label="Primary navigation">
+      <div class="nav-inner">
+        <a class="lockup" href="#top" aria-label="Claudex Stereo — back to top">
+          <svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true">
+            <rect x="4" y="9" width="4.6" height="14" rx="2.3" fill="var(--claude)" />
+            <rect x="10.4" y="5" width="4.6" height="22" rx="2.3" fill="var(--claude)" />
+            <rect x="16.8" y="11" width="4.6" height="10" rx="2.3" fill="var(--codex)" />
+            <rect x="23.2" y="7" width="4.6" height="18" rx="2.3" fill="var(--codex)" />
+          </svg>
+          <span class="wordmark">
+            <b>CLAUDEX STEREO</b>
+            <span class="wordsub">AS ONE SIGNAL</span>
+          </span>
+        </a>
+        <div class="nav-links">
+          <a href="#why">Why stereo</a>
+          <a href="#how">How it works</a>
+          <a
+            href="https://github.com/vsladkov/claudex-stereo/blob/main/README.md"
+            target="_blank"
+            rel="noopener"
+            >Docs</a
+          >
+          <a
+            class="keep"
+            href="https://github.com/vsladkov/claudex-stereo"
+            target="_blank"
+            rel="noopener"
+            >GitHub</a
+          >
+          <a class="btn keep" href="#install">Install</a>
+        </div>
+      </div>
+    </nav>
+
+    <main id="content">
+      <header class="shell hero" id="top">
+        <div>
+          <p class="chips">
+            <span class="chip c1">CLAUDE CODE PLUGIN</span>
+            <i aria-hidden="true"></i>
+            <span class="chip c2">OPEN SOURCE</span>
+          </p>
+          <h1>Code in <em>stereo.</em><br />Ship with <em>confidence.</em></h1>
+          <p class="hero-copy">
+            Claude plans. A second model challenges. Codex builds. A fresh reviewer gates the diff.
+            You decide what ships.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-lg" href="#install">
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 21h16" />
+              </svg>
+              Install Claudex Stereo
+            </a>
+            <a class="btn-ghost" href="#how">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 4v16m0 0 6-6m-6 6-6-6" />
+              </svg>
+              See a session
+            </a>
+          </div>
+          <ul class="cred">
+            <li>
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <path
+                  d="M12 3v18M4 7h16M6 7l-3 6a3.5 3.5 0 0 0 7 0zM18 7l-3 6a3.5 3.5 0 0 0 7 0z"
+                />
+              </svg>
+              Apache-2.0
+            </li>
+            <li>
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M13 2.5 4.5 13.5H11l-1 8 9.5-11H13z" />
+              </svg>
+              Durable Codex jobs
+            </li>
+            <li>
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <circle cx="7" cy="12" r="3.6" />
+                <circle cx="17" cy="12" r="3.6" />
+                <path d="M10.6 12h2.8" />
+              </svg>
+              Per-role model choice
+            </li>
+          </ul>
+        </div>
+
+        <div class="workflow-visual" role="group" aria-labelledby="pair-workflow-title">
+          <h2 id="pair-workflow-title" class="visually-hidden">The pair workflow</h2>
+          <div class="duo-heads" aria-hidden="true">
+            <div class="h c"><b>CLAUDE</b><span>Plan · Challenge · Gate</span></div>
+            <div class="h x"><b>CODEX</b><span>Build</span></div>
+          </div>
+          <ol class="duo-steps">
+            <li class="side-c">
+              <span class="med" aria-hidden="true">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17zM13.5 6.5l3 3" />
+                </svg>
+              </span>
+              <div class="duo-card">
+                <span class="stepnum">01 · PLAN</span>
+                <h3>Claude drafts the plan</h3>
+                <p>
+                  A contained planner explores the repository read-only. <code>claude:opus</code>
+                </p>
+              </div>
+            </li>
+            <li class="side-c">
+              <span class="med" aria-hidden="true">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M9 9a3 3 0 1 1 4.2 2.8c-.9.4-1.2 1-1.2 2.2m0 3.5v.1" />
+                  <circle cx="12" cy="12" r="9.2" />
+                </svg>
+              </span>
+              <div class="duo-card">
+                <span class="stepnum">02 · CHALLENGE</span>
+                <h3>A second model challenges assumptions</h3>
+                <p>Adversarial review through bounded revision rounds. <code>claude:fable</code></p>
+              </div>
+            </li>
+            <li class="side-x">
+              <span class="med" aria-hidden="true">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="m12 2.5 8 4.5v10l-8 4.5L4 17V7zM4 7l8 4.5M20 7l-8 4.5m0 10v-10" />
+                </svg>
+              </span>
+              <div class="duo-card">
+                <span class="stepnum">03 · BUILD</span>
+                <h3>Codex builds in a workspace-write task</h3>
+                <p>
+                  Repository checks run before the review gate.
+                  <code>codex:sol @ max</code>
+                </p>
+              </div>
+            </li>
+            <li class="side-c">
+              <span class="med" aria-hidden="true">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 2.8 19.5 6v5.6c0 4.6-3.1 8.2-7.5 9.6-4.4-1.4-7.5-5-7.5-9.6V6z" />
+                  <path d="m8.8 12 2.2 2.2 4.2-4.2" />
+                </svg>
+              </span>
+              <div class="duo-card">
+                <span class="stepnum">04 · GATE</span>
+                <h3>A fresh reviewer gates the diff</h3>
+                <p>The gate runs outside the session. <code>claude:fable</code></p>
+              </div>
+            </li>
+          </ol>
+          <div class="duo-ship">
+            <svg
+              width="17"
+              height="17"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="9.2" />
+              <path d="m8.5 12.2 2.4 2.4 4.8-4.8" />
+            </svg>
+            You decide what ships
+          </div>
+        </div>
+      </header>
+
+      <div class="shell">
+        <div class="band">
+          <div class="band-quote">
+            <svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true">
+              <rect x="4" y="9" width="4.6" height="14" rx="2.3" fill="var(--claude-deep)" />
+              <rect x="10.4" y="5" width="4.6" height="22" rx="2.3" fill="var(--claude-deep)" />
+              <rect x="16.8" y="11" width="4.6" height="10" rx="2.3" fill="var(--codex-deep)" />
+              <rect x="23.2" y="7" width="4.6" height="18" rx="2.3" fill="var(--codex-deep)" />
+            </svg>
+            <p>Built with itself — planned, challenged, built, and gated with Claudex Stereo.</p>
+          </div>
+          <p class="band-note">The reviewed plan and its findings persist across phases.</p>
+        </div>
+      </div>
+
+      <section class="shell" id="why">
+        <h2>Self-review is not independent review.</h2>
+        <div class="why-grid">
+          <div>
+            <p>
+              A model reviewing its own plan reads its own work generously — same context, same
+              blind spots, same assumptions. Claudex Stereo makes disagreement the default:
+              <strong>plans are drafted by one contained model and attacked by another</strong>, and
+              implementations pass a fresh gate, independent of the orchestrating session, before
+              you ever look at a diff.
+            </p>
+          </div>
+          <div>
+            <p>
+              <strong>Review loops are bounded and visible.</strong> They consume real usage on both
+              sides — control time and spend with <code>--max-plan-rounds</code> and
+              <code>--max-fix-rounds</code>, and route any role to a different model with one flag.
+              See
+              <a
+                href="https://github.com/vsladkov/claudex-stereo#model-routing-reference"
+                target="_blank"
+                rel="noopener"
+                >model routing</a
+              >
+              and the
+              <a
+                href="https://github.com/vsladkov/claudex-stereo#deliberate-boundaries"
+                target="_blank"
+                rel="noopener"
+                >deliberate boundaries</a
+              >.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="shell" id="how">
+        <h2>Plan. Challenge. Build. Gate.</h2>
+        <p class="lede">
+          <code>/stereo:plan</code> drafts a plan and runs a bounded adversarial review loop toward
+          approval. By default, <code>/stereo:implement</code> builds that plan behind a
+          session-independent review gate. <code>/stereo:quick</code> collapses both commands into
+          one for small tasks.
+        </p>
+        <figure>
+          <div class="term">
+            <div class="term-bar"><i></i><i></i><i></i>&nbsp; claude — ~/dev/api</div>
+            <pre><span class="d">&gt;</span> /stereo:plan add rate limiting to the public API
+<span class="c">◆ planner claude:opus</span> <span class="d">— drafting (read-only)…</span>
+<span class="c">◆ plan-reviewer claude:fable</span> <span class="d">— round 1: needs-revision · 3 findings</span>
+<span class="c">◆ plan-reviewer claude:fable</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
+<span class="ok">✓</span> plan stored <span class="d">— run /stereo:implement</span>
+
+<span class="d">&gt;</span> /stereo:implement
+<span class="x">◆ implementer codex:sol @ max</span> <span class="d">— 14 files changed</span>
+<span class="d">◆ host checks — tests</span> <span class="ok">✓</span> <span class="d">lint</span> <span class="ok">✓</span> <span class="d">typecheck</span> <span class="ok">✓</span>
+<span class="c">◆ implementation-reviewer claude:fable</span> <span class="d">— acceptable · 0 fixes</span>
+<span class="ok">✓</span> done <span class="d">— nothing committed; review and commit yourself</span></pre>
+          </div>
+          <figcaption>
+            Schematic session. Every role shown is a flag away from a different model — Claude,
+            Codex, or a third-party provider through your own Codex configuration.
+          </figcaption>
+        </figure>
+        <ul class="flows" aria-label="Typical flows">
+          <li>
+            <code>/stereo:review</code>
+            <p>Review before shipping — Codex&rsquo;s built-in reviewer on your tree or branch.</p>
+          </li>
+          <li>
+            <code>/stereo:rescue</code>
+            <p>Hand an investigation or a fix straight to Codex.</p>
+          </li>
+          <li>
+            <code>/stereo:quick</code>
+            <p>From plan to gated diff in a single run.</p>
+          </li>
+          <li>
+            <code>--background</code>
+            <p>
+              Long work as durable Codex jobs — check in with <code>/stereo:status</code> and reopen
+              runs in Codex. Claude agent runs stay session-bound.
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="shell" id="features">
+        <h2>Built for real repository work.</h2>
+        <p class="lede">
+          Contained agents, durable state, and honest gates: the mechanics under the pair workflow.
+        </p>
+        <ul class="features">
+          <li>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <circle cx="7" cy="12" r="3.6" />
+              <circle cx="17" cy="12" r="3.6" />
+              <path d="M10.6 12h2.8" />
+            </svg>
+            <h3>Per-role model routing</h3>
+            <p>
+              Every role has its own configurable model — Claude, Codex, or a third-party provider.
+            </p>
+          </li>
+          <li>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <ellipse cx="12" cy="6" rx="7.5" ry="3" />
+              <path
+                d="M4.5 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3V6M4.5 12v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6"
+              />
+            </svg>
+            <h3>Review findings persist</h3>
+            <p>
+              Review findings are stored with the plan and travel into implementation and its gate.
+            </p>
+          </li>
+          <li>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M13 2.5 4.5 13.5H11l-1 8 9.5-11H13z" />
+            </svg>
+            <h3>Durable background jobs</h3>
+            <p>Long Codex runs survive turn boundaries, with logs and <code>codex resume</code>.</p>
+          </li>
+          <li>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+              <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+            </svg>
+            <h3>You own the commit</h3>
+            <p>
+              The pair workflow stops at the reviewed delta — committing and pushing stay yours.
+            </p>
+          </li>
+          <li>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+              <circle cx="12" cy="12" r="2.8" />
+            </svg>
+            <h3>Optional review gate</h3>
+            <p>
+              A Stop hook can review Claude&rsquo;s response and block completion until issues are
+              addressed. Turn it on with <code>/stereo:setup</code>, and only while you are actively
+              monitoring.
+            </p>
+          </li>
+          <li>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18M12 3c2.8 2.6 2.8 15.4 0 18-2.8-2.6-2.8-15.4 0-18z" />
+            </svg>
+            <h3>Bring your own provider</h3>
+            <p>
+              Route <code>codex:kimi</code>, <code>codex:qwen</code>, <code>codex:deepseek</code>,
+              or <code>codex:glm</code> through your own Codex configuration (Responses API); probe
+              compatibility before implementation work.
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="shell" id="commands">
+        <h2>Twelve commands, one namespace.</h2>
+        <p class="lede">
+          The pair workflow, both review styles, Codex delegation, session transfer, background
+          jobs, and setup. Every command is documented in depth in the
+          <a href="https://github.com/vsladkov/claudex-stereo" target="_blank" rel="noopener"
+            >README</a
+          >.
+        </p>
+        <ul class="cmds">
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereoplan"
+              target="_blank"
+              rel="noopener"
+              >/stereo:plan</a
+            >
+            <span>draft and adversarially review a plan through bounded revision rounds</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereoimplement"
+              target="_blank"
+              rel="noopener"
+              >/stereo:implement</a
+            >
+            <span>implement the reviewed plan behind a separately routed review gate</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereoquick"
+              target="_blank"
+              rel="noopener"
+              >/stereo:quick</a
+            >
+            <span>the whole cycle in one command for small tasks</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereoreview"
+              target="_blank"
+              rel="noopener"
+              >/stereo:review</a
+            >
+            <span>Codex&rsquo;s built-in review of your working tree or branch</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereoadversarial-review"
+              target="_blank"
+              rel="noopener"
+              >/stereo:adversarial-review</a
+            >
+            <span>steerable challenge review, Claude- or Codex-routed</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereoplan-state"
+              target="_blank"
+              rel="noopener"
+              >/stereo:plan-state</a
+            >
+            <span>inspect the stored plan and its findings between phases</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereorescue"
+              target="_blank"
+              rel="noopener"
+              >/stereo:rescue</a
+            >
+            <span>hand an investigation or fix directly to Codex</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereotransfer"
+              target="_blank"
+              rel="noopener"
+              >/stereo:transfer</a
+            >
+            <span>continue this Claude Code session inside Codex</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#background-jobs"
+              target="_blank"
+              rel="noopener"
+              >/stereo:status · result · cancel</a
+            >
+            <span>durable background jobs that survive turn boundaries</span>
+          </li>
+          <li>
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#stereosetup"
+              target="_blank"
+              rel="noopener"
+              >/stereo:setup</a
+            >
+            <span>readiness, provider configuration, and the optional review gate</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="shell" id="routing">
+        <h2>Every role is a flag.</h2>
+        <p class="lede">
+          One addressing convention. <code>claude:*</code> names the closed Claude Code set:
+          <code>session</code>, <code>inherit</code>, <code>sonnet</code>, <code>opus</code>,
+          <code>haiku</code>, <code>fable</code>. Everything else routes through the Codex runtime —
+          registry aliases, raw model ids, or qualified <code>model@provider</code> selections,
+          written here with the optional <code>codex:</code> prefix.
+        </p>
+        <form class="console" id="rc" aria-label="Compose a pair-workflow command">
+          <fieldset>
+            <legend>Planner</legend>
+            <label class="lc">
+              <input type="radio" name="planner" value="claude:opus" checked />
+              <span>claude:opus</span>
+            </label>
+            <label class="lc">
+              <input type="radio" name="planner" value="claude:session" />
+              <span>claude:session</span>
+            </label>
+            <label class="lc">
+              <input type="radio" name="planner" value="claude:fable" />
+              <span>claude:fable</span>
+            </label>
+            <label class="lx">
+              <input type="radio" name="planner" value="codex:sol" />
+              <span>codex:sol</span>
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Plan reviewer</legend>
+            <label class="lc">
+              <input type="radio" name="plan-reviewer" value="claude:fable" checked />
+              <span>claude:fable</span>
+            </label>
+            <label class="lc">
+              <input type="radio" name="plan-reviewer" value="claude:opus" />
+              <span>claude:opus</span>
+            </label>
+            <label class="lx">
+              <input type="radio" name="plan-reviewer" value="codex:sol" />
+              <span>codex:sol</span>
+            </label>
+            <label class="lx">
+              <input type="radio" name="plan-reviewer" value="codex:glm" />
+              <span>codex:glm</span>
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Implementer</legend>
+            <label class="lx">
+              <input type="radio" name="implementer" value="codex:sol" checked />
+              <span>codex:sol</span>
+            </label>
+            <label class="lx">
+              <input type="radio" name="implementer" value="codex:spark" />
+              <span>codex:spark</span>
+            </label>
+            <label class="lc">
+              <input type="radio" name="implementer" value="claude:sonnet" />
+              <span>claude:sonnet</span>
+            </label>
+            <label class="lx">
+              <input type="radio" name="implementer" value="codex:kimi" />
+              <span>codex:kimi</span>
+            </label>
+          </fieldset>
+          <fieldset>
+            <legend>Implementation reviewer</legend>
+            <label class="lc">
+              <input type="radio" name="implementation-reviewer" value="claude:fable" checked />
+              <span>claude:fable</span>
+            </label>
+            <label class="lc">
+              <input type="radio" name="implementation-reviewer" value="claude:session" />
+              <span>claude:session</span>
+            </label>
+            <label class="lc">
+              <input type="radio" name="implementation-reviewer" value="claude:opus" />
+              <span>claude:opus</span>
+            </label>
+            <label class="lx">
+              <input type="radio" name="implementation-reviewer" value="codex:sol" />
+              <span>codex:sol</span>
+            </label>
+          </fieldset>
+        </form>
+        <div class="console-out" aria-live="polite">
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code id="rc-plan">/stereo:plan &lt;task&gt;</code>
+            <button
+              type="button"
+              id="rc-copy"
+              data-copy="/stereo:plan <task>&#10;/stereo:implement"
+              aria-label="Copy the composed commands"
+            >
+              copy
+            </button>
+          </div>
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code id="rc-impl">/stereo:implement</code>
+          </div>
+        </div>
+        <p class="console-note">
+          Amber chips route to Claude, cyan to the Codex runtime. The <code>codex:</code> prefix is
+          optional in commands, and tool output prints resolved model ids (<code>codex:sol</code>
+          runs <code>gpt-5.6-sol</code>). Flags matching the defaults are omitted, so the default
+          selection is just the two bare commands. A Codex plan reviewer becomes the stored
+          implementer default, while Claude-reviewed plans fall back to <code>codex:sol</code>.
+          <code>claude:session</code> is not offered for the implementer — Claude writes always run
+          in the contained file-edit agent. Trust a third-party provider with implementation work
+          only after a small <code>--plan-reviewer codex:&lt;alias&gt;</code> round.
+        </p>
+        <details class="routing-defaults">
+          <summary>View the default model matrix</summary>
+          <div class="rt">
+            <table>
+              <caption class="visually-hidden">
+                Default model for each role per command
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Role</th>
+                  <th scope="col">/stereo:plan + /stereo:implement</th>
+                  <th scope="col">/stereo:quick</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Planner</td>
+                  <td><code class="cc">claude:opus</code></td>
+                  <td><code class="cc">claude:session</code></td>
+                </tr>
+                <tr>
+                  <td>Plan reviewer</td>
+                  <td><code class="cc">claude:fable</code></td>
+                  <td><code class="cc">claude:fable</code></td>
+                </tr>
+                <tr>
+                  <td>Implementer</td>
+                  <td>stored model, else <code class="cx">codex:sol</code> at <code>max</code></td>
+                  <td>
+                    <code class="cx">codex:sol</code> at <code>max</code> after a Claude review;
+                    otherwise the stored Codex plan-review model and effort
+                  </td>
+                </tr>
+                <tr>
+                  <td>Implementation reviewer</td>
+                  <td><code class="cc">claude:fable</code></td>
+                  <td><code class="cc">claude:fable</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+        <p class="how-links">
+          Aliases, prefix semantics, effort rules, and reviewer continuation live in the
+          README&rsquo;s
+          <a
+            href="https://github.com/vsladkov/claudex-stereo#model-routing-primer"
+            target="_blank"
+            rel="noopener"
+            >routing primer</a
+          >
+          and
+          <a
+            href="https://github.com/vsladkov/claudex-stereo#model-routing-reference"
+            target="_blank"
+            rel="noopener"
+            >routing reference</a
+          >; third-party providers under
+          <a
+            href="https://github.com/vsladkov/claudex-stereo#other-model-providers"
+            target="_blank"
+            rel="noopener"
+            >other model providers</a
+          >.
+        </p>
+      </section>
+
+      <section class="shell" id="faq">
+        <h2>FAQ</h2>
+        <div class="faq">
+          <details>
+            <summary>Do I need a separate Codex account?</summary>
+            <p>
+              No — the plugin uses your local Codex CLI sign-in. If you have not used Codex yet,
+              sign in once with a ChatGPT account or an API key; a configured custom provider and
+              its environment key can satisfy runtime authentication instead.
+              <code>/stereo:setup</code> checks readiness.
+              <a
+                href="https://github.com/vsladkov/claudex-stereo#do-i-need-a-separate-codex-account-for-this-plugin"
+                target="_blank"
+                rel="noopener"
+                >More →</a
+              >
+            </p>
+          </details>
+          <details>
+            <summary>Does it run a separate Codex runtime?</summary>
+            <p>
+              No — it delegates through the same local Codex CLI and app server you would use
+              directly: same install, same authentication, same repository checkout.
+              <a
+                href="https://github.com/vsladkov/claudex-stereo#does-the-plugin-use-a-separate-codex-runtime"
+                target="_blank"
+                rel="noopener"
+                >More →</a
+              >
+            </p>
+          </details>
+          <details>
+            <summary>Will it use my existing Codex config and API keys?</summary>
+            <p>
+              Yes — it picks up your <code>config.toml</code>, sign-in method, and any custom
+              base-URL setup unchanged.
+              <a
+                href="https://github.com/vsladkov/claudex-stereo#will-it-use-my-existing-codex-config-and-api-keys"
+                target="_blank"
+                rel="noopener"
+                >More →</a
+              >
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="shell" id="install">
+        <div class="quickstart">
+          <p class="fourbeat" aria-hidden="true">PLAN · CHALLENGE · BUILD · GATE</p>
+          <h2>Install Claudex Stereo.</h2>
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code>/plugin marketplace add vsladkov/claudex-stereo</code>
+            <button
+              type="button"
+              data-copy="/plugin marketplace add vsladkov/claudex-stereo"
+              aria-label="Copy the marketplace add command"
+            >
+              copy
+            </button>
+          </div>
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code>/plugin install stereo@claudex-stereo</code>
+            <button
+              type="button"
+              data-copy="/plugin install stereo@claudex-stereo"
+              aria-label="Copy the install command"
+            >
+              copy
+            </button>
+          </div>
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code>/reload-plugins</code>
+            <button
+              type="button"
+              data-copy="/reload-plugins"
+              aria-label="Copy the reload plugins command"
+            >
+              copy
+            </button>
+          </div>
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code>/stereo:setup</code>
+            <button type="button" data-copy="/stereo:setup" aria-label="Copy the setup command">
+              copy
+            </button>
+          </div>
+          <p class="req">
+            Requires Claude Code with plugin support, Node.js 24+, a signed-in
+            <a href="https://developers.openai.com/codex/cli/" target="_blank" rel="noopener"
+              >Codex CLI</a
+            >
+            or a configured custom provider — <code>/stereo:setup</code> checks runtime readiness,
+            authentication, provider configuration, sandbox state, and the review gate. The default
+            pipeline also needs a harness exposing named <code>opus</code> and
+            <code>fable</code> models. Anything OpenAI-backed counts against your Codex usage
+            limits. Details under
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#requirements"
+              target="_blank"
+              rel="noopener"
+              >requirements</a
+            >.
+          </p>
+          <p class="req">
+            Something not working? Run <code>/stereo:setup</code> first, then see
+            <a
+              href="https://github.com/vsladkov/claudex-stereo#troubleshooting"
+              target="_blank"
+              rel="noopener"
+              >troubleshooting</a
+            >
+            — thread reservations, sandbox prerequisites, and per-role escape hatches.
+          </p>
+        </div>
+        <div class="quickstart">
+          <h3>A safe first run</h3>
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code>/stereo:review --background</code>
+            <button
+              type="button"
+              data-copy="/stereo:review --background"
+              aria-label="Copy the background review command"
+            >
+              copy
+            </button>
+          </div>
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code>/stereo:status</code>
+            <button type="button" data-copy="/stereo:status" aria-label="Copy the status command">
+              copy
+            </button>
+          </div>
+          <div class="cmd">
+            <span class="p">&gt;</span>
+            <code>/stereo:result</code>
+            <button type="button" data-copy="/stereo:result" aria-label="Copy the result command">
+              copy
+            </button>
+          </div>
+          <p class="req">
+            A read-only review of your current work: it runs on Codex and counts against Codex
+            usage, while <code>/stereo:status</code> and <code>/stereo:result</code> read local job
+            state and consume no model budget.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="shell foot">
+        <div class="foot-brand">
+          <a class="foot-name" href="#top">
+            <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+              <rect x="4" y="9" width="4.6" height="14" rx="2.3" fill="var(--claude-deep)" />
+              <rect x="10.4" y="5" width="4.6" height="22" rx="2.3" fill="var(--claude-deep)" />
+              <rect x="16.8" y="11" width="4.6" height="10" rx="2.3" fill="var(--codex-deep)" />
+              <rect x="23.2" y="7" width="4.6" height="18" rx="2.3" fill="var(--codex-deep)" />
+            </svg>
+            Claudex Stereo
+          </a>
+          <p>Claude and the Codex CLI as one signal.</p>
+        </div>
+        <nav class="foot-links" aria-label="Footer navigation">
+          <a href="https://github.com/vsladkov/claudex-stereo" target="_blank" rel="noopener"
+            >GitHub</a
+          >
+          <a
+            href="https://github.com/vsladkov/claudex-stereo/blob/main/README.md"
+            target="_blank"
+            rel="noopener"
+            >Docs</a
+          >
+          <a
+            href="https://github.com/vsladkov/claudex-stereo/blob/main/plugins/stereo/CHANGELOG.md"
+            target="_blank"
+            rel="noopener"
+            >Changelog</a
+          >
+          <a href="https://github.com/vsladkov/claudex-stereo/issues" target="_blank" rel="noopener"
+            >Issues</a
+          >
+          <a
+            href="https://github.com/vsladkov/claudex-stereo/blob/main/LICENSE"
+            target="_blank"
+            rel="noopener"
+            >License</a
+          >
+        </nav>
+      </div>
+    </footer>
+
+    <span class="visually-hidden" aria-live="polite" id="copy-live"></span>
+    <script>
+      const rcForm = document.getElementById('rc');
+      if (rcForm) {
+        const defaults = {
+          planner: 'claude:opus',
+          'plan-reviewer': 'claude:fable',
+          'implementation-reviewer': 'claude:fable',
+        };
+        const planOut = document.getElementById('rc-plan');
+        const implOut = document.getElementById('rc-impl');
+        const copyBtn = document.getElementById('rc-copy');
+        const render = () => {
+          const data = new FormData(rcForm);
+          const flag = (name) => {
+            const value = data.get(name);
+            return value === defaults[name] ? '' : ` --${name} ${value}`;
+          };
+          // A Codex plan reviewer stores its model as the implementation default;
+          // Claude-reviewed plans store none, so /stereo:implement falls back to sol.
+          const planReviewer = data.get('plan-reviewer');
+          const implementer = data.get('implementer');
+          const storedDefault = planReviewer.startsWith('claude:') ? 'codex:sol' : planReviewer;
+          const implementerFlag =
+            implementer === storedDefault ? '' : ` --implementer ${implementer}`;
+          const plan = `/stereo:plan${flag('planner')}${flag('plan-reviewer')} <task>`;
+          const impl = `/stereo:implement${implementerFlag}${flag('implementation-reviewer')}`;
+          planOut.textContent = plan;
+          implOut.textContent = impl;
+          copyBtn.dataset.copy = `${plan}\n${impl}`;
+        };
+        rcForm.addEventListener('change', render);
+        render();
+      }
+
+      const live = document.getElementById('copy-live');
+      document.querySelectorAll('button[data-copy]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(btn.dataset.copy);
+            btn.textContent = '✓ copied';
+            btn.classList.add('done');
+            live.textContent = 'Command copied to clipboard';
+            setTimeout(() => {
+              btn.textContent = 'copy';
+              btn.classList.remove('done');
+              live.textContent = '';
+            }, 1600);
+          } catch {
+            btn.textContent = 'select & copy';
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

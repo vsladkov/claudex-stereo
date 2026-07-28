@@ -186,7 +186,7 @@ test('renderSetupReport prints the active and configured provider key status', (
   });
 
   assert.match(output, /- Model provider: openai \(default\)/);
-  assert.match(output, /- Custom provider moonshot \(kimi → kimi-k3\): MOONSHOT_API_KEY set/);
+  assert.match(output, /- Custom provider moonshot \(codex:kimi → kimi-k3\): MOONSHOT_API_KEY set/);
 });
 
 test('renderSetupReport renders sparse rate-limit windows and warnings defensively', () => {

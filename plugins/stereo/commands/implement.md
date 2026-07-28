@@ -19,7 +19,7 @@ Raw slash-command arguments:
 After reading the routing skill, parse all arguments before loading state:
 
 - `--implementer <model>` selects the implementer. When absent, use the stored Codex model; if it
-  is null, use `sol`.
+  is null, use `codex:sol`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer.
 - `--implementation-reviewer <model>` selects the implementation reviewer and defaults to
@@ -38,8 +38,8 @@ After reading the routing skill, parse all arguments before loading state:
 
 Reject missing values, duplicates, positionals, invalid effort/round values, unknown flags,
 unknown `claude:*` values, and both mode flags together. Accept `claude:inherit` alongside
-`claude:session` and the four explicit Claude aliases. Accept an optional `codex:` prefix on a
-Codex selection and reject `codex:claude:*`. The removed implementer `--model` and `--review-model`
+`claude:session` and the four explicit Claude aliases. Accept a Codex selection with or without
+the `codex:` prefix and reject `codex:claude:*`. The removed implementer `--model` and `--review-model`
 flags are unknown; report the role-named replacements.
 The renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
 `--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements.
@@ -55,7 +55,7 @@ For Codex implementation, resolve effort as `--implementer-effort` > command-wid
 stored effort > the selected model's pair default. Either effort flag replaces the stored effort.
 If the user overrides the implementer model while supplying neither effort flag, clear the stored
 effort because it belonged to the old model, then use the new model's pair default. When both
-stored values are null, use `sol` and the user's matching role/command effort or `max`. Omit a
+stored values are null, use `codex:sol` and the user's matching role/command effort or `max`. Omit a
 null effort. For a Codex implementation reviewer, resolve `--implementation-reviewer-effort` >
 command-wide `--effort` > the routing skill's pair default.
 
@@ -148,7 +148,7 @@ If the selected implementer is Claude, scan the stored plan's `## Step-by-step c
 edit for commands beyond the fixed host verification gates: version bumps, package installation,
 code generation, migrations, or interactive/long-running processes. If present, ask:
 
-- Switch to canonical Codex `sol` with the user's effort or `max` (recommended).
+- Switch to the canonical `codex:sol` implementer with the user's effort or `max` (recommended).
 - Continue with file edits only and leave each command step user-owned.
 - Stop.
 

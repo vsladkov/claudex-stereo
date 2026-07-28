@@ -807,7 +807,7 @@ export function renderSetupReport(report: SetupRenderReport): string {
   const configuredProviderLines = report.providers.configured.map((provider) => {
     const aliases = report.providers.aliases
       .filter((entry) => entry.providerId === provider.id)
-      .map((entry) => `${entry.alias} → ${entry.model}`);
+      .map((entry) => `codex:${entry.alias} → ${entry.model}`);
     const aliasSuffix = aliases.length > 0 ? ` (${aliases.join(', ')})` : '';
     const keyStatus = provider.envKey
       ? `${provider.envKey} ${provider.keySet ? 'set' : 'missing'}`

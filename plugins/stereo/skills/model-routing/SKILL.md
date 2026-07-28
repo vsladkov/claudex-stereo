@@ -14,23 +14,24 @@ wording here.
 
 Interpret selections as follows:
 
-| Selection           | Route                                                                                        |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| `claude:session`    | Run inline in the current Claude session                                                     |
-| `claude:inherit`    | Run the named foreground agent with the `model` parameter omitted                            |
-| `claude:sonnet`     | Run the named foreground agent with `model: "sonnet"`                                        |
-| `claude:opus`       | Run the named foreground agent with `model: "opus"`                                          |
-| `claude:haiku`      | Run the named foreground agent with `model: "haiku"`                                         |
-| `claude:fable`      | Run the named foreground agent with `model: "fable"`                                         |
-| `codex:<selection>` | Pass the selection to the companion unchanged; it strips exactly one leading `codex:` prefix |
-| Anything else       | Pass the requested Codex model to the companion unchanged                                    |
+| Selection           | Route                                                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `claude:session`    | Run inline in the current Claude session                                                                                   |
+| `claude:inherit`    | Run the named foreground agent with the `model` parameter omitted                                                          |
+| `claude:sonnet`     | Run the named foreground agent with `model: "sonnet"`                                                                      |
+| `claude:opus`       | Run the named foreground agent with `model: "opus"`                                                                        |
+| `claude:haiku`      | Run the named foreground agent with `model: "haiku"`                                                                       |
+| `claude:fable`      | Run the named foreground agent with `model: "fable"`                                                                       |
+| `codex:<selection>` | The written form for Codex-side models; pass it to the companion unchanged — it strips exactly one leading `codex:` prefix |
+| Anything else       | A bare Codex selection, equivalent to its `codex:` form; pass it to the companion unchanged                                |
 
 The prefix names the executing runtime, not the model vendor. `claude:` is required because it
 names a closed six-value set; every other selection runs through the Codex companion runtime,
 including third-party provider aliases. On the Codex side, `codex:` is optional addressing sugar:
 pass it unchanged, and the companion strips exactly one occurrence before resolving aliases,
-providers, and effort defaults. The prefix never changes routing, effort, or persistence; report
-and store the bare resolved selection.
+providers, and effort defaults. The prefix never changes routing, effort, or persistence.
+Present Codex-side selections with the `codex:` prefix in user-facing reports; state and job
+fields store the resolved model id, which is never prefixed.
 
 `claude:inherit` requests the platform's model inheritance. With the Agent `model` parameter
 omitted, `CLAUDE_CODE_SUBAGENT_MODEL` wins when that environment variable is set; otherwise the

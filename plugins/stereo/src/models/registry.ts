@@ -16,6 +16,7 @@ export const VALID_REASONING_EFFORTS: ReadonlySet<string> = new Set([
   'max',
 ]);
 
+// Bare because it feeds normalizeRequestedModel; documentation writes it as `codex:sol`.
 export const PAIR_DEFAULT_MODEL = 'sol';
 export const PAIR_DEFAULT_EFFORT: ReasoningEffort = 'max'; // every OpenAI `gpt-*` pair role
 

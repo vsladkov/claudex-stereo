@@ -8,8 +8,9 @@ Codex-specific operating notes:
 - Pair-turn sandboxes deny subprocess spawning and socket listening, so the full `node:test` suite
   cannot run there. Run targeted structural or in-process tests when possible and leave the full
   repository gates to the orchestrator.
-- Markdown is Prettier-formatted with aligned tables and 100-column prose. Pair-turn sandboxes
-  cannot run Prettier, so preserve that shape and leave `npm run format` to the orchestrator.
+- Markdown tables and formatting are Prettier's (printWidth 100, proseWrap preserve); the
+  ~100-column prose wrap is a hand-maintained convention no gate enforces. Pair-turn sandboxes
+  cannot run Prettier, so preserve both shapes and leave `npm run format` to the orchestrator.
 - Never commit or push repository changes.
 - Make release version changes with `npm run bump-version <version>` so every manifest stays in
   sync.

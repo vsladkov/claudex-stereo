@@ -95,7 +95,7 @@ export async function buildSetupReport(
   if (unconfiguredAliases.length > 0) {
     nextSteps.push(
       `Optional: third-party aliases without a configured provider: ${unconfiguredAliases
-        .map((entry) => `${entry.alias} (${entry.providerId})`)
+        .map((entry) => `codex:${entry.alias} (${entry.providerId})`)
         .join(', ')} — see README "Other model providers" and npm run provider-probe.`,
     );
   }
