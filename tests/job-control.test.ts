@@ -17,7 +17,12 @@ import {
   resolveResultJob,
   sortJobsNewestFirst,
 } from '../plugins/stereo/src/jobs/job-control.ts';
-import { resolveJobFile, saveState, writeJobFile } from '../plugins/stereo/src/workspace/state.ts';
+import {
+  listJobs,
+  resolveJobFile,
+  saveState,
+  writeJobFile,
+} from '../plugins/stereo/src/workspace/state.ts';
 import type { JobRecord } from '../plugins/stereo/src/workspace/state.ts';
 
 const DEAD_PID = 2147483647;
@@ -88,6 +93,33 @@ test('resolveResultJob reports a referenced running job as still running', (t) =
 
   assert.throws(() => resolveResultJob(workspace, 'task-running'), /still running/);
   assert.throws(() => resolveResultJob(workspace, 'task-nonexistent'), /No finished job found/);
+});
+
+test('resolveResultJob repairs a stale running index from a terminal per-job record', (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  const running = jobAt('task-repaired', 10, {
+    status: 'running',
+    phase: 'running',
+    pid: process.pid,
+  });
+  seedJobs(workspace, [running]);
+  writeJobFile(workspace, running.id, {
+    ...running,
+    status: 'completed',
+    phase: 'done',
+    pid: null,
+    completedAt: '2026-03-18T15:11:00.000Z',
+  });
+
+  const resolved = resolveResultJob(workspace, running.id);
+
+  assert.equal(resolved.job.status, 'completed');
+  assert.equal(resolved.job.phase, 'done');
+  assert.equal(resolved.job.pid, null);
+  const indexed = listJobs(workspace).find((job) => job.id === running.id);
+  assert.equal(indexed?.status, 'completed');
+  assert.equal(indexed?.phase, 'done');
 });
 
 test('resolveResultJob rejects ambiguous prefixes', (t) => {

@@ -4,7 +4,7 @@ import {
   interruptAppServerTurn,
   releaseThreadReservationForCancelledJob,
 } from '../../runtime/index.ts';
-import { terminateProcessTree } from '../../platform/process.ts';
+import { processHasExited, terminateProcessTree } from '../../platform/process.ts';
 import { readStoredJob, resolveCancelableJob } from '../../jobs/job-control.ts';
 import { appendLogLine } from '../../jobs/tracked-jobs.ts';
 import { nowIso, resolveJobFile, upsertJob, writeJobFile } from '../../workspace/state.ts';
@@ -15,6 +15,7 @@ import { outputCommandResult, parseCommandInput, resolveCommandCwd } from '../io
 export interface CancelDeps {
   interruptAppServerTurn: typeof interruptAppServerTurn;
   terminateProcessTree: typeof terminateProcessTree;
+  processHasExited?: typeof processHasExited;
   releaseThreadReservationForCancelledJob: typeof releaseThreadReservationForCancelledJob;
   env?: NodeJS.ProcessEnv;
 }
@@ -22,6 +23,7 @@ export interface CancelDeps {
 export const defaultCancelDeps: CancelDeps = {
   interruptAppServerTurn,
   terminateProcessTree,
+  processHasExited,
   releaseThreadReservationForCancelledJob,
 };
 
@@ -66,7 +68,33 @@ export async function handleCancel(
   }
 
   const cancelledPid = job.pid ?? Number.NaN;
-  deps.terminateProcessTree(cancelledPid);
+  let killWarning: string | null = null;
+  const pidAlive =
+    Number.isInteger(cancelledPid) &&
+    cancelledPid > 0 &&
+    !(deps.processHasExited ?? processHasExited)(cancelledPid);
+  if (pidAlive) {
+    try {
+      deps.terminateProcessTree(cancelledPid);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      killWarning = `Failed to terminate worker pid ${cancelledPid}: ${message}`;
+      try {
+        appendLogLine(job.logFile, killWarning);
+      } catch {
+        // A log write must not prevent cancellation bookkeeping.
+      }
+    }
+  } else {
+    try {
+      appendLogLine(
+        job.logFile,
+        `Skipped process termination: worker pid ${cancelledPid} is no longer running.`,
+      );
+    } catch {
+      // A log write must not prevent cancellation bookkeeping.
+    }
+  }
   const reservationCleanup = await deps.releaseThreadReservationForCancelledJob({
     threadId,
     requestThreadId,
@@ -113,6 +141,7 @@ export async function handleCancel(
     turnInterrupted: interrupt.interrupted,
     reservationCleanup: reservationCleanup.status,
     ...(storedJobWarning ? { storedJobWarning } : {}),
+    ...(killWarning ? { killWarning } : {}),
   };
 
   outputCommandResult(payload, renderCancelReport(nextJob, storedJobWarning), options.json);

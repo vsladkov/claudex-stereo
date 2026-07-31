@@ -291,8 +291,17 @@ export async function runForegroundCommand(
   }
 }
 
-export function spawnDetachedTaskWorker(cwd: string, jobId: string): ChildProcess {
-  const child = spawn(
+export interface SpawnDetachedTaskWorkerOptions {
+  spawnImpl?: typeof spawn;
+  onSpawnError?: (error: Error) => void;
+}
+
+export function spawnDetachedTaskWorker(
+  cwd: string,
+  jobId: string,
+  options: SpawnDetachedTaskWorkerOptions = {},
+): ChildProcess {
+  const child = (options.spawnImpl ?? spawn)(
     process.execPath,
     [COMPANION_ENTRY, 'task-worker', '--cwd', cwd, '--job-id', jobId],
     {
@@ -303,8 +312,30 @@ export function spawnDetachedTaskWorker(cwd: string, jobId: string): ChildProces
       windowsHide: true,
     },
   );
+  child.once('error', (error) => options.onSpawnError?.(error));
   child.unref();
   return child;
+}
+
+function failQueuedJobForSpawnError(workspaceRoot: string, jobId: string, message: string): void {
+  let storedJob = null;
+  try {
+    storedJob = readStoredJob(workspaceRoot, jobId);
+  } catch {
+    // A minimal failed record is still preferable to a permanently queued row.
+  }
+  const completedAt = nowIso();
+  const failedRecord = {
+    ...(storedJob ?? { id: jobId }),
+    id: jobId,
+    status: 'failed',
+    phase: 'failed',
+    pid: null,
+    completedAt,
+    errorMessage: message,
+  };
+  writeJobFile(workspaceRoot, jobId, failedRecord);
+  upsertJob(workspaceRoot, failedRecord);
 }
 
 export interface QueuedTaskPayload {
@@ -319,6 +350,7 @@ export function enqueueBackgroundTask(
   cwd: string,
   job: CompanionJob,
   request: unknown,
+  options: { spawnImpl?: typeof spawn } = {},
 ): { payload: QueuedTaskPayload; logFile: string } {
   const { logFile } = createTrackedProgress(job);
   appendLogLine(logFile, 'Queued for background execution.');
@@ -336,7 +368,29 @@ export function enqueueBackgroundTask(
   writeJobFile(job.workspaceRoot, job.id, queuedRecord);
   upsertJob(job.workspaceRoot, queuedRecord);
 
-  const child = spawnDetachedTaskWorker(cwd, job.id);
+  let child: ChildProcess;
+  try {
+    child = spawnDetachedTaskWorker(cwd, job.id, {
+      spawnImpl: options.spawnImpl,
+      // Best effort: an asynchronous spawn failure may race the detached
+      // parent's exit, but a live parent records it immediately.
+      onSpawnError: (error) => {
+        try {
+          failQueuedJobForSpawnError(job.workspaceRoot, job.id, error.message);
+        } catch {
+          // There is no reliable return channel after the parent exits.
+        }
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      failQueuedJobForSpawnError(job.workspaceRoot, job.id, message);
+    } catch {
+      // Preserve the real spawn failure as the CLI-facing error.
+    }
+    throw error;
+  }
   if (child.pid) {
     writeJobFile(job.workspaceRoot, job.id, { ...queuedRecord, pid: child.pid });
     upsertJob(job.workspaceRoot, { id: job.id, pid: child.pid });

@@ -24,6 +24,8 @@ import {
   withCodexHome,
 } from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
+import { TURN_INACTIVITY_TIMEOUT_ENV } from '../plugins/stereo/src/runtime/turn-capture.ts';
+import { APP_SERVER_REQUEST_TIMEOUT_ENV } from '../plugins/stereo/src/protocol/broker-rpc.ts';
 import {
   ensureBrokerSession,
   loadBrokerSession,
@@ -993,6 +995,35 @@ test('task --background enqueues a detached worker and exposes per-job status', 
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
 });
 
+test('task results report dropped malformed notifications without failing the run', () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'malformed-notification');
+  const env = buildEnv(binDir);
+
+  const launched = run(
+    process.execPath,
+    [SCRIPT, 'task', '--background', '--json', 'survive a malformed notification'],
+    { cwd: repo, env },
+  );
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId;
+
+  const waited = run(
+    process.execPath,
+    [SCRIPT, 'status', jobId, '--wait', '--timeout-ms', '15000', '--json'],
+    { cwd: repo, env },
+  );
+  assert.equal(waited.status, 0, waited.stderr);
+  assert.equal(JSON.parse(waited.stdout).job.status, 'completed');
+
+  const result = run(process.execPath, [SCRIPT, 'result', jobId, '--json'], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.storedJob.status, 'completed');
+  assert.equal(payload.storedJob.result.droppedNotifications, 1);
+});
+
 test('task --output-schema reaches a background app-server turn', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -1416,6 +1447,69 @@ test('a resume followed by app-server death fails instead of hanging', async (t)
   assert.equal(result.timedOut, false);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /app-server connection closed before the turn completed/i);
+});
+
+test('a silent app-server turn hits the inactivity deadline and terminalizes the job', async (t) => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'wedged-turn');
+  const env = {
+    ...buildEnv(binDir),
+    [TURN_INACTIVITY_TIMEOUT_ENV]: '25',
+  };
+  registerSessionCleanup(t, repo, env);
+
+  const result = await runNodeWithTimeout([SCRIPT, 'task', '--json', 'exercise silent turn'], {
+    cwd: repo,
+    env,
+    timeoutMs: 5000,
+  });
+
+  assert.equal(result.timedOut, false);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /sent no turn activity for 25ms/);
+  assert.match(JSON.parse(result.stdout).error, /sent no turn activity for 25ms/);
+  const job = requireCompanionState(repo, env).jobs.find((entry) => entry.jobClass === 'task');
+  assert.ok(job);
+  assert.equal(job.status, 'failed');
+  assert.equal(job.pid, null);
+  assert.match(job.errorMessage, /sent no turn activity for 25ms/);
+  const lockDir = path.join(env.CODEX_HOME, 'companion-thread-locks');
+  assert.deepEqual(
+    fs.existsSync(lockDir) ? fs.readdirSync(lockDir).filter((file) => file.endsWith('.lock')) : [],
+    [],
+  );
+});
+
+test('an unanswered app-server request hits its deadline and terminalizes the job', async (t) => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'withheld-start-response');
+  const env = {
+    ...buildEnv(binDir),
+    [APP_SERVER_REQUEST_TIMEOUT_ENV]: '250',
+  };
+  registerSessionCleanup(t, repo, env);
+
+  const result = await runNodeWithTimeout(
+    [SCRIPT, 'task', '--json', 'exercise withheld start response'],
+    { cwd: repo, env, timeoutMs: 5000 },
+  );
+
+  assert.equal(result.timedOut, false);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /turn\/start timed out after 250ms/);
+  assert.match(JSON.parse(result.stdout).error, /turn\/start timed out after 250ms/);
+  const job = requireCompanionState(repo, env).jobs.find((entry) => entry.jobClass === 'task');
+  assert.ok(job);
+  assert.equal(job.status, 'failed');
+  assert.equal(job.pid, null);
+  assert.match(job.errorMessage, /turn\/start timed out after 250ms/);
+  const lockDir = path.join(env.CODEX_HOME, 'companion-thread-locks');
+  assert.deepEqual(
+    fs.existsSync(lockDir) ? fs.readdirSync(lockDir).filter((file) => file.endsWith('.lock')) : [],
+    [],
+  );
 });
 
 test('background write task results retain the no-file-changes note', (t) => {

@@ -9,6 +9,22 @@ import { shorten } from '../shared/text.ts';
 import { extractThreadId, extractTurnId } from './threads.ts';
 import type { AppServerClient } from './threads.ts';
 
+export const TURN_INACTIVITY_TIMEOUT_ENV = 'CODEX_TURN_INACTIVITY_TIMEOUT_MS';
+const DEFAULT_TURN_INACTIVITY_TIMEOUT_MS = 1_800_000;
+const MAX_NOTIFICATION_ERROR_SAMPLES = 20;
+
+export function resolveTurnInactivityTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[TURN_INACTIVITY_TIMEOUT_ENV];
+  if (raw == null || raw.trim() === '') {
+    return DEFAULT_TURN_INACTIVITY_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_TURN_INACTIVITY_TIMEOUT_MS;
+  }
+  return parsed > 0 ? parsed : 0;
+}
+
 export type FileChangeItem = Extract<ThreadItem, { type: 'fileChange' }>;
 export type CommandExecutionItem = Extract<ThreadItem, { type: 'commandExecution' }>;
 
@@ -51,7 +67,9 @@ export interface TurnCaptureState {
   threadLabels: Map<string, string>;
   turnId: string | null;
   bufferedNotifications: AppServerNotification[];
+  // Bounded diagnostic sample; droppedNotifications is the total truth.
   notificationErrors: Array<{ method: string | null; message: string }>;
+  droppedNotifications: number;
   completion: Promise<TurnCaptureState>;
   resolveCompletion: (state: TurnCaptureState) => void;
   rejectCompletion: (error: unknown) => void;
@@ -67,13 +85,14 @@ export interface TurnCaptureState {
   reviewText: string;
   reasoningSummary: string[];
   error: unknown;
-  messages: Array<{ lifecycle: string; phase: string | null; text: string }>;
   fileChanges: FileChangeItem[];
   commandExecutions: CommandExecutionItem[];
   tokenUsage: CapturedTokenUsage | null;
   jobTokenUsage: TokenUsageBreakdown | null;
   primaryThreadTokenUsage: ThreadTokenUsage | null;
+  // Fixed-size dedupe snapshot consumed by sameDiffStats.
   diffStats: UnifiedDiffSummary;
+  // Fixed-size dedupe snapshot consumed by samePlanProgress.
   planProgress: PlanProgressSnapshot | null;
   onProgress: ProgressReporter | null;
 }
@@ -338,6 +357,7 @@ export function createTurnCaptureState(
     turnId: null,
     bufferedNotifications: [],
     notificationErrors: [],
+    droppedNotifications: 0,
     completion,
     resolveCompletion,
     rejectCompletion,
@@ -353,7 +373,6 @@ export function createTurnCaptureState(
     reviewText: '',
     reasoningSummary: [],
     error: null,
-    messages: [],
     fileChanges: [],
     commandExecutions: [],
     tokenUsage: null,
@@ -717,11 +736,6 @@ function recordItem(
   }
 
   if (item.type === 'agentMessage') {
-    state.messages.push({
-      lifecycle,
-      phase: item.phase ?? null,
-      text: item.text ?? '',
-    });
     if (item.text) {
       if (!threadId || threadId === state.threadId) {
         if (lifecycle === 'completed') {
@@ -872,6 +886,7 @@ export function applyTurnNotification(
 
 export interface CaptureTurnOptions<R> extends TurnCaptureStateOptions {
   onResponse?: (response: R, state: TurnCaptureState) => void;
+  inactivityTimeoutMs?: number;
 }
 
 export async function captureTurn<R extends { turn?: Turn | null }>(
@@ -881,7 +896,34 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
   options: CaptureTurnOptions<R> = {},
 ): Promise<TurnCaptureState> {
   const state = createTurnCaptureState(threadId, options);
+  void state.completion.catch(() => {});
   const previousHandler = client.notificationHandler;
+  const inactivityTimeoutMs = options.inactivityTimeoutMs ?? resolveTurnInactivityTimeoutMs();
+  let inactivityTimer: unknown | null = null;
+
+  const clearInactivityTimer = (): void => {
+    if (inactivityTimer) {
+      state.timer.clearTimeoutImpl(inactivityTimer);
+      inactivityTimer = null;
+    }
+  };
+  const armInactivityTimer = (): void => {
+    clearInactivityTimer();
+    if (inactivityTimeoutMs <= 0 || state.completed) {
+      return;
+    }
+    inactivityTimer = state.timer.setTimeoutImpl(() => {
+      inactivityTimer = null;
+      // This rejection follows the existing runAppServerTurn/runTrackedJob
+      // failure path, which releases reservations and persists a failed job.
+      state.rejectCompletion(
+        new Error(
+          `codex app-server sent no turn activity for ${inactivityTimeoutMs}ms; the turn was abandoned. Check /stereo:status and rerun.`,
+        ),
+      );
+    }, inactivityTimeoutMs);
+    (inactivityTimer as { unref?: () => void }).unref?.();
+  };
 
   const dispatchNotification = (message: AppServerNotification): void => {
     // Applied unconditionally for the buffered replay too (deliberate): the
@@ -889,6 +931,7 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
     // interleave with a captured turn on this client.
     if (message.method === 'thread/started' || message.method === 'thread/name/updated') {
       applyTurnNotification(state, message);
+      armInactivityTimer();
       return;
     }
 
@@ -900,6 +943,7 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
     }
 
     applyTurnNotification(state, message);
+    armInactivityTimer();
   };
 
   // Buffer only until the start response has been processed — keying this on
@@ -915,7 +959,10 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
       // Deliberately not state.error: that field carries Codex-reported
       // turn failures and would flip the run's status.
       const detail = error instanceof Error ? error.message : String(error);
-      state.notificationErrors.push({ method: message?.method ?? null, message: detail });
+      state.droppedNotifications += 1;
+      if (state.notificationErrors.length < MAX_NOTIFICATION_ERROR_SAMPLES) {
+        state.notificationErrors.push({ method: message?.method ?? null, message: detail });
+      }
       emitProgress(
         state.onProgress,
         `Ignoring malformed ${message?.method ?? 'unknown'} notification: ${detail}`,
@@ -962,6 +1009,7 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
     for (const message of buffered) {
       dispatchNotificationSafely(message);
     }
+    armInactivityTimer();
 
     if (response.turn?.status && response.turn.status !== 'inProgress') {
       completeTurn(state, response.turn);
@@ -970,6 +1018,7 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
     return await Promise.race([state.completion, connectionExit]);
   } finally {
     clearCompletionTimer(state);
+    clearInactivityTimer();
     client.setNotificationHandler(previousHandler ?? null);
   }
 }

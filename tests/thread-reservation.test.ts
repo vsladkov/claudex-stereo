@@ -136,6 +136,56 @@ test('thread reservations are exclusive, path-safe, and token-released', (t) => 
   releaseThreadReservation(dead);
 });
 
+test('acquisition reaps a cleanup claim left by a dead process', (t) => {
+  const codexHome = useTempCodexHome(t);
+  const paths = reservationPaths(codexHome, 'dead-cleanup-claim');
+  writeRecord(paths.claimPath, claimRecord({ jobId: 'crashed-cleaner', pid: DEAD_PID }));
+
+  const reservation = acquireThreadReservation('dead-cleanup-claim', {
+    jobId: 'replacement-owner',
+    pid: process.pid,
+  });
+
+  assert.equal(fs.existsSync(paths.claimPath), false);
+  assert.equal(fs.existsSync(reservation.path), true);
+  releaseThreadReservation(reservation);
+});
+
+test('acquisition preserves a cleanup claim owned by a live process', (t) => {
+  const codexHome = useTempCodexHome(t);
+  const paths = reservationPaths(codexHome, 'live-cleanup-claim');
+  writeRecord(paths.claimPath, claimRecord({ jobId: 'live-cleaner', pid: process.pid }));
+  t.after(() => {
+    if (fs.existsSync(paths.claimPath)) {
+      fs.unlinkSync(paths.claimPath);
+    }
+  });
+
+  assert.throws(
+    () => acquireThreadReservation('live-cleanup-claim', { jobId: 'contender' }),
+    /cleanup is already in progress/,
+  );
+  assert.equal(fs.existsSync(paths.claimPath), true);
+});
+
+test('claimAndDeleteThreadLock retries once after reaping a dead cleanup claim', async (t) => {
+  useTempCodexHome(t);
+  const reservation = acquireThreadReservation('dead-claim-delete', {
+    jobId: 'reservation-owner',
+    pid: DEAD_PID,
+  });
+  writeRecord(reservation.cleanupPath, claimRecord({ jobId: 'crashed-cleaner', pid: DEAD_PID }));
+
+  const result = await claimAndDeleteThreadLock(reservation.threadId, {
+    verify: (record) => ({ ok: record.token === reservation.token }),
+  });
+
+  assert.equal(result.released, true);
+  assert.equal(fs.existsSync(reservation.path), false);
+  assert.equal(fs.existsSync(reservation.cleanupPath), false);
+  releaseThreadReservation(reservation);
+});
+
 test('live reservations release only in pre-turn and post-turn phases', (t) => {
   useTempCodexHome(t);
   const preTurn = acquireThreadReservation('live-pre-turn');

@@ -209,13 +209,16 @@ export async function handlePlanState(
 
 export function handlePlanStore(argv: string[]): void {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['cwd', 'verdict', 'round', 'reviewed-by', 'summary', 'findings-file'],
+    valueOptions: ['cwd', 'verdict', 'round', 'reviewed-by', 'summary', 'findings-file', 'thread'],
     arrayOptions: ['open-question', 'residual-risk'],
-    booleanOptions: ['json'],
+    booleanOptions: ['json', 'no-thread'],
   });
 
   if (positionals.length > 0) {
     throw new Error('plan-store reads the plan from stdin; unexpected positional arguments.');
+  }
+  if (options.thread && options['no-thread']) {
+    throw new Error('Choose either --thread <id> or --no-thread.');
   }
 
   const verdict = optionalString(options.verdict);
@@ -231,11 +234,21 @@ export function handlePlanStore(argv: string[]): void {
   const cwd = resolveCommandCwd(options);
   const findings = readFindingsFile(cwd, options['findings-file']);
   const workspaceRoot = resolveCommandWorkspace(options);
+  const previous = loadPairPlanState(workspaceRoot) as StoredPairPlanState | null;
+  // Nulling these on a Claude-side persist destroyed a resumable review thread
+  // and the implementer's stored model/effort defaults. Command call sites
+  // always pass --thread or --no-thread, so preservation cannot inherit a
+  // thread from an unrelated plan.
+  const threadId = options['no-thread']
+    ? null
+    : (optionalString(options.thread) ?? optionalString(previous?.threadId));
+  const model = optionalString(previous?.model);
+  const effort = optionalString(previous?.effort);
   const record = savePairPlanState(workspaceRoot, {
     plan,
-    threadId: null,
-    model: null,
-    effort: null,
+    threadId,
+    model,
+    effort,
     round: normalizeStoredPlanRound(options.round),
     verdict,
     summary: optionalString(options.summary),

@@ -4,10 +4,18 @@ import { normalizeRequestedModel } from '../../models/registry.ts';
 import {
   buildReviewJobMetadata,
   createCompanionJob,
+  ensureCodexAvailable,
+  enqueueBackgroundTask,
+  renderQueuedTaskLaunch,
   runForegroundCommand,
 } from '../../workflows/companion-jobs.ts';
 import { executeReviewRun, validateNativeReviewRequest } from '../../workflows/review.ts';
-import { parseCommandInput, resolveCommandCwd, resolveCommandWorkspace } from '../io.ts';
+import {
+  outputCommandResult,
+  parseCommandInput,
+  resolveCommandCwd,
+  resolveCommandWorkspace,
+} from '../io.ts';
 
 export interface ReviewCommandConfig {
   reviewName: string;
@@ -35,6 +43,9 @@ export async function handleReviewCommand(
   });
 
   config.validateRequest?.(target, focusText);
+  if (options.background && options.wait) {
+    throw new Error('Choose either --background or --wait.');
+  }
   const model = normalizeRequestedModel(options.model);
   const metadata = buildReviewJobMetadata(config.reviewName, target);
   const job = createCompanionJob({
@@ -46,6 +57,22 @@ export async function handleReviewCommand(
     summary: metadata.summary,
     model,
   });
+  if (options.background) {
+    ensureCodexAvailable(cwd);
+    const request = {
+      kind: 'review',
+      cwd,
+      base: options.base as string | undefined,
+      scope: options.scope as string | undefined,
+      target,
+      model,
+      focusText,
+      reviewName: config.reviewName,
+    };
+    const { payload } = enqueueBackgroundTask(cwd, job, request);
+    outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
+    return;
+  }
   await runForegroundCommand(
     job,
     (progress) =>

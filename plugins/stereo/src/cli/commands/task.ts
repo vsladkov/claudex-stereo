@@ -8,7 +8,13 @@ import {
 } from '../../jobs/job-control.ts';
 import { runTrackedJob } from '../../jobs/tracked-jobs.ts';
 import { readOutputSchema } from '../../runtime/index.ts';
-import { listJobs, nowIso, upsertJob, writeJobFile } from '../../workspace/state.ts';
+import {
+  assertSafeJobId,
+  listJobs,
+  nowIso,
+  upsertJob,
+  writeJobFile,
+} from '../../workspace/state.ts';
 import type { JobRecord } from '../../workspace/state.ts';
 import {
   createCompanionJob,
@@ -22,6 +28,8 @@ import {
 import type { CompanionJob } from '../../workflows/companion-jobs.ts';
 import { executePlanReviewRun } from '../../workflows/plan-review.ts';
 import type { PlanReviewRunRequest } from '../../workflows/plan-review.ts';
+import { executeReviewRun } from '../../workflows/review.ts';
+import type { ReviewRunRequest } from '../../workflows/review.ts';
 import {
   buildTaskRunMetadata,
   executeTaskRun,
@@ -39,19 +47,23 @@ import {
 } from '../io.ts';
 
 // The request payload persisted for the detached task worker: a task or a
-// plan-review request distinguished by its optional kind marker.
-type PersistedWorkerRequest = TaskRunRequest & PlanReviewRunRequest & { kind?: string };
+// plan-review/review request distinguished by its optional kind marker.
+type PersistedWorkerRequest = TaskRunRequest &
+  PlanReviewRunRequest &
+  ReviewRunRequest & { kind?: string };
 
 export interface TaskWorkerDeps {
   runTrackedJob: typeof runTrackedJob;
   executeTaskRun: typeof executeTaskRun;
   executePlanReviewRun: typeof executePlanReviewRun;
+  executeReviewRun: typeof executeReviewRun;
 }
 
 export const defaultTaskWorkerDeps: TaskWorkerDeps = {
   runTrackedJob,
   executeTaskRun,
   executePlanReviewRun,
+  executeReviewRun,
 };
 
 function buildTaskJob(
@@ -198,8 +210,8 @@ export async function handleTaskWorker(
     throw new Error('Missing required --job-id for task-worker.');
   }
 
+  const jobId = assertSafeJobId(options['job-id'] as string);
   const workspaceRoot = resolveCommandWorkspace(options);
-  const jobId = options['job-id'] as string;
   let storedJob: JobRecord | null = null;
   let request: PersistedWorkerRequest | null = null;
   try {
@@ -260,7 +272,11 @@ export async function handleTaskWorker(
       },
     );
     const runner =
-      workerRequest.kind === 'plan-review' ? deps.executePlanReviewRun : deps.executeTaskRun;
+      workerRequest.kind === 'plan-review'
+        ? deps.executePlanReviewRun
+        : workerRequest.kind === 'review'
+          ? deps.executeReviewRun
+          : deps.executeTaskRun;
     await deps.runTrackedJob(
       {
         ...workerJob,

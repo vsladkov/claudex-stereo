@@ -1,4 +1,4 @@
-import { BROKER_ENDPOINT_ENV } from '../transport/app-server-client.ts';
+import { BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
 import { loadBrokerSession } from '../broker/lifecycle.ts';
 import { binaryAvailable } from '../platform/process.ts';
 import type { BinaryAvailability } from '../platform/process.ts';

@@ -3,7 +3,7 @@ import process from 'node:process';
 
 import { readStdinJsonIfPiped } from '../shared/fs.ts';
 import { terminateProcessTree } from '../platform/process.ts';
-import { BROKER_ENDPOINT_ENV } from '../transport/app-server-client.ts';
+import { BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
 import { releaseThreadReservationForCancelledJob } from '../runtime/index.ts';
 import {
   clearBrokerSession,
@@ -118,7 +118,9 @@ async function cleanupSessionJobs(
       // The lock-directory scan remains available when the stored request cannot be read.
     }
     try {
-      terminateProcessTree(pid);
+      if (Number.isInteger(pid) && pid > 0 && !processHasExited(pid)) {
+        terminateProcessTree(pid);
+      }
     } catch {
       // Ignore teardown failures during session shutdown.
     }

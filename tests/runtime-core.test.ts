@@ -587,7 +587,7 @@ test('adversarial review rejects staged-only scope to match review target select
   assert.match(result.stderr, /Use one of: auto, working-tree, branch, or pass --base <ref>/i);
 });
 
-test('review accepts --background while still running as a tracked review job', () => {
+test('review --background returns a queued detached job', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
@@ -597,25 +597,78 @@ test('review accepts --background while still running as a tracked review job', 
   run('git', ['commit', '-m', 'init'], { cwd: repo });
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello again\n');
 
+  const env = buildEnv(binDir);
   const launched = run('node', [SCRIPT, 'review', '--background', '--json'], {
     cwd: repo,
-    env: buildEnv(binDir),
+    env,
   });
 
   assert.equal(launched.status, 0, launched.stderr);
   const launchPayload = JSON.parse(launched.stdout);
-  assert.equal(launchPayload.review, 'Review');
-  assert.match(launchPayload.codex.stdout, /No material issues found/);
+  assert.equal(launchPayload.status, 'queued');
+  assert.match(launchPayload.jobId, /^review-/);
 
-  const status = run('node', [SCRIPT, 'status'], {
+  const status = run(
+    'node',
+    [SCRIPT, 'status', launchPayload.jobId, '--wait', '--timeout-ms', '15000', '--json'],
+    { cwd: repo, env },
+  );
+
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(JSON.parse(status.stdout).job.status, 'completed');
+});
+
+test('review rejects --background together with --wait', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+  run('git', ['add', 'README.md'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello again\n');
+
+  const result = run('node', [SCRIPT, 'review', '--background', '--wait', '--json'], {
     cwd: repo,
     env: buildEnv(binDir),
   });
 
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Choose either --background or --wait/);
+  assert.match(JSON.parse(result.stdout).error, /Choose either --background or --wait/);
+});
+
+test('adversarial-review --background stores a structured detached result', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = items[0];\n');
+  run('git', ['add', 'app.js'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = items[0].id;\n');
+  const env = buildEnv(binDir);
+
+  const launched = run('node', [SCRIPT, 'adversarial-review', '--background', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId;
+
+  const status = run(
+    'node',
+    [SCRIPT, 'status', jobId, '--wait', '--timeout-ms', '15000', '--json'],
+    { cwd: repo, env },
+  );
   assert.equal(status.status, 0, status.stderr);
-  assert.match(status.stdout, /# Codex Status/);
-  assert.match(status.stdout, /Codex Review/);
-  assert.match(status.stdout, /completed/);
+  assert.equal(JSON.parse(status.stdout).job.status, 'completed');
+
+  const result = run('node', [SCRIPT, 'result', jobId, '--json'], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.job.status, 'completed');
+  assert.equal(payload.storedJob.result.result.verdict, 'needs-attention');
 });
 
 test('status shows a provider-qualified model for an active background task', async (t) => {
@@ -1596,6 +1649,7 @@ test('handleCancel dependency injection preserves interrupt, kill, and release o
       assert.equal(pid, 4242);
       return { attempted: true, delivered: true, method: 'kill' };
     },
+    processHasExited: () => false,
     releaseThreadReservationForCancelledJob: async (identity) => {
       calls.push('release');
       assert.deepEqual(identity, {
@@ -1621,7 +1675,108 @@ test('handleCancel dependency injection preserves interrupt, kill, and release o
   assert.equal(stored.status, 'cancelled');
 });
 
-test('handleTaskWorker dependency injection dispatches task and plan-review requests', async () => {
+test('handleCancel skips a dead worker pid and still terminalizes the job', async () => {
+  const workspace = makeTempDir();
+  const jobId = 'task-dead-pid';
+  const job = {
+    id: jobId,
+    status: 'running',
+    title: 'Dead worker task',
+    jobClass: 'task',
+    pid: 2147483647,
+    createdAt: '2026-03-18T15:30:00.000Z',
+    updatedAt: '2026-03-18T15:30:01.000Z',
+  };
+  writeJobFile(workspace, jobId, job);
+  upsertJob(workspace, job);
+  let killCalls = 0;
+  const deps: CancelDeps = {
+    interruptAppServerTurn: async () => ({
+      attempted: false,
+      interrupted: false,
+      transport: null,
+      detail: '',
+    }),
+    terminateProcessTree: () => {
+      killCalls += 1;
+      return { attempted: true, delivered: true, method: 'kill' };
+    },
+    releaseThreadReservationForCancelledJob: async () => ({
+      released: false,
+      status: 'none-found',
+    }),
+  };
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    await handleCancel(['--cwd', workspace, '--json', jobId], deps);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(killCalls, 0);
+  assert.equal(
+    readCompanionState(workspace)?.jobs.find((entry) => entry.id === jobId)?.status,
+    'cancelled',
+  );
+  assert.equal(
+    JSON.parse(fs.readFileSync(resolveJobFile(workspace, jobId), 'utf8')).status,
+    'cancelled',
+  );
+});
+
+test('handleCancel reports a kill warning but still terminalizes after EPERM', async () => {
+  const workspace = makeTempDir();
+  const jobId = 'task-kill-eperm';
+  const job = {
+    id: jobId,
+    status: 'running',
+    title: 'Protected worker task',
+    jobClass: 'task',
+    pid: 4243,
+    createdAt: '2026-03-18T15:30:00.000Z',
+    updatedAt: '2026-03-18T15:30:01.000Z',
+  };
+  writeJobFile(workspace, jobId, job);
+  upsertJob(workspace, job);
+  const deps: CancelDeps = {
+    interruptAppServerTurn: async () => ({
+      attempted: false,
+      interrupted: false,
+      transport: null,
+      detail: '',
+    }),
+    processHasExited: () => false,
+    terminateProcessTree: () => {
+      const error = new Error('operation not permitted') as NodeJS.ErrnoException;
+      error.code = 'EPERM';
+      throw error;
+    },
+    releaseThreadReservationForCancelledJob: async () => ({
+      released: false,
+      status: 'none-found',
+    }),
+  };
+  let output = '';
+  const originalLog = console.log;
+  console.log = (value: unknown) => {
+    output += `${String(value)}\n`;
+  };
+  try {
+    await handleCancel(['--cwd', workspace, '--json', jobId], deps);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const payload = JSON.parse(output);
+  assert.match(payload.killWarning, /operation not permitted/);
+  assert.equal(
+    JSON.parse(fs.readFileSync(resolveJobFile(workspace, jobId), 'utf8')).status,
+    'cancelled',
+  );
+});
+
+test('handleTaskWorker dependency injection dispatches task, plan-review, and review requests', async () => {
   const workspace = makeTempDir();
   const seedWorker = (id: string, request: Record<string, unknown>) => {
     const job = {
@@ -1646,6 +1801,12 @@ test('handleTaskWorker dependency injection dispatches task and plan-review requ
     cwd: workspace,
     plan: 'Review this plan.',
     round: 1,
+  });
+  seedWorker('review-worker-di', {
+    kind: 'review',
+    cwd: workspace,
+    reviewName: 'Adversarial Review',
+    focusText: 'Review the edge cases.',
   });
 
   const calls: string[] = [];
@@ -1684,12 +1845,39 @@ test('handleTaskWorker dependency injection dispatches task and plan-review requ
         jobClass: 'review',
       };
     },
+    executeReviewRun: async (request) => {
+      calls.push('review');
+      assert.equal(request.reviewName, 'Adversarial Review');
+      assert.equal(typeof request.onProgress, 'function');
+      return {
+        exitStatus: 0,
+        threadId: 'thr-review',
+        turnId: null,
+        payload: {},
+        rendered: 'review\n',
+        summary: 'review',
+        jobTitle: 'Codex Adversarial Review',
+        jobClass: 'review',
+      };
+    },
   };
 
   await handleTaskWorker(['--cwd', workspace, '--job-id', 'task-worker-di'], deps);
   await handleTaskWorker(['--cwd', workspace, '--job-id', 'plan-worker-di'], deps);
+  await handleTaskWorker(['--cwd', workspace, '--job-id', 'review-worker-di'], deps);
 
-  assert.deepEqual(calls, ['tracked', 'task', 'tracked', 'plan']);
+  assert.deepEqual(calls, ['tracked', 'task', 'tracked', 'plan', 'tracked', 'review']);
+});
+
+test('handleTaskWorker rejects an unsafe job id before bootstrap failure persistence', async () => {
+  const workspace = makeTempDir();
+
+  await assert.rejects(
+    handleTaskWorker(['--cwd', workspace, '--job-id', '../escape']),
+    /Unsupported job id "\.\.\/escape"/,
+  );
+
+  assert.equal(fs.existsSync(path.join(resolveDurableStateDir(workspace), 'escape.json')), false);
 });
 
 test('cancel without a job id ignores active jobs from other Claude sessions', () => {

@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.28.0
+
+- Close the job-index write race: `saveState` now merges per job id with absorbing terminal
+  statuses (a terminal record is never replaced by a non-terminal one), and `/stereo:result`
+  repairs a stale running row from the authoritative per-job file instead of failing forever
+- Gate every disk-sourced-pid kill on process liveness in `/stereo:cancel` and the SessionEnd
+  sweep, and terminalize the cancelled record even when signal delivery fails, so a recycled pid
+  can no longer receive a stray process-group SIGTERM after a reboot
+- Add env-tunable deadlines to the Codex transport: per-request and broker-connect timeouts plus
+  an inactivity-based turn deadline, so a wedged app-server fails the job and releases its thread
+  reservation instead of stranding a detached worker forever
+- Retry a busy shared broker on a direct app-server only when no request was dispatched yet,
+  preventing replays after real side effects, and automatically reap reservation-cleanup claims
+  whose owning process is dead instead of requiring a manual removal
+- Make `review --background` a real detached job with `/stereo:status`/`/stereo:result`
+  integration and reject it alongside `--wait`; validate job-id shapes before deriving paths;
+  write `broker.json` atomically; record spawn failures as failed jobs instead of crashing; and
+  cap untracked-file inlining under an aggregate review byte budget
+- Break the module graph's only upward edge by moving the broker wire constants into
+  `protocol/broker-rpc.ts` and injecting the transport client from the broker entry script, with
+  a new layering test enforcing downward-only imports
+- Preserve stored plan `threadId`/`model`/`effort` across Claude-side `plan-store` persists via
+  explicit `--thread`/`--no-thread`, bound turn-capture accumulation (drop the dead message
+  transcript, cap notification-error samples), and surface a `droppedNotifications` count in job
+  results so silent capture loss becomes visible
+- Fail `/stereo:setup`'s ready flag on Node majors below 24 with an actionable upgrade step;
+  fence untrusted content (diffs, implementer reports, host output, embedded plan documents) as
+  data-not-instructions in all three review prompts; and make the implementation-review output
+  contract self-contained
+- Define the planner/reviewer selection placeholders in the plan and quick commands so a Codex
+  planner cannot silently lose its effort default, grant the implement and quick commands the
+  `Edit` and `Bash(npm:*)` tools their own gates require, apply one quoted `$ARGUMENTS`
+  convention across all companion invocations, disable model invocation of `/stereo:rescue`, and
+  make the rescue subsystem coherent (readable skill references, satisfiable background
+  ownership, an actionable failure line)
+
 ## 1.27.0
 
 - Adopt the codex: prefix as the written form for every Codex-side model selection across the

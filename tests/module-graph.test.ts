@@ -20,6 +20,35 @@ function listSourceFiles(dir: string): string[] {
   return files;
 }
 
+const LAYERS: Record<string, number> = {
+  shared: 0,
+  platform: 1,
+  protocol: 2,
+  broker: 2,
+  workspace: 2,
+  transport: 3,
+  runtime: 4,
+  jobs: 4,
+  models: 4,
+  render: 5,
+  workflows: 5,
+  cli: 6,
+  hooks: 6,
+};
+
+function relativeImportSpecifiers(source: string): string[] {
+  const specifiers: string[] = [];
+  const pattern = /(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+)["'](\.[^"']+)["']/g;
+  for (const match of source.matchAll(pattern)) {
+    specifiers.push(match[1]!);
+  }
+  return specifiers;
+}
+
+function topLevelSourceDirectory(file: string): string {
+  return path.relative(SRC_ROOT, file).split(path.sep)[0]!;
+}
+
 // tsc runs with Bundler resolution (the codegen'd protocol types force it),
 // so the compiler does not enforce Node's runtime import rules - a missing
 // or extensionless relative specifier only fails when the module actually
@@ -42,4 +71,34 @@ test("every src module's import graph resolves under Node's runtime loader", asy
   }
 
   assert.deepEqual(failures, []);
+});
+
+test('src modules import only their own or lower layers', () => {
+  const violations: string[] = [];
+
+  for (const file of listSourceFiles(SRC_ROOT)) {
+    const sourceDirectory = topLevelSourceDirectory(file);
+    const sourceLayer = LAYERS[sourceDirectory];
+    assert.notEqual(sourceLayer, undefined, `missing layer for ${sourceDirectory}`);
+
+    const source = fs.readFileSync(file, 'utf8');
+    for (const specifier of relativeImportSpecifiers(source)) {
+      const target = path.resolve(path.dirname(file), specifier);
+      const relativeTarget = path.relative(SRC_ROOT, target);
+      if (relativeTarget.startsWith(`..${path.sep}`) || path.isAbsolute(relativeTarget)) {
+        continue;
+      }
+
+      const targetDirectory = topLevelSourceDirectory(target);
+      const targetLayer = LAYERS[targetDirectory];
+      assert.notEqual(targetLayer, undefined, `missing layer for ${targetDirectory}`);
+      if ((targetLayer as number) > (sourceLayer as number)) {
+        violations.push(
+          `${path.relative(ROOT, file)}: ${sourceDirectory} -> ${targetDirectory} (${specifier})`,
+        );
+      }
+    }
+  }
+
+  assert.deepEqual(violations, []);
 });

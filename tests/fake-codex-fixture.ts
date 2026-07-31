@@ -746,6 +746,10 @@ rl.on("line", (line) => {
 		        saveState(state);
 		        const withholdStartResponse =
 		          BEHAVIOR === "withheld-start-response" && state.turnStarts.length === 1;
+		        if (BEHAVIOR === "wedged-turn") {
+	          send({ id: message.id, result: { turn: buildTurn(turnId) } });
+	          break;
+	        }
 		        if (BEHAVIOR === "turn-start-no-turn") {
 	          // Some responses may omit the turn object entirely; the capture
 	          // must still complete via thread-scoped notifications.
@@ -952,6 +956,10 @@ rl.on("line", (line) => {
             completed: { type: "agentMessage", id: "msg_" + turnId, text: payload, phase: "final_answer" }
           }
         ];
+
+        if (BEHAVIOR === "malformed-notification") {
+          send({ method: "item/completed", params: { threadId: thread.id, turnId } });
+        }
 
 		        if (
 		          BEHAVIOR === "slow-turn" ||

@@ -2,10 +2,14 @@ import fs from 'node:fs';
 import process from 'node:process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import type { TestContext } from 'node:test';
 
 import {
   cleanupCompanionJobForSignal,
+  createCompanionJob,
+  enqueueBackgroundTask,
   installSignalCleanup,
   terminalizeJobForSignal,
 } from '../plugins/stereo/src/workflows/companion-jobs.ts';
@@ -58,6 +62,83 @@ test('signal cleanup handlers dispose without outliving their job', (t) => {
   dispose();
   assert.equal(process.listenerCount('SIGTERM'), beforeTerm);
   assert.equal(process.listenerCount('SIGINT'), beforeInterrupt);
+});
+
+test('a synchronous detached-worker spawn failure terminalizes the queued job', (t) => {
+  useTempCodexHome(t);
+  const workspaceRoot = makeTempDir('companion-spawn-sync-');
+  const job = createCompanionJob({
+    prefix: 'task',
+    kind: 'task',
+    title: 'Spawn failure task',
+    workspaceRoot,
+    jobClass: 'task',
+    summary: 'Exercise synchronous spawn failure',
+    model: null,
+  });
+
+  assert.throws(
+    () =>
+      enqueueBackgroundTask(
+        workspaceRoot,
+        job,
+        { prompt: 'run' },
+        {
+          spawnImpl: (() => {
+            throw new Error('spawn EAGAIN');
+          }) as unknown as typeof spawn,
+        },
+      ),
+    /spawn EAGAIN/,
+  );
+
+  const stored = readJobFile(resolveJobFile(workspaceRoot, job.id));
+  assert.equal(stored.status, 'failed');
+  assert.equal(stored.phase, 'failed');
+  assert.equal(stored.pid, null);
+  assert.equal(stored.errorMessage, 'spawn EAGAIN');
+  assert.equal(
+    loadState(workspaceRoot).jobs.find((entry) => entry.id === job.id)?.status,
+    'failed',
+  );
+});
+
+test('an asynchronous detached-worker spawn error terminalizes the queued job', (t) => {
+  useTempCodexHome(t);
+  const workspaceRoot = makeTempDir('companion-spawn-async-');
+  const job = createCompanionJob({
+    prefix: 'task',
+    kind: 'task',
+    title: 'Async spawn failure task',
+    workspaceRoot,
+    jobClass: 'task',
+    summary: 'Exercise asynchronous spawn failure',
+    model: null,
+  });
+  const child = Object.assign(new EventEmitter(), {
+    pid: 7654,
+    unref: () => child,
+  });
+
+  enqueueBackgroundTask(
+    workspaceRoot,
+    job,
+    { prompt: 'run' },
+    {
+      spawnImpl: (() => child) as unknown as typeof spawn,
+    },
+  );
+  child.emit('error', new Error('spawn EMFILE'));
+
+  const stored = readJobFile(resolveJobFile(workspaceRoot, job.id));
+  assert.equal(stored.status, 'failed');
+  assert.equal(stored.phase, 'failed');
+  assert.equal(stored.pid, null);
+  assert.equal(stored.errorMessage, 'spawn EMFILE');
+  assert.equal(
+    loadState(workspaceRoot).jobs.find((entry) => entry.id === job.id)?.status,
+    'failed',
+  );
 });
 
 test('signal terminalization cancels an active job and is idempotent', () => {

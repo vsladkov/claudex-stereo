@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   claimAndDeleteThreadLock,
   readReservationRecord,
+  reapDeadCleanupClaim,
   resolveThreadReservationDir,
   threadReservationPath,
 } from '../workspace/thread-lock-io.ts';
@@ -366,7 +367,10 @@ export function acquireThreadReservation(
   };
   fs.mkdirSync(lockDir, { recursive: true });
 
-  if (fs.existsSync(cleanupPath)) {
+  if (
+    fs.existsSync(cleanupPath) &&
+    !reapDeadCleanupClaim(cleanupPath, { isProcessAlive: (pid) => pidIsAlive(pid) })
+  ) {
     throw new Error(
       `Reservation cleanup is already in progress for thread ${normalizedThreadId}. Wait for it to finish; if it appears stuck, run \`/stereo:setup\` to list stranded reservations and safe remedies.`,
     );

@@ -18,7 +18,7 @@ import {
   createBrokerEndpoint,
   parseBrokerEndpoint,
 } from '../plugins/stereo/src/broker/endpoint.ts';
-import { BROKER_BUSY_RPC_CODE } from '../plugins/stereo/src/transport/app-server-client.ts';
+import { BROKER_BUSY_RPC_CODE } from '../plugins/stereo/src/protocol/broker-rpc.ts';
 import {
   clearBrokerSession,
   ensureBrokerSession,
@@ -30,6 +30,8 @@ import {
   spawnBrokerProcess,
   waitForBrokerEndpoint,
 } from '../plugins/stereo/src/broker/lifecycle.ts';
+import type { BrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
+import { resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -407,6 +409,29 @@ async function startBroker(
     ...session,
   };
 }
+
+test('saveBrokerSession writes exact JSON bytes atomically', () => {
+  const cwd = makeTempDir('broker-state-workspace-');
+  const session: BrokerSession = {
+    endpoint: 'unix:/tmp/example.sock',
+    pid: 1234,
+    pidFile: '/tmp/example.pid',
+    logFile: '/tmp/example.log',
+    sessionDir: '/tmp/example-session',
+  };
+
+  saveBrokerSession(cwd, session);
+
+  const stateDir = resolveStateDir(cwd);
+  assert.equal(
+    fs.readFileSync(path.join(stateDir, 'broker.json'), 'utf8'),
+    `${JSON.stringify(session, null, 2)}\n`,
+  );
+  assert.equal(
+    fs.readdirSync(stateDir).some((file) => file.endsWith('.tmp')),
+    false,
+  );
+});
 
 test('an owned idle broker survives matching checks and exits after its record is replaced', async (t) => {
   const broker = await startBroker(t, 'review-ok', {

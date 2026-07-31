@@ -7,7 +7,8 @@ import type {
   TurnStartParams,
 } from '../protocol/app-server.ts';
 import { modelProviderFor, parseQualifiedModel } from '../models/registry.ts';
-import { BROKER_ENDPOINT_ENV, CodexAppServerClient } from '../transport/app-server-client.ts';
+import { BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
+import { CodexAppServerClient } from '../transport/app-server-client.ts';
 import { loadBrokerSession } from '../broker/lifecycle.ts';
 import { getCodexAvailability } from './availability.ts';
 import {
@@ -153,6 +154,7 @@ export interface AppServerReviewResult {
   turn: Turn | null;
   error: unknown;
   stderr: string;
+  droppedNotifications: number;
   tokenUsage?: CapturedTokenUsage;
 }
 
@@ -218,6 +220,7 @@ export async function runAppServerReview(
       turn: turnState.finalTurn,
       error: turnState.error,
       stderr: cleanCodexStderr(client.stderr),
+      droppedNotifications: turnState.droppedNotifications,
       ...(turnState.tokenUsage ? { tokenUsage: turnState.tokenUsage } : {}),
     };
   });
@@ -250,6 +253,7 @@ export interface AppServerTurnResult {
   fileChanges: FileChangeItem[];
   touchedFiles: string[];
   commandExecutions: CommandExecutionItem[];
+  droppedNotifications: number;
   tokenUsage?: CapturedTokenUsage;
 }
 
@@ -375,6 +379,7 @@ export async function runAppServerTurn(
           fileChanges: turnState.fileChanges,
           touchedFiles: collectTouchedFiles(turnState.fileChanges),
           commandExecutions: turnState.commandExecutions,
+          droppedNotifications: turnState.droppedNotifications,
           ...(turnState.tokenUsage ? { tokenUsage: turnState.tokenUsage } : {}),
         };
       } catch (error) {

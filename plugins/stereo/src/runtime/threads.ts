@@ -7,11 +7,8 @@ import type {
   ThreadStartResponse,
   UserInput,
 } from '../protocol/app-server.ts';
-import {
-  BROKER_BUSY_RPC_CODE,
-  BROKER_ENDPOINT_ENV,
-  CodexAppServerClient,
-} from '../transport/app-server-client.ts';
+import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
+import { CodexAppServerClient } from '../transport/app-server-client.ts';
 import { sendBrokerShutdownIfIdle } from '../broker/lifecycle.ts';
 import { shorten } from '../shared/text.ts';
 import { getCodexAvailability } from './availability.ts';
@@ -164,9 +161,11 @@ export async function withAppServer<T>(
 ): Promise<T> {
   let client: AppServerClient | null = null;
   let connectedOk = false;
+  let dispatchedAfterConnect = 0;
   try {
     client = await CodexAppServerClient.connect(cwd);
     connectedOk = true;
+    dispatchedAfterConnect = client.dispatchedRequests;
     const result = await fn(client);
     // A teardown failure must not discard the computed result or re-enter
     // the fallback below (which could replay fn after its side effects).
@@ -175,12 +174,16 @@ export async function withAppServer<T>(
   } catch (error) {
     const brokerRequested =
       client?.transport === 'broker' || Boolean(process.env[BROKER_ENDPOINT_ENV]);
-    // The dead-endpoint retry is safe only for connect/initialize failures
-    // (connect cleans up after itself, and no request was ever sent); an
-    // ENOENT/ECONNREFUSED surfacing mid-fn could follow real side effects.
+    // The busy retry is replayable only when the rejection came from fn's
+    // first request. The dead-endpoint retry is safe only for
+    // connect/initialize failures (connect cleans up after itself, and no
+    // request was ever sent); an ENOENT/ECONNREFUSED surfacing mid-fn could
+    // follow real side effects.
     const failure = error as { rpcCode?: number; code?: string } | null | undefined;
     const shouldRetryDirect =
-      (client?.transport === 'broker' && failure?.rpcCode === BROKER_BUSY_RPC_CODE) ||
+      (client?.transport === 'broker' &&
+        failure?.rpcCode === BROKER_BUSY_RPC_CODE &&
+        client.dispatchedRequests <= dispatchedAfterConnect + 1) ||
       (brokerRequested &&
         !connectedOk &&
         (failure?.code === 'ENOENT' || failure?.code === 'ECONNREFUSED'));

@@ -6,9 +6,11 @@ import process from 'node:process';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createBrokerEndpoint, parseBrokerEndpoint } from './endpoint.ts';
-import { terminateProcessTree } from '../platform/process.ts';
+import { processHasExited, terminateProcessTree } from '../platform/process.ts';
 import { BROKER_ENTRY } from '../shared/paths.ts';
-import { resolveStateDir } from '../workspace/state.ts';
+import { resolveStateDir, writeJsonAtomic } from '../workspace/state.ts';
+
+export { processHasExited };
 
 export const PID_FILE_ENV = 'CODEX_COMPANION_APP_SERVER_PID_FILE';
 export const LOG_FILE_ENV = 'CODEX_COMPANION_APP_SERVER_LOG_FILE';
@@ -155,18 +157,6 @@ export async function sendBrokerShutdown(endpoint: string): Promise<void> {
     socket.on('error', resolve);
     socket.on('close', resolve);
   });
-}
-
-export function processHasExited(pid: number): boolean {
-  if (!Number.isFinite(pid)) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException | null | undefined)?.code === 'ESRCH';
-  }
 }
 
 async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
@@ -323,15 +313,29 @@ export function spawnBrokerProcess({
   if (managedByWorkspaceRecord) {
     brokerArgv.push('--workspace-record-owned');
   }
-  const child = spawn(process.execPath, brokerArgv, {
-    cwd,
-    env,
-    detached: true,
-    stdio: ['ignore', logFd, logFd],
-  });
-  child.unref();
-  fs.closeSync(logFd);
-  return child;
+  try {
+    const child = spawn(process.execPath, brokerArgv, {
+      cwd,
+      env,
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+    });
+    child.once('error', (error) => {
+      try {
+        fs.appendFileSync(
+          logFile,
+          `[${new Date().toISOString()}] Failed to spawn broker process: ${error.message}\n`,
+          'utf8',
+        );
+      } catch {
+        // The broker readiness probe remains the authoritative failure channel.
+      }
+    });
+    child.unref();
+    return child;
+  } finally {
+    fs.closeSync(logFd);
+  }
 }
 
 function resolveBrokerStateFile(cwd: string): string {
@@ -357,7 +361,7 @@ export function loadBrokerSession(cwd: string): BrokerSession | null {
 export function saveBrokerSession(cwd: string, session: BrokerSession): void {
   const stateDir = resolveStateDir(cwd);
   fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(resolveBrokerStateFile(cwd), `${JSON.stringify(session, null, 2)}\n`, 'utf8');
+  writeJsonAtomic(resolveBrokerStateFile(cwd), session);
 }
 
 export function clearBrokerSession(cwd: string): void {

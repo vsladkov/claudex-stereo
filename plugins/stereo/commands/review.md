@@ -25,7 +25,7 @@ Core constraint:
 Execution mode rules:
 
 - If the raw arguments include `--wait`, do not ask. Run the review in the foreground.
-- If the raw arguments include `--background`, do not ask. Run the review in a Claude background task.
+- If the raw arguments include `--background`, do not ask. Run the companion CLI's detached review flow.
 - Otherwise, estimate the review size before asking:
   - For working-tree review, start with `git status --short --untracked-files=all`.
   - For working-tree review, also inspect both `git diff --shortstat --cached` and `git diff --shortstat`.
@@ -44,7 +44,7 @@ Argument handling:
 - Preserve the user's arguments exactly.
 - Do not strip `--wait` or `--background` yourself.
 - Do not add extra review instructions or rewrite the user's intent.
-- The companion script parses `--wait` and `--background`, but Claude Code's `Bash(..., run_in_background: true)` is what actually detaches the run.
+- The companion CLI itself detaches the run when `--background` is passed.
 - `/stereo:review` is native-review only. It does not support staged-only review, unstaged-only review, or extra focus text.
 - If the user needs custom review instructions or more adversarial framing, they should use `/stereo:adversarial-review`.
 
@@ -62,15 +62,11 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" review "$ARGUMENTS"
 
 Background flow:
 
-- Launch the review with `Bash` in the background:
+- Run this foreground Bash call; the companion CLI detaches the durable job itself:
 
-```typescript
-Bash({
-  command: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" review "$ARGUMENTS"`,
-  description: 'Codex review',
-  run_in_background: true,
-});
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" review "$ARGUMENTS --background"
 ```
 
-- Do not call `BashOutput` or wait for completion in this turn.
-- After launching the command, tell the user: "Codex review started in the background. Check `/stereo:status` for progress."
+- Relay the returned `jobId` and tell the user to run `/stereo:status <jobId>` for progress.
+- Do not wait for the detached review to complete in this turn.

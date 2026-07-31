@@ -1,6 +1,7 @@
 ---
 description: Delegate investigation, an explicit fix request, or follow-up rescue work to the Codex rescue subagent
 argument-hint: '[--background|--wait] [--resume|--fresh] [--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [what Codex should investigate, solve, or continue]'
+disable-model-invocation: true
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
@@ -13,10 +14,14 @@ $ARGUMENTS
 
 Execution mode:
 
-- If the request includes `--background`, run the `stereo:codex-rescue` subagent in the background.
-- If the request includes `--wait`, run the `stereo:codex-rescue` subagent in the foreground.
-- If neither flag is present, default to foreground.
-- `--background` and `--wait` are execution flags for Claude Code. Do not forward them to `task`, and do not treat them as part of the natural-language task text.
+- The `Agent` invocation and the subagent's single `Bash` call are always foreground, so there is
+  always stdout to return verbatim.
+- `--background` is forwarded to the companion `task` call as `--background`; its stdout is the
+  launch record naming the job id and `/stereo:status <jobId>`.
+- `--wait` is never forwarded; it selects a foreground companion `task` call.
+- If neither flag is present, let the subagent choose whether to add `task --background` from the
+  request's size and complexity.
+- Do not treat `--background` or `--wait` as part of the natural-language task text.
 - `--model` and `--effort` are runtime-selection flags. Preserve them for the forwarded `task` call, but do not treat them as part of the natural-language task text.
 - If the request includes `--resume`, do not ask whether to continue. The user already chose.
 - If the request includes `--fresh`, do not ask whether to continue. The user already chose.

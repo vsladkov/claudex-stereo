@@ -50,6 +50,19 @@ export interface TerminateProcessTreeOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+export function processHasExited(pid: number, options: { killImpl?: KillFn } = {}): boolean {
+  if (!Number.isFinite(pid)) {
+    return false;
+  }
+  const killImpl = options.killImpl ?? (process.kill.bind(process) as KillFn);
+  try {
+    killImpl(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | null | undefined)?.code === 'ESRCH';
+  }
+}
+
 export function runCommand(
   command: string,
   args: readonly string[] = [],

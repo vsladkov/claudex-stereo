@@ -253,6 +253,34 @@ test('collectReviewContext keeps untracked file content in lightweight working t
   assert.match(context.content, /UNTRACKED_RISK_MARKER/);
 });
 
+test('collectReviewContext applies one aggregate budget across untracked file bodies', () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, 'tracked.js'), 'export const value = 1;\n');
+  run('git', ['add', 'tracked.js'], { cwd });
+  run('git', ['commit', '-m', 'init'], { cwd });
+  fs.writeFileSync(path.join(cwd, '00-oversized.txt'), 'x'.repeat(25 * 1024));
+  for (let index = 0; index < 8; index += 1) {
+    fs.writeFileSync(
+      path.join(cwd, `small-${index}.txt`),
+      `SMALL_UNTRACKED_${index}_${'y'.repeat(64)}\n`,
+    );
+  }
+
+  const target = resolveReviewTarget(cwd, { scope: 'working-tree' });
+  const context = collectReviewContext(cwd, target, { maxInlineDiffBytes: 220 });
+  const untrackedSection = context.content.split('## Untracked Files\n\n')[1]?.trim() ?? '';
+
+  assert.equal(context.inputMode, 'self-collect');
+  assert.match(untrackedSection, /00-oversized\.txt/);
+  assert.match(untrackedSection, /exceeds 24576 byte limit/);
+  assert.match(
+    untrackedSection,
+    /\(\+\d+ more untracked file\(s\) omitted: aggregate limit of 220 bytes reached\)$/,
+  );
+  assert.equal((untrackedSection.match(/SMALL_UNTRACKED_/g) ?? []).length < 8, true);
+});
+
 test('listRepositoryFiles returns tracked and unignored untracked paths', () => {
   const cwd = makeTempDir();
   initGitRepo(cwd);

@@ -598,6 +598,92 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.match(rendered.stdout, /# Approved mixed plan/);
 });
 
+test('plan-store preserves pair defaults and controls the stored review thread explicitly', () => {
+  const workspace = makeTempDir();
+  const seeded = {
+    plan: '# Original reviewed plan\n',
+    threadId: 'thr_original',
+    model: 'gpt-5.6-sol',
+    effort: 'max',
+    round: 2,
+    verdict: 'approve',
+    summary: 'Original review.',
+    findings: [],
+    openQuestions: [],
+    residualRisks: [],
+    updatedAt: '2026-07-31T10:00:00.000Z',
+  };
+  savePairPlanState(workspace, seeded);
+
+  const preserved = run(
+    'node',
+    [SCRIPT, 'plan-store', '--json', '--verdict', 'approve', '--round', '3'],
+    { cwd: workspace, input: '# Claude-side persist\n' },
+  );
+  assert.equal(preserved.status, 0, preserved.stderr);
+  const preservedPayload = JSON.parse(preserved.stdout);
+  assert.deepEqual(
+    {
+      threadId: preservedPayload.threadId,
+      model: preservedPayload.model,
+      effort: preservedPayload.effort,
+    },
+    { threadId: 'thr_original', model: 'gpt-5.6-sol', effort: 'max' },
+  );
+
+  const cleared = run(
+    'node',
+    [SCRIPT, 'plan-store', '--json', '--verdict', 'approve', '--no-thread'],
+    { cwd: workspace, input: '# Explicitly threadless persist\n' },
+  );
+  assert.equal(cleared.status, 0, cleared.stderr);
+  const clearedPayload = JSON.parse(cleared.stdout);
+  assert.deepEqual(
+    {
+      threadId: clearedPayload.threadId,
+      model: clearedPayload.model,
+      effort: clearedPayload.effort,
+    },
+    { threadId: null, model: 'gpt-5.6-sol', effort: 'max' },
+  );
+
+  const replaced = run(
+    'node',
+    [SCRIPT, 'plan-store', '--json', '--verdict', 'approve', '--thread', 'thr_replacement'],
+    { cwd: workspace, input: '# Persist with replacement thread\n' },
+  );
+  assert.equal(replaced.status, 0, replaced.stderr);
+  const replacedPayload = JSON.parse(replaced.stdout);
+  assert.deepEqual(
+    {
+      threadId: replacedPayload.threadId,
+      model: replacedPayload.model,
+      effort: replacedPayload.effort,
+    },
+    { threadId: 'thr_replacement', model: 'gpt-5.6-sol', effort: 'max' },
+  );
+
+  const conflict = run(
+    'node',
+    [
+      SCRIPT,
+      'plan-store',
+      '--json',
+      '--verdict',
+      'approve',
+      '--thread',
+      'thr_conflict',
+      '--no-thread',
+    ],
+    { cwd: workspace, input: '# Invalid thread ownership\n' },
+  );
+  assert.notEqual(conflict.status, 0);
+  assert.deepEqual(JSON.parse(conflict.stdout), {
+    error: 'Choose either --thread <id> or --no-thread.',
+  });
+  assert.match(conflict.stderr, /Choose either --thread <id> or --no-thread\./);
+});
+
 test('plan-store preserves round zero for drafts and keeps other round validation strict', () => {
   const workspace = makeTempDir();
   const plan = [

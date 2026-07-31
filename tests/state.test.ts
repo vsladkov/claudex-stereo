@@ -537,6 +537,143 @@ test('state index strips request payloads from legacy, updated, and new jobs', (
   );
 });
 
+test('saveState preserves a concurrently written terminal row over a stale running snapshot', () => {
+  const workspace = makeTempDir();
+  saveState(workspace, {
+    jobs: [
+      {
+        id: 'job-race',
+        status: 'running',
+        phase: 'running',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+  });
+  const stale = loadState(workspace);
+  saveState(workspace, {
+    jobs: [
+      {
+        id: 'job-race',
+        status: 'completed',
+        phase: 'done',
+        updatedAt: '2026-01-01T00:01:00.000Z',
+      },
+    ],
+  });
+
+  saveState(workspace, stale);
+
+  const row = loadState(workspace).jobs.find((job) => job.id === 'job-race');
+  assert.equal(row?.status, 'completed');
+  assert.equal(row?.phase, 'done');
+});
+
+test('saveState treats terminal status as absorbing even when a running candidate is newer', () => {
+  const workspace = makeTempDir();
+  saveState(workspace, {
+    jobs: [
+      {
+        id: 'job-absorbing',
+        status: 'failed',
+        errorMessage: 'terminal truth',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+  });
+
+  saveState(workspace, {
+    jobs: [
+      {
+        id: 'job-absorbing',
+        status: 'running',
+        phase: 'late stale writer',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      },
+    ],
+  });
+
+  const row = loadState(workspace).jobs.find((job) => job.id === 'job-absorbing');
+  assert.equal(row?.status, 'failed');
+  assert.equal(row?.errorMessage, 'terminal truth');
+  assert.equal(row?.phase, undefined);
+});
+
+test("saveState keeps the caller's newer row and another writer's newer unrelated row", () => {
+  const workspace = makeTempDir();
+  saveState(workspace, {
+    jobs: [
+      { id: 'job-owned', status: 'running', phase: 'old', updatedAt: '2026-01-01T00:00:00Z' },
+      { id: 'job-other', status: 'running', phase: 'old', updatedAt: '2026-01-01T00:00:00Z' },
+    ],
+  });
+  const callerSnapshot = loadState(workspace);
+  const callerOwned = callerSnapshot.jobs.find((job) => job.id === 'job-owned');
+  assert.ok(callerOwned);
+  callerOwned.phase = 'caller update';
+  callerOwned.updatedAt = '2026-01-01T00:02:00Z';
+
+  saveState(workspace, {
+    jobs: [
+      { id: 'job-owned', status: 'running', phase: 'old', updatedAt: '2026-01-01T00:00:00Z' },
+      {
+        id: 'job-other',
+        status: 'running',
+        phase: 'concurrent update',
+        updatedAt: '2026-01-01T00:03:00Z',
+      },
+    ],
+  });
+
+  saveState(workspace, callerSnapshot);
+
+  const rows = new Map(loadState(workspace).jobs.map((job) => [job.id, job]));
+  assert.equal(rows.get('job-owned')?.phase, 'caller update');
+  assert.equal(rows.get('job-other')?.phase, 'concurrent update');
+});
+
+test('job artifact resolvers reject unsafe job ids', () => {
+  const workspace = makeTempDir();
+  for (const jobId of ['../escape', 'a/b', '']) {
+    assert.throws(() => resolveJobFile(workspace, jobId), /Unsupported job id/);
+    assert.throws(() => resolveJobLogFile(workspace, jobId), /Unsupported job id/);
+  }
+});
+
+test('saveState retains an unsafe indexed id without resolving or deleting its artifacts', () => {
+  const workspace = makeTempDir();
+  saveState(workspace, { jobs: [] });
+  const stateFile = resolveStateFile(workspace);
+  const escapedJobFile = path.join(resolveDurableStateDir(workspace), 'escape.json');
+  const escapedLogFile = path.join(resolveDurableStateDir(workspace), 'escape.log');
+  fs.writeFileSync(escapedJobFile, 'sentinel job bytes\n', 'utf8');
+  fs.writeFileSync(escapedLogFile, 'sentinel log bytes\n', 'utf8');
+  fs.writeFileSync(
+    stateFile,
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: '../escape',
+            status: 'completed',
+            logFile: escapedLogFile,
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  assert.doesNotThrow(() => saveState(workspace, { jobs: [] }));
+  assert.equal(loadState(workspace).jobs[0]?.id, '../escape');
+  assert.equal(fs.readFileSync(escapedJobFile, 'utf8'), 'sentinel job bytes\n');
+  assert.equal(fs.readFileSync(escapedLogFile, 'utf8'), 'sentinel log bytes\n');
+});
+
 test('saveState prunes dropped job artifacts when indexed jobs exceed the cap', () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);

@@ -2,7 +2,7 @@
 description: Implement or review the stored plan with independently selected Claude or Codex role models
 argument-hint: '[--implement-only|--review-only] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), AskUserQuestion, Agent
 ---
 
 First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
@@ -51,8 +51,11 @@ selected role is Claude-routed.
 
 Reject `claude:session` as the implementer; Claude writes must use the contained named agent.
 
-For Codex implementation, resolve effort as `--implementer-effort` > command-wide `--effort` >
-stored effort > the selected model's pair default. Either effort flag replaces the stored effort.
+For Codex implementation, treat stored `model`/`effort` as the last Codex pair values recorded for
+the stored plan; they survive a Claude-side persist. A stored review thread survives only when the
+persisting command passed it through. Resolve effort as `--implementer-effort` > command-wide
+`--effort` > stored effort > the selected model's pair default. Either effort flag replaces the
+stored effort.
 If the user overrides the implementer model while supplying neither effort flag, clear the stored
 effort because it belonged to the old model, then use the new model's pair default. When both
 stored values are null, use `codex:sol` and the user's matching role/command effort or `max`. Omit a
@@ -72,6 +75,9 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 
 If `available` is false, stop and tell the user to run `/stereo:plan`. Save a non-null stored
 thread only as `storedPlanReviewThreadId`, never as an implementation thread.
+The stored `model` and `effort` are the last Codex pair values recorded for this stored plan and
+survive a Claude-side persist. A stored review thread survives only when the persisting command
+passed it through explicitly.
 Retain the stored `findings` array as `storedPlanFindings`, treating a missing or non-array value
 as empty.
 

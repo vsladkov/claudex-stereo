@@ -10,6 +10,11 @@ import type { Readable, Writable } from 'node:stream';
 import { parseBrokerEndpoint } from '../broker/endpoint.ts';
 import { ensureBrokerSession, loadBrokerSession } from '../broker/lifecycle.ts';
 import { terminateProcessTree } from '../platform/process.ts';
+import {
+  BROKER_ENDPOINT_ENV,
+  resolveAppServerConnectTimeoutMs,
+  resolveAppServerRequestTimeoutMs,
+} from '../protocol/broker-rpc.ts';
 import type {
   AppServerMethod,
   AppServerNotification,
@@ -34,9 +39,6 @@ interface PendingRequest {
 const MAX_STDERR_BYTES = 64 * 1024;
 const PLUGIN_MANIFEST_URL = new URL('../../.claude-plugin/plugin.json', import.meta.url);
 const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, 'utf8'));
-
-export const BROKER_ENDPOINT_ENV = 'CODEX_COMPANION_APP_SERVER_ENDPOINT';
-export const BROKER_BUSY_RPC_CODE = -32001;
 
 const DEFAULT_CLIENT_INFO: ClientInfo = {
   title: 'Codex Plugin',
@@ -85,6 +87,7 @@ class AppServerClientBase {
   declare notificationHandler: AppServerNotificationHandler | null;
   declare lineBuffer: string;
   declare transport: string;
+  declare dispatchedRequests: number;
   declare exitPromise: Promise<unknown>;
   declare resolveExit: (value?: unknown) => void;
 
@@ -100,6 +103,7 @@ class AppServerClientBase {
     this.notificationHandler = null;
     this.lineBuffer = '';
     this.transport = 'unknown';
+    this.dispatchedRequests = 0;
 
     this.exitPromise = new Promise((resolve) => {
       this.resolveExit = resolve;
@@ -125,7 +129,33 @@ class AppServerClientBase {
     this.nextId += 1;
 
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, method });
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const clearRequestTimeout = (): void => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+      };
+      const resolvePending = (value: AppServerResponse<M>): void => {
+        clearRequestTimeout();
+        resolve(value);
+      };
+      const rejectPending = (error: Error): void => {
+        clearRequestTimeout();
+        reject(error);
+      };
+
+      this.pending.set(id, { resolve: resolvePending, reject: rejectPending, method });
+      const timeoutMs = resolveAppServerRequestTimeoutMs(this.options.env ?? process.env);
+      if (timeoutMs > 0) {
+        timeout = setTimeout(() => {
+          if (this.pending.delete(id)) {
+            rejectPending(new Error(`codex app-server ${method} timed out after ${timeoutMs}ms.`));
+          }
+        }, timeoutMs);
+        timeout.unref?.();
+      }
+      this.dispatchedRequests += 1;
       this.sendMessage({ id, method, params });
     });
   }
@@ -340,15 +370,44 @@ class BrokerCodexAppServerClient extends AppServerClientBase {
   async initialize(): Promise<void> {
     await new Promise((resolve, reject) => {
       const target = parseBrokerEndpoint(this.endpoint as string);
+      const timeoutMs = resolveAppServerConnectTimeoutMs(this.options.env ?? process.env);
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const finish = (error?: Error): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        if (error) {
+          reject(error);
+        } else {
+          resolve(undefined);
+        }
+      };
       this.socket = net.createConnection({ path: target.path });
       this.socket.setEncoding('utf8');
-      this.socket.on('connect', resolve);
+      if (timeoutMs > 0) {
+        timeout = setTimeout(() => {
+          this.socket?.destroy();
+          finish(
+            new Error(
+              `codex app-server broker connection to ${this.endpoint} timed out after ${timeoutMs}ms.`,
+            ),
+          );
+        }, timeoutMs);
+        timeout.unref?.();
+      }
+      this.socket.on('connect', () => finish());
       this.socket.on('data', (chunk) => {
         this.handleChunk(chunk);
       });
       this.socket.on('error', (error) => {
         if (!this.exitResolved) {
-          reject(error);
+          finish(error);
         }
         this.handleExit(error);
       });

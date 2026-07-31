@@ -142,6 +142,9 @@ export async function executePlanReviewRun(
     rawOutput: parsed.rawOutput,
     parseError: parsed.parseError,
     reasoningSummary: result.reasoningSummary,
+    ...(result.droppedNotifications > 0
+      ? { droppedNotifications: result.droppedNotifications }
+      : {}),
   };
 
   if (parsedPlanReview) {

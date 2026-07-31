@@ -2,7 +2,7 @@
 description: Plan, review, implement, and verify one small task with independently routed Claude or Codex roles
 argument-hint: '[--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [small task description]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), AskUserQuestion, Agent
 ---
 
 First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
@@ -52,6 +52,19 @@ flag is present. The removed `--model` flag is unknown; report the role-named al
 renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
 `--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements. Quick
 has no configurable round-count flags.
+
+Define these invocation placeholders before any routed step:
+
+- `<plannerSelectionArgs>` = `--model <effectivePlannerModel> <plannerEffortArg>`.
+- `<reviewSelectionArgs>` =
+  `--model <effectivePlanReviewerModel> <planReviewerEffortArg>`.
+- `<plannerEffortArg>` and `<planReviewerEffortArg>` are `--effort <resolved effort>` when the
+  corresponding role's resolved effort is non-null, and are omitted entirely otherwise.
+
+The `task` command injects no server-side effort default, so omitting the planner `--effort`
+silently loses a resolved `max` for a `gpt-*` planner. `plan-review` does default a missing
+`--effort` to the selected model's pair default, so the reviewer placeholder enforces consistency
+rather than correcting runtime behavior.
 
 Keep these ids distinct:
 
@@ -167,8 +180,10 @@ rule. Write the reviewer's findings array as JSON to a distinct `<findingsPayloa
 same rule, then persist:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> <--thread <planReviewThreadId>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
 ```
+
+Pass `--thread <planReviewThreadId>` when this run has one; otherwise pass `--no-thread`.
 
 Codex plan reviews already store each parsed round.
 

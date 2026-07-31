@@ -18,6 +18,10 @@ development is dogfooded — the plugin under development is also the tool in us
 runtime/jobs/models → render/workflows → cli/hooks`.
     `models/registry.ts` is the expansion point for new provider models
     (one row per model). `protocol/` bridges the codegen types.
+    It also holds the broker RPC/endpoint constants shared across layers.
+    `broker/server.ts` is a process entry point whose transport client is
+    injected by `scripts/app-server-broker.ts`, so `broker/` never imports
+    upward.
   - `commands/ skills/ agents/ prompts/ schemas/ hooks/` — the plugin surface
     Claude actually reads; prompts/schemas are loaded via `shared/paths.ts`.
 - `.claude-plugin/marketplace.json` — the repo doubles as the marketplace

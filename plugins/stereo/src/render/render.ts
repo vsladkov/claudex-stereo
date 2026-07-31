@@ -112,6 +112,7 @@ export interface SetupConfiguredProvider {
 export interface SetupRenderReport {
   ready: boolean;
   node: { detail: string };
+  nodeEngine?: { supported: boolean; detail: string } | null;
   npm: { detail: string };
   codex: { detail: string };
   writeSandbox?: { available: boolean | null; detail: string } | null;
@@ -821,6 +822,7 @@ export function renderSetupReport(report: SetupRenderReport): string {
     '',
     'Checks:',
     `- node: ${report.node.detail}`,
+    ...(report.nodeEngine ? [`- node engine: ${report.nodeEngine.detail}`] : []),
     `- npm: ${report.npm.detail}`,
     `- codex: ${report.codex.detail}`,
     ...(report.writeSandbox
@@ -1150,7 +1152,7 @@ export function renderStatusReport(
   if (report.needsReview) {
     lines.push('The stop-time review gate is enabled.');
     lines.push(
-      'Ending the session will trigger a fresh Codex adversarial review and block if it finds issues.',
+      "It runs a Codex review task over the previous Claude turn's changes and blocks if it finds issues.",
     );
   }
 

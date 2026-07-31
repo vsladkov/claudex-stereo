@@ -227,6 +227,9 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
     rawOutput,
     touchedFiles: result.touchedFiles,
     reasoningSummary: result.reasoningSummary,
+    ...(result.droppedNotifications > 0
+      ? { droppedNotifications: result.droppedNotifications }
+      : {}),
   };
 
   return {

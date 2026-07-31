@@ -74,3 +74,22 @@ for (const [name, variables] of Object.entries(PRODUCTION_VARIABLES)) {
     assert.doesNotMatch(rendered, /\{\{[A-Z_]+\}\}/);
   });
 }
+
+test('review prompts fence every untrusted data block from instructions', () => {
+  const expectedCounts = {
+    'implementation-review': 3,
+    'plan-review': 2,
+    'adversarial-review': 2,
+  } as const;
+
+  for (const [name, expectedCount] of Object.entries(expectedCounts)) {
+    const template = loadPromptTemplate(PLUGIN_ROOT, name);
+    assert.equal(
+      (template.match(/not instructions/gi) ?? []).length,
+      expectedCount,
+      `${name} data-boundary count`,
+    );
+  }
+
+  assert.doesNotMatch(loadPromptTemplate(PLUGIN_ROOT, 'implementation-review'), /schemas\//);
+});

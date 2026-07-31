@@ -7,7 +7,7 @@ allowed-tools: Bash(node:*), Bash(npm:*), AskUserQuestion
 Run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" setup --json $ARGUMENTS
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" setup "$ARGUMENTS --json"
 ```
 
 If the result says Codex is unavailable and npm is available:
@@ -26,7 +26,7 @@ npm install -g @openai/codex
 - Then rerun:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" setup --json $ARGUMENTS
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" setup "$ARGUMENTS --json"
 ```
 
 If Codex is already installed or npm is unavailable:
@@ -37,6 +37,8 @@ Output rules:
 
 - Present the final setup output to the user.
 - If installation was skipped, present the original setup output.
+- Setup reports `needs attention` when Node is older than 24. Relay the Node >= 24 requirement
+  with the exact found version because the plugin runs its `.ts` sources natively.
 - If Codex is installed but not authenticated, preserve the guidance to run `!codex login`.
 - Preserve the provider section verbatim when present: the active provider, each configured provider's key status, per-alias readiness, and any provider next steps. Exact environment-variable names matter.
 - Always preserve stranded-reservation next steps with their exact file paths.

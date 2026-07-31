@@ -5,7 +5,7 @@ disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state $ARGUMENTS`
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state "$ARGUMENTS"`
 
 Present the full command output to the user. Do not summarize or condense it.
 Render the stored plan document as Markdown while preserving its contents verbatim.

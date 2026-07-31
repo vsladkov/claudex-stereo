@@ -4,11 +4,12 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { parseArgs } from '../shared/args.ts';
-import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from '../transport/app-server-client.ts';
+import { BROKER_BUSY_RPC_CODE } from '../protocol/broker-rpc.ts';
 import type {
   AppServerMethod,
   AppServerNotification,
   AppServerRequestParams,
+  AppServerResponse,
 } from '../protocol/app-server.ts';
 import {
   claimAndDeleteThreadLock,
@@ -76,6 +77,20 @@ export interface DeadOwnerReleaseOptions {
 export interface DeadOwnerReleaseResult {
   released: boolean;
   reason: string;
+}
+
+export interface BrokerAppServerClient {
+  request<M extends AppServerMethod>(
+    method: M,
+    params: AppServerRequestParams<M>,
+  ): Promise<AppServerResponse<M>>;
+  setNotificationHandler(handler: ((message: AppServerNotification) => void) | null): void;
+  close(): Promise<void>;
+  exitPromise: Promise<unknown>;
+}
+
+export interface RunBrokerServerDeps {
+  connectAppServer: (cwd: string) => Promise<BrokerAppServerClient>;
 }
 
 function buildStreamThreadIds(
@@ -187,7 +202,10 @@ function writePidFile(pidFile: string | null): void {
   fs.writeFileSync(pidFile, `${process.pid}\n`, 'utf8');
 }
 
-export async function runBrokerServer(fullArgv: string[]): Promise<void> {
+export async function runBrokerServer(
+  fullArgv: string[],
+  deps: RunBrokerServerDeps,
+): Promise<void> {
   // The broker is shared by every session in the workspace: a throw escaping
   // an async socket handler or the notification router must not kill it.
   process.on('unhandledRejection', (reason) => {
@@ -232,7 +250,7 @@ export async function runBrokerServer(fullArgv: string[]): Promise<void> {
   }
   writePidFile(pidFile);
 
-  const appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
+  const appClient = await deps.connectAppServer(cwd);
   let activeRequestSocket: net.Socket | null = null;
   let inFlightStream: InFlightStreamRecord | null = null;
   let activeStream: ActiveStreamOwnership | null = null;

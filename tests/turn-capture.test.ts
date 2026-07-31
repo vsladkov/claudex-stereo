@@ -43,8 +43,8 @@ test('createTurnCaptureState seeds thread-scoped defaults', () => {
   assert.equal(state.onProgress, null);
   assert.deepEqual(state.bufferedNotifications, []);
   assert.deepEqual(state.notificationErrors, []);
+  assert.equal(state.droppedNotifications, 0);
   assert.deepEqual(state.reasoningSummary, []);
-  assert.deepEqual(state.messages, []);
   assert.deepEqual(state.fileChanges, []);
   assert.deepEqual(state.commandExecutions, []);
   assert.equal(state.tokenUsage, null);
@@ -484,9 +484,6 @@ test('a final answer updates lastAgentMessage only on the completed lifecycle', 
 
   assert.equal(state.lastAgentMessage, '');
   assert.equal(state.finalAnswerSeen, false);
-  assert.deepEqual(state.messages, [
-    { lifecycle: 'started', phase: 'final_answer', text: 'Draft answer.' },
-  ]);
 
   applyTurnNotification(
     state,
@@ -645,6 +642,7 @@ test('captureTurn records malformed notifications instead of throwing', async ()
 
   assert.equal(state.turnId, 'turn-1');
   assert.equal(state.notificationErrors.length, 1);
+  assert.equal(state.droppedNotifications, 1);
   assert.equal(state.notificationErrors[0]?.method, 'item/completed');
   assert.ok(state.notificationErrors[0]?.message);
   // The malformed payload must not flip the Codex-reported error slot.
@@ -658,6 +656,41 @@ test('captureTurn records malformed notifications instead of throwing', async ()
         update.startsWith('Ignoring malformed item/completed notification:'),
     ),
   );
+});
+
+test('captureTurn caps malformed-notification samples while retaining the full count', async () => {
+  const handlerRef: { current: ((message: AppServerNotification) => void) | null } = {
+    current: null,
+  };
+  const fakeClient = {
+    notificationHandler: null,
+    setNotificationHandler(next: ((message: AppServerNotification) => void) | null) {
+      handlerRef.current = next;
+    },
+    exitPromise: new Promise(() => {}),
+    exitError: null,
+    exitResolved: false,
+  } as unknown as AppServerClient;
+
+  const capture = captureTurn(fakeClient, 'thread-1', () =>
+    Promise.resolve({ turn: { id: 'turn-1', status: 'inProgress' } as Turn }),
+  );
+  const handler = handlerRef.current;
+  assert.ok(handler);
+  for (let index = 0; index < 25; index += 1) {
+    handler(notification({ method: 'item/completed', params: { threadId: 'thread-1' } }));
+  }
+  handler(
+    notification({
+      method: 'turn/completed',
+      params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+    }),
+  );
+
+  const state = await capture;
+  assert.equal(state.notificationErrors.length, 20);
+  assert.equal(state.droppedNotifications, 25);
+  assert.equal(state.completed, true);
 });
 
 // --- Inferred-completion debounce with an injected fake clock ---
@@ -689,6 +722,100 @@ function fireAll(clock: FakeClock): number {
   }
   return due.length;
 }
+
+async function flushCaptureStart(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+test('captureTurn rejects a started turn after its inactivity deadline', async () => {
+  const clock: FakeClock = { pending: [], nextId: 1 };
+  const handlerRef: { current: ((message: AppServerNotification) => void) | null } = {
+    current: null,
+  };
+  const capturedState: { current: ReturnType<typeof createTurnCaptureState> | null } = {
+    current: null,
+  };
+  const fakeClient = {
+    notificationHandler: null,
+    setNotificationHandler(next: ((message: AppServerNotification) => void) | null) {
+      handlerRef.current = next;
+    },
+    exitPromise: new Promise(() => {}),
+    exitError: null,
+    exitResolved: false,
+  } as unknown as AppServerClient;
+
+  const capture = captureTurn(
+    fakeClient,
+    'thread-inactive',
+    () => Promise.resolve({ turn: { id: 'turn-inactive', status: 'inProgress' } as Turn }),
+    {
+      timer: installFakeClock(clock),
+      inactivityTimeoutMs: 1,
+      onResponse: (_response, state) => {
+        capturedState.current = state;
+      },
+    },
+  );
+  await flushCaptureStart();
+  assert.equal(clock.pending.length, 1);
+
+  assert.equal(fireAll(clock), 1);
+  await assert.rejects(capture, /sent no turn activity for 1ms/);
+  assert.ok(capturedState.current);
+  assert.equal(capturedState.current.completed, false);
+  assert.equal(handlerRef.current, null);
+});
+
+test('an applied turn notification re-arms one inactivity timer', async () => {
+  const clock: FakeClock = { pending: [], nextId: 1 };
+  const handlerRef: { current: ((message: AppServerNotification) => void) | null } = {
+    current: null,
+  };
+  const fakeClient = {
+    notificationHandler: null,
+    setNotificationHandler(next: ((message: AppServerNotification) => void) | null) {
+      handlerRef.current = next;
+    },
+    exitPromise: new Promise(() => {}),
+    exitError: null,
+    exitResolved: false,
+  } as unknown as AppServerClient;
+
+  const capture = captureTurn(
+    fakeClient,
+    'thread-rearm',
+    () => Promise.resolve({ turn: { id: 'turn-rearm', status: 'inProgress' } as Turn }),
+    { timer: installFakeClock(clock), inactivityTimeoutMs: 1 },
+  );
+  await flushCaptureStart();
+  assert.equal(clock.pending.length, 1);
+  const initialTimerId = clock.pending[0]?.id;
+  const handler = handlerRef.current;
+  assert.ok(handler);
+
+  handler(
+    notification({
+      method: 'turn/started',
+      params: { threadId: 'thread-rearm', turn: { id: 'turn-rearm', status: 'inProgress' } },
+    }),
+  );
+  assert.equal(clock.pending.length, 1);
+  assert.notEqual(clock.pending[0]?.id, initialTimerId);
+
+  handler(
+    notification({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thread-rearm',
+        turn: { id: 'turn-rearm', status: 'completed' },
+      },
+    }),
+  );
+  const state = await capture;
+  assert.equal(state.completed, true);
+  assert.equal(clock.pending.length, 0);
+});
 
 test('the inferred-completion timer completes the turn exactly once', async () => {
   const clock: FakeClock = { pending: [], nextId: 1 };

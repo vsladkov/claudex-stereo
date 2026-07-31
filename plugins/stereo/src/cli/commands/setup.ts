@@ -25,7 +25,10 @@ export interface SetupDeps {
   getAccountRateLimits: typeof getAccountRateLimits;
   listStrandedThreadReservations: typeof listStrandedThreadReservations;
   env?: NodeJS.ProcessEnv;
+  nodeVersion?: string;
 }
+
+export const MINIMUM_NODE_MAJOR = 24;
 
 export const defaultSetupDeps: SetupDeps = {
   binaryAvailable,
@@ -56,6 +59,18 @@ export async function buildSetupReport(
     keySet: provider.envKey ? Boolean(env[provider.envKey]) : null,
   }));
   const configuredById = new Map(configuredProviders.map((provider) => [provider.id, provider]));
+  const nodeVersion = deps.nodeVersion ?? process.versions.node;
+  const version = String(nodeVersion).replace(/^v/, '');
+  const major = Number.parseInt(version.split('.')[0] ?? '', 10);
+  const supported = Number.isInteger(major) && major >= MINIMUM_NODE_MAJOR;
+  const nodeEngine = {
+    version,
+    major: Number.isInteger(major) ? major : null,
+    supported,
+    detail: Number.isInteger(major)
+      ? `v${version} (>= ${MINIMUM_NODE_MAJOR} required)`
+      : `v${version} (major version could not be parsed; >= ${MINIMUM_NODE_MAJOR} required)`,
+  };
   const aliases = Object.entries(MODEL_REGISTRY).flatMap(([alias, entry]) => {
     if (!('modelProvider' in entry) || !entry.modelProvider) {
       return [];
@@ -74,6 +89,11 @@ export async function buildSetupReport(
   });
 
   const nextSteps: string[] = [];
+  if (!nodeEngine.supported) {
+    nextSteps.push(
+      `Upgrade Node from v${nodeEngine.version} to Node ${MINIMUM_NODE_MAJOR} or newer. The plugin runs its TypeScript sources through Node type stripping, so older Node majors cannot load them.`,
+    );
+  }
   if (!codexStatus.available) {
     nextSteps.push('Install Codex with `npm install -g @openai/codex`.');
   }
@@ -113,8 +133,10 @@ export async function buildSetupReport(
   }
 
   return {
-    ready: nodeStatus.available && codexStatus.available && authStatus.loggedIn,
+    ready:
+      nodeStatus.available && nodeEngine.supported && codexStatus.available && authStatus.loggedIn,
     node: nodeStatus,
+    nodeEngine,
     npm: npmStatus,
     codex: codexStatus,
     writeSandbox,

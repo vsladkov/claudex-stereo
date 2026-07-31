@@ -47,6 +47,19 @@ flag when its selected role is Claude-routed. Resolve each active Codex role thr
 skill's role effort > command-wide effort > model default hierarchy. Full phase and
 `--draft-only` require task text; if it is empty, ask the user what to plan.
 
+Define these invocation placeholders before any routed step:
+
+- `<plannerSelectionArgs>` = `--model <effectivePlannerModel> <plannerEffortArg>`.
+- `<reviewSelectionArgs>` =
+  `--model <effectivePlanReviewerModel> <planReviewerEffortArg>`.
+- `<plannerEffortArg>` and `<planReviewerEffortArg>` are `--effort <resolved effort>` when the
+  corresponding role's resolved effort is non-null, and are omitted entirely otherwise.
+
+The `task` command injects no server-side effort default, so omitting the planner `--effort`
+silently loses a resolved `max` for a `gpt-*` planner. `plan-review` does default a missing
+`--effort` to the selected model's pair default, so the reviewer placeholder enforces consistency
+rather than correcting runtime behavior.
+
 The `codex-result-handling` stop-after-findings rule applies at explicit user-decision points and
 to `--review-only`. During the full phase's review loop, revise automatically.
 
@@ -92,8 +105,11 @@ temporary-directory rule. Write the reviewer's findings array as JSON to a disti
 `<findingsPayloadFile>` under the same rule, then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 <--thread <threadId reported by plan-state>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
 ```
+
+Pass the `threadId` reported by `plan-state` with `--thread` when present; otherwise pass
+`--no-thread`.
 
 Report the verdict, findings, revision instructions, open questions, complete residual risks, and
 the reviewer's per-invocation usage and duration (or `usage unavailable`) verbatim. Do not revise
@@ -150,7 +166,7 @@ For `--draft-only`, derive a one-line summary. Write the full draft plan verbati
 reviewer label:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict 'draft' --round 0 --summary '<one-line summary>' < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict 'draft' --round 0 --no-thread --summary '<one-line summary>' < "<payloadFile>"
 ```
 
 Present the stored draft, identify the selected planner and its per-invocation usage/duration (or
@@ -228,8 +244,8 @@ Accept-as-is retains the actual verdict and findings.
 
 Whenever the terminal reviewer is Claude-side, persist the full current plan and actual verdict
 before finishing, following the routing skill's persistence rule. Codex rounds store
-automatically. Only a final Codex verdict on `planReviewThreadId` can supply a later resumable
-review thread.
+automatically. A Claude-side persist keeps a resumable Codex review thread only when it passes
+`planReviewThreadId` through with `--thread`; `--no-thread` explicitly clears it.
 
 Finish with the full plan, verdict, rounds, reviewer, open questions, complete residual risks, and
 per-invocation usage/duration for every routed draft and review turn (using `usage unavailable`

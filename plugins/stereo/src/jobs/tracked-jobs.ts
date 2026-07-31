@@ -200,7 +200,11 @@ function readStoredJobOrNull(workspaceRoot: string, jobId: string): JobRecord | 
   if (!fs.existsSync(jobFile)) {
     return null;
   }
-  return readJobFile(jobFile);
+  try {
+    return readJobFile(jobFile);
+  } catch {
+    return null;
+  }
 }
 
 function persistTerminalState(

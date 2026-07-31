@@ -203,7 +203,7 @@ export function writeTextAtomic(filePath: string, contents: string): void {
   }
 }
 
-function writeJsonAtomic(filePath: string, value: unknown): void {
+export function writeJsonAtomic(filePath: string, value: unknown): void {
   writeTextAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
@@ -332,6 +332,39 @@ function removeFileIfExists(filePath: string | null | undefined): void {
 }
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const SAFE_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+export function isSafeJobId(id: unknown): id is string {
+  return typeof id === 'string' && SAFE_JOB_ID.test(id);
+}
+
+export function assertSafeJobId(id: string): string {
+  if (!isSafeJobId(id)) {
+    throw new Error(
+      `Unsupported job id "${id}". Job ids may contain only letters, digits, hyphens, and underscores.`,
+    );
+  }
+  return id;
+}
+
+function jobUpdatedAtMs(job: JobRecord): number {
+  const parsed = Date.parse(job.updatedAt ?? '');
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+}
+
+function newerJobRecord(previous: JobRecord | undefined, candidate: JobRecord): JobRecord {
+  if (!previous) {
+    return candidate;
+  }
+
+  const previousTerminal = TERMINAL_JOB_STATUSES.has(previous.status);
+  const candidateTerminal = TERMINAL_JOB_STATUSES.has(candidate.status);
+  if (previousTerminal !== candidateTerminal) {
+    return previousTerminal ? previous : candidate;
+  }
+
+  return jobUpdatedAtMs(candidate) >= jobUpdatedAtMs(previous) ? candidate : previous;
+}
 
 function readJobFileFresh(jobFile: string): { missing: boolean; record: JobRecord | null } {
   if (!fs.existsSync(jobFile)) {
@@ -346,18 +379,30 @@ function readJobFileFresh(jobFile: string): { missing: boolean; record: JobRecor
 
 export function saveState(cwd: string, state: StereoStateInput): StereoState {
   const previousJobs = loadState(cwd).jobs;
+  const previousById = new Map(previousJobs.map((job) => [job.id, job]));
   ensureStateDir(cwd);
-  const nextJobs = pruneJobs(state.jobs ?? []).map(stripIndexOnlyFields);
+  const nextJobs = pruneJobs(
+    (state.jobs ?? []).map((job) => newerJobRecord(previousById.get(job.id), job)),
+  ).map(stripIndexOnlyFields);
 
   // The caller's snapshot may be stale: a concurrent writer can have added or
-  // updated a job between the caller's load and this save. Deleting artifacts
-  // for any id merely absent from the snapshot would destroy a live job, so a
-  // dropped id is deleted only when a fresh read of its own file shows a
-  // terminal status; a live or unreadable record keeps its files and is
-  // re-added to the written index (which may transiently exceed the prune cap).
+  // updated a job between the caller's load and this save. Rows shared by both
+  // snapshots are merged per id, with the newer updatedAt record winning within
+  // the same terminality class. Terminal status is absorbing for a job id, so
+  // no stale non-terminal snapshot can resurrect a completed, failed, or
+  // cancelled row. Deleting artifacts for any id merely absent from the
+  // snapshot would destroy a live job, so a dropped id is deleted only when a
+  // fresh read of its own file shows a terminal status; a live or unreadable
+  // record keeps its files and is re-added to the written index (which may
+  // transiently exceed the prune cap).
   const retainedIds = new Set(nextJobs.map((job) => job.id));
   for (const job of previousJobs) {
     if (retainedIds.has(job.id)) {
+      continue;
+    }
+    if (!isSafeJobId(job.id)) {
+      nextJobs.push(stripIndexOnlyFields(job));
+      retainedIds.add(job.id);
       continue;
     }
     const jobFile = resolveJobFile(cwd, job.id);
@@ -453,11 +498,13 @@ function removeJobFile(jobFile: string): void {
 }
 
 export function resolveJobLogFile(cwd: string, jobId: string): string {
+  assertSafeJobId(jobId);
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.log`);
 }
 
 export function resolveJobFile(cwd: string, jobId: string): string {
+  assertSafeJobId(jobId);
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
 }

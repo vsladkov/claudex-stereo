@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
-import { buildSetupReport } from '../plugins/stereo/src/cli/commands/setup.ts';
+import { buildSetupReport, MINIMUM_NODE_MAJOR } from '../plugins/stereo/src/cli/commands/setup.ts';
 import type { SetupDeps } from '../plugins/stereo/src/cli/commands/setup.ts';
 import { buildAppServerAuthStatus } from '../plugins/stereo/src/runtime/auth.ts';
 import type { CodexAuthStatus, ConfiguredProvider } from '../plugins/stereo/src/runtime/auth.ts';
@@ -220,4 +221,43 @@ test('malformed provider tables are ignored by the auth parser', () => {
   );
 
   assert.deepEqual(status.configuredProviders, []);
+});
+
+test('setup rejects an old Node major and puts the exact upgrade first', async () => {
+  const deps = setupDeps(authStatus());
+  deps.nodeVersion = '22.14.0';
+  const report = await buildSetupReport(makeTempDir(), [], deps);
+
+  assert.equal(report.ready, false);
+  assert.deepEqual(report.nodeEngine, {
+    version: '22.14.0',
+    major: 22,
+    supported: false,
+    detail: 'v22.14.0 (>= 24 required)',
+  });
+  assert.match(report.nextSteps[0]!, /v22\.14\.0/);
+  assert.match(report.nextSteps[0]!, /Node 24 or newer/);
+  assert.match(report.nextSteps[0]!, /TypeScript sources through Node type stripping/);
+  assert.match(renderSetupReport(report), /Status: needs attention/);
+  assert.match(renderSetupReport(report), /- node engine: v22\.14\.0 \(>= 24 required\)/);
+});
+
+test('setup accepts the minimum Node major without adding an upgrade step', async () => {
+  const deps = setupDeps(authStatus());
+  deps.nodeVersion = `${MINIMUM_NODE_MAJOR}.0.0`;
+  const report = await buildSetupReport(makeTempDir(), [], deps);
+
+  assert.equal(report.ready, true);
+  assert.equal(report.nodeEngine.supported, true);
+  assert.equal(
+    report.nextSteps.some((step) => step.startsWith('Upgrade Node from')),
+    false,
+  );
+});
+
+test('the setup Node minimum matches the root package engine', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { engines?: { node?: string } };
+  assert.equal(packageJson.engines?.node, `>=${MINIMUM_NODE_MAJOR}`);
 });

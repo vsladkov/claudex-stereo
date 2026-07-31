@@ -240,6 +240,10 @@ Claude invocation. If `tokenUsage` or the relevant counter is absent, record `us
 instead of omitting the usage line. Carry each invocation's usage into the command's round notes
 and final report.
 
+When the fetched result payload carries `droppedNotifications`, report that count and note that
+the run dropped that many malformed notifications, so its captured progress and diff data may be
+incomplete.
+
 Track the last phase and last progress entry. Only treat a job as stalled after roughly ten
 minutes with neither a phase change nor a new progress entry. Ask whether to keep waiting
 (recommended) or cancel the active step and stop. Elapsed time alone is not a stall.
@@ -269,7 +273,10 @@ findings, and each open question and residual risk. Write the full plan to `<pay
 findings array as JSON to the distinct `<findingsPayloadFile>`, then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> <--thread <planReviewThreadId>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
 ```
+
+Pass `--thread <planReviewThreadId>` when this run holds a Codex plan-review thread for the
+persisted plan, and `--no-thread` otherwise; a persist never silently inherits a stored thread.
 
 Do this before transitioning to implementation or returning control to the user.

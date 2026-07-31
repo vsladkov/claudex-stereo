@@ -123,6 +123,29 @@ test('runTrackedJob records a thrown runner error and rethrows it', async () => 
   assert.equal(indexed.errorMessage, 'runner exploded');
 });
 
+test('a corrupt per-job file does not mask the runner failure or strand the job', async () => {
+  const workspace = makeWorkspace();
+  const jobFile = resolveJobFile(workspace, 'job-corrupt-on-failure');
+
+  await assert.rejects(
+    runTrackedJob(baseJob(workspace, 'job-corrupt-on-failure'), async () => {
+      fs.writeFileSync(jobFile, '{', 'utf8');
+      throw new Error('original runner failure');
+    }),
+    /original runner failure/,
+  );
+
+  const stored = readJobFile(jobFile);
+  assert.equal(stored.status, 'failed');
+  assert.equal(stored.phase, 'failed');
+  assert.equal(stored.pid, null);
+  assert.equal(stored.errorMessage, 'original runner failure');
+  assert.equal(
+    listJobs(workspace).find((job) => job.id === 'job-corrupt-on-failure')?.status,
+    'failed',
+  );
+});
+
 test(
   'a terminal-persistence failure degrades the record instead of the outcome',
   { skip: IS_WINDOWS || process.getuid?.() === 0 },

@@ -40,7 +40,7 @@ test('every command wires the companion entry point it documents', () => {
     'adversarial-review.md': /codex-companion\.ts" adversarial-review "\$ARGUMENTS"/,
     'cancel.md': /codex-companion\.ts" cancel "\$ARGUMENTS"/,
     'implement.md': /task --background --json --write --thread/,
-    'plan-state.md': /codex-companion\.ts" plan-state \$ARGUMENTS/,
+    'plan-state.md': /codex-companion\.ts" plan-state "\$ARGUMENTS"/,
     'plan.md': [/plan-review --background --json --round 1/, /plan-store --json/],
     'quick.md': [
       /plan-review --background --json --round 1/,
@@ -49,7 +49,7 @@ test('every command wires the companion entry point it documents', () => {
     'rescue.md': /task-resume-candidate --json/,
     'result.md': /codex-companion\.ts" result "\$ARGUMENTS"/,
     'review.md': /codex-companion\.ts" review "\$ARGUMENTS"/,
-    'setup.md': /codex-companion\.ts" setup --json \$ARGUMENTS/,
+    'setup.md': /codex-companion\.ts" setup "\$ARGUMENTS --json"/,
     'status.md': /codex-companion\.ts" status "\$ARGUMENTS"/,
     'transfer.md': /codex-companion\.ts" transfer "\$ARGUMENTS"/,
   };
@@ -62,6 +62,17 @@ test('every command wires the companion entry point it documents', () => {
   }
 });
 
+test('companion invocations quote raw slash-command arguments consistently', () => {
+  for (const file of fs.readdirSync(path.join(PLUGIN_ROOT, 'commands'))) {
+    const lines = read(path.join('commands', file)).split('\n');
+    for (const [index, line] of lines.entries()) {
+      if (line.includes('codex-companion.ts') && line.includes('$ARGUMENTS')) {
+        assert.match(line, /"\$ARGUMENTS( [^"]*)?"/, `${file}:${index + 1}`);
+      }
+    }
+  }
+});
+
 test('directly-wired commands disable model invocation of the command file', () => {
   for (const file of [
     'adversarial-review.md',
@@ -70,6 +81,7 @@ test('directly-wired commands disable model invocation of the command file', () 
     'plan-state.md',
     'plan.md',
     'quick.md',
+    'rescue.md',
     'result.md',
     'review.md',
     'status.md',
@@ -115,6 +127,8 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(plan, /plan-store --json/);
   assert.match(plan, /schemas\/plan-review-output\.schema\.json/);
   assert.match(plan, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
+  assert.match(plan, /`<plannerSelectionArgs>` = `--model/);
+  assert.match(plan, /`<reviewSelectionArgs>` =\s*\n?\s*`--model/);
   assert.equal(
     (plan.match(/--plan-file "<payloadFile>"/g) ?? []).length,
     3,
@@ -163,6 +177,8 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     'both approved Codex variants and the Claude implementer must receive advisory findings',
   );
   assert.match(implement, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
+  assert.match(implement, /^allowed-tools:.*\bEdit\b/m);
+  assert.match(implement, /^allowed-tools:.*Bash\(npm:\*\)/m);
   assert.equal(
     (implement.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
     5,
@@ -198,6 +214,10 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(quick, /plan-state --json/);
   assert.match(quick, /plan-store --json/);
   assert.match(quick, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
+  assert.match(quick, /^allowed-tools:.*\bEdit\b/m);
+  assert.match(quick, /^allowed-tools:.*Bash\(npm:\*\)/m);
+  assert.match(quick, /`<plannerSelectionArgs>` = `--model/);
+  assert.match(quick, /`<reviewSelectionArgs>` =\s*\n?\s*`--model/);
   assert.equal(
     (quick.match(/--plan-file "<payloadFile>"/g) ?? []).length,
     2,
@@ -257,6 +277,18 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
       source.includes(`"${continuationSection}" rule`),
       true,
       `${file} must cite the canonical continuation rule`,
+    );
+  }
+
+  for (const [file, source] of [
+    ['plan.md', plan],
+    ['quick.md', quick],
+    ['skills/model-routing/SKILL.md', routing],
+  ] as const) {
+    assert.match(
+      source,
+      /^node .*plan-store .*--thread.*\|--no-thread.*$/m,
+      `${file} must make stored thread ownership explicit`,
     );
   }
 
@@ -346,6 +378,17 @@ test('pair agents keep their role-specific tool and output contracts', () => {
   assert.match(implementationReviewer, /schemas\/implementation-review-output\.schema\.json/);
 
   assert.doesNotThrow(() => JSON.parse(read('schemas/implementation-review-output.schema.json')));
+
+  const rescueAgent = read('agents/codex-rescue.md');
+  assert.match(rescueAgent, /^tools:\s*Read, Bash$/m);
+  const rescueRuntime = read('skills/codex-cli-runtime/SKILL.md');
+  for (const [file, source] of [
+    ['agents/codex-rescue.md', rescueAgent],
+    ['skills/codex-cli-runtime/SKILL.md', rescueRuntime],
+  ] as const) {
+    assert.doesNotMatch(source, /return nothing/i, file);
+    assert.match(source, /\/stereo:setup/, file);
+  }
 
   for (const file of [
     'adversarial-reviewer.md',

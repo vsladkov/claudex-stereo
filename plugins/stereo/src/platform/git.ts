@@ -420,10 +420,28 @@ function formatUntrackedFile(cwd: string, relativePath: string): string {
   return [`### ${relativePath}`, '```', buffer.toString('utf8').trimEnd(), '```'].join('\n');
 }
 
+function formatUntrackedFiles(cwd: string, files: string[], budgetBytes: number): string {
+  const sections: string[] = [];
+  let usedBytes = 0;
+  for (let index = 0; index < files.length; index += 1) {
+    const section = formatUntrackedFile(cwd, files[index] as string);
+    const sectionBytes = Buffer.byteLength(section, 'utf8');
+    if (usedBytes + sectionBytes > budgetBytes) {
+      sections.push(
+        `(+${files.length - index} more untracked file(s) omitted: aggregate limit of ${budgetBytes} bytes reached)`,
+      );
+      break;
+    }
+    sections.push(section);
+    usedBytes += sectionBytes;
+  }
+  return sections.join('\n\n');
+}
+
 function collectWorkingTreeContext(
   cwd: string,
   state: WorkingTreeState,
-  options: { includeDiff?: boolean } = {},
+  options: { includeDiff?: boolean; maxUntrackedTotalBytes: number },
 ): WorkingTreeReviewDetails {
   const includeDiff = options.includeDiff !== false;
   const status = gitChecked(cwd, ['status', '--short', '--untracked-files=all']).stdout.trim();
@@ -444,9 +462,11 @@ function collectWorkingTreeContext(
       '--no-ext-diff',
       '--submodule=diff',
     ]).stdout;
-    const untrackedBody = state.untracked
-      .map((file) => formatUntrackedFile(cwd, file))
-      .join('\n\n');
+    const untrackedBody = formatUntrackedFiles(
+      cwd,
+      state.untracked,
+      options.maxUntrackedTotalBytes,
+    );
     parts = [
       formatSection('Git Status', status),
       formatSection('Staged Diff', stagedDiff),
@@ -456,9 +476,11 @@ function collectWorkingTreeContext(
   } else {
     const stagedStat = gitChecked(cwd, ['diff', '--shortstat', '--cached']).stdout.trim();
     const unstagedStat = gitChecked(cwd, ['diff', '--shortstat']).stdout.trim();
-    const untrackedBody = state.untracked
-      .map((file) => formatUntrackedFile(cwd, file))
-      .join('\n\n');
+    const untrackedBody = formatUntrackedFiles(
+      cwd,
+      state.untracked,
+      options.maxUntrackedTotalBytes,
+    );
     parts = [
       formatSection('Git Status', status),
       formatSection('Staged Diff Stat', stagedStat),
@@ -559,7 +581,10 @@ export function collectReviewContext(
       options.includeDiff ??
       (listUniqueFiles(state.staged, state.unstaged, state.untracked).length <= maxInlineFiles &&
         diffBytes <= maxInlineDiffBytes);
-    details = collectWorkingTreeContext(repoRoot, state, { includeDiff });
+    details = collectWorkingTreeContext(repoRoot, state, {
+      includeDiff,
+      maxUntrackedTotalBytes: maxInlineDiffBytes,
+    });
   } else {
     const comparison = buildBranchComparison(repoRoot, target.baseRef);
     const fileCount = gitChecked(repoRoot, ['diff', '--name-only', comparison.commitRange])

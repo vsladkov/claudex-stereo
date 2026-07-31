@@ -7,7 +7,7 @@ import {
   looksLikeVerificationCommand,
 } from '../runtime/index.ts';
 import type { SessionRuntimeStatus, StrandedReservationEntry } from '../runtime/index.ts';
-import { getConfig, listJobs, readJobFile, resolveJobFile } from '../workspace/state.ts';
+import { getConfig, listJobs, readJobFile, resolveJobFile, upsertJob } from '../workspace/state.ts';
 import type { JobRecord, StereoConfig } from '../workspace/state.ts';
 import { modelProviderFor } from '../models/registry.ts';
 import { SESSION_ID_ENV } from './tracked-jobs.ts';
@@ -481,6 +481,27 @@ export function resolveResultJob(
     },
   );
   if (active) {
+    let stored: JobRecord | null = null;
+    try {
+      stored = readStoredJob(workspaceRoot, active.id);
+    } catch {
+      // A missing or corrupt per-job file preserves the existing active-job error.
+    }
+    if (
+      stored &&
+      (stored.status === 'completed' || stored.status === 'failed' || stored.status === 'cancelled')
+    ) {
+      const repairedFields = {
+        id: stored.id,
+        status: stored.status,
+        phase: stored.phase,
+        pid: null,
+        errorMessage: stored.errorMessage,
+        completedAt: stored.completedAt,
+      };
+      upsertJob(workspaceRoot, repairedFields);
+      return { workspaceRoot, job: { ...active, ...repairedFields } };
+    }
     throw new Error(
       `Job ${active.id} is still ${active.status}. Check /stereo:status and try again once it finishes.`,
     );

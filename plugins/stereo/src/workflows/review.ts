@@ -105,6 +105,9 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
         stdout: result.reviewText,
         reasoning: result.reasoningSummary,
       },
+      ...(result.droppedNotifications > 0
+        ? { droppedNotifications: result.droppedNotifications }
+        : {}),
     };
     const rendered = renderNativeReviewResult(
       {
@@ -166,6 +169,9 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
     rawOutput: parsed.rawOutput,
     parseError: parsed.parseError,
     reasoningSummary: result.reasoningSummary,
+    ...(result.droppedNotifications > 0
+      ? { droppedNotifications: result.droppedNotifications }
+      : {}),
   };
 
   return {

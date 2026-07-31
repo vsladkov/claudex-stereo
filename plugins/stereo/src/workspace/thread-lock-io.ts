@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { processHasExited } from '../platform/process.ts';
+
 const THREAD_RESERVATION_DIR = 'companion-thread-locks';
 
 // Reservation JSON is untrusted disk state. Callers must validate the fields
@@ -44,6 +46,10 @@ export interface ClaimAndDeleteThreadLockResult {
   reason: string;
 }
 
+export interface ReapClaimOptions {
+  isProcessAlive?: (pid: number) => boolean;
+}
+
 export function resolveCodexHome(): string {
   return path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'));
 }
@@ -68,14 +74,42 @@ export function readReservationRecord(lockPath: string): StoredReservationRecord
   }
 }
 
+export function reapDeadCleanupClaim(cleanupPath: string, options: ReapClaimOptions = {}): boolean {
+  let claim: unknown;
+  try {
+    claim = JSON.parse(fs.readFileSync(cleanupPath, 'utf8'));
+  } catch {
+    return false;
+  }
+
+  const pid = (claim as { pid?: unknown } | null)?.pid;
+  if (!Number.isInteger(pid) || (pid as number) <= 0) {
+    return false;
+  }
+  const processAlive = options.isProcessAlive
+    ? options.isProcessAlive(pid as number)
+    : !processHasExited(pid as number);
+  if (processAlive) {
+    return false;
+  }
+
+  try {
+    fs.unlinkSync(cleanupPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+  return true;
+}
+
 export async function claimAndDeleteThreadLock(
   threadId: string,
   options: ClaimAndDeleteThreadLockOptions,
 ): Promise<ClaimAndDeleteThreadLockResult> {
   const lockPath = options.lockPath ?? threadReservationPath(threadId);
   const cleanupPath = `${lockPath}.cleanup`;
-
-  try {
+  const createClaim = (): void => {
     fs.writeFileSync(
       cleanupPath,
       `${JSON.stringify({
@@ -85,16 +119,37 @@ export async function claimAndDeleteThreadLock(
       })}\n`,
       { encoding: 'utf8', flag: 'wx' },
     );
+  };
+
+  try {
+    createClaim();
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'EEXIST') {
-      return {
-        released: false,
-        status: 'claim-exists',
-        path: lockPath,
-        reason: `Reservation cleanup is already in progress for ${lockPath}.`,
-      };
+      if (reapDeadCleanupClaim(cleanupPath)) {
+        try {
+          createClaim();
+        } catch (retryError) {
+          if ((retryError as NodeJS.ErrnoException | null | undefined)?.code !== 'EEXIST') {
+            throw retryError;
+          }
+          return {
+            released: false,
+            status: 'claim-exists',
+            path: lockPath,
+            reason: `Reservation cleanup is already in progress for ${lockPath}.`,
+          };
+        }
+      } else {
+        return {
+          released: false,
+          status: 'claim-exists',
+          path: lockPath,
+          reason: `Reservation cleanup is already in progress for ${lockPath}.`,
+        };
+      }
+    } else {
+      throw error;
     }
-    throw error;
   }
 
   try {
