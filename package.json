@@ -1,6 +1,6 @@
 {
   "name": "claudex-stereo",
-  "version": "1.31.0",
+  "version": "1.31.1",
   "private": true,
   "type": "module",
   "description": "Use Codex from Claude Code to review code or delegate tasks.",

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.31.1
+
+- Fix the two Windows CI lane test failures from the v1.31.0 run: `createBrokerEndpoint` now
+  builds its unix socket path with `path.posix.join` (a Windows host asking for a non-win32
+  endpoint previously got backslashes), and the test fixture `makeTempDir` returns the
+  canonicalized (`fs.realpathSync.native`) temp directory so the runners' 8.3 short-form paths
+  never enter comparisons
+- Canonicalize `resolveContainedUserFile`'s candidate and allowed roots with
+  `fs.realpathSync.native` as well, keeping file containment consistent with long-form paths and
+  making short-form user input work on Windows
+
 ## 1.31.0
 
 - Add worktree-isolated implementation via `/stereo:implement --isolated`: the implementer works in
