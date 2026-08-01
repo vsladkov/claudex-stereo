@@ -38,12 +38,24 @@ interface PendingRequest {
 
 const MAX_STDERR_BYTES = 64 * 1024;
 const PLUGIN_MANIFEST_URL = new URL('../../.claude-plugin/plugin.json', import.meta.url);
-const PLUGIN_MANIFEST = JSON.parse(fs.readFileSync(PLUGIN_MANIFEST_URL, 'utf8'));
+
+export function readPluginVersion(manifestUrl: URL = PLUGIN_MANIFEST_URL): string {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestUrl, 'utf8')) as { version?: unknown };
+    return typeof manifest?.version === 'string' ? manifest.version : '0.0.0';
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    process.stderr.write(
+      `Stereo: could not read plugin.json (${detail}); reporting client version 0.0.0.\n`,
+    );
+    return '0.0.0';
+  }
+}
 
 const DEFAULT_CLIENT_INFO: ClientInfo = {
   title: 'Codex Plugin',
   name: 'Claude Code',
-  version: PLUGIN_MANIFEST.version ?? '0.0.0',
+  version: readPluginVersion(),
 };
 
 const DEFAULT_CAPABILITIES: InitializeCapabilities = {

@@ -42,7 +42,7 @@ async function main(fullArgv: string[]): Promise<void> {
       await handlePlanState(argv);
       break;
     case 'plan-store':
-      handlePlanStore(argv);
+      await handlePlanStore(argv);
       break;
     case 'implement-state':
       handleImplementState(argv);

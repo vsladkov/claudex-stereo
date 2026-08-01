@@ -21,6 +21,13 @@ export interface StopReviewDecision {
   reason: string | null;
 }
 
+export interface StopReviewSpawnResult {
+  error?: NodeJS.ErrnoException;
+  status: number | null;
+  stdout: unknown;
+  stderr: unknown;
+}
+
 interface StopHookInput {
   cwd?: string;
   session_id?: string;
@@ -107,22 +114,19 @@ export function parseStopReviewOutput(rawOutput: unknown): StopReviewDecision {
   };
 }
 
-function runStopReview(cwd: string, input: StopHookInput = {}): StopReviewDecision {
-  const scriptPath = COMPANION_ENTRY;
-  const prompt = buildStopReviewPrompt(input);
-  const childEnv = {
-    ...process.env,
-    ...(input.session_id ? { [SESSION_ID_ENV]: input.session_id } : {}),
-  };
-  const timeoutMs = resolveStopReviewTimeoutMs();
-  const result = spawnSync(process.execPath, [scriptPath, 'task', '--json', prompt], {
-    cwd,
-    env: childEnv,
-    encoding: 'utf8',
-    timeout: timeoutMs,
-  });
+export function interpretStopReviewSpawn(
+  result: StopReviewSpawnResult,
+  timeoutMs: number,
+): StopReviewDecision {
+  if (result.error?.code === 'ENOBUFS') {
+    return {
+      ok: false,
+      reason:
+        'The stop-time Codex review task produced more output than the review hook can buffer. Run /stereo:review --wait manually or bypass the gate.',
+    };
+  }
 
-  if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') {
+  if (result.error?.code === 'ETIMEDOUT') {
     const timeoutMinutes = Math.round(timeoutMs / 60000);
     return {
       ok: false,
@@ -141,7 +145,7 @@ function runStopReview(cwd: string, input: StopHookInput = {}): StopReviewDecisi
   }
 
   try {
-    const payload = JSON.parse(result.stdout) as { rawOutput?: unknown } | null;
+    const payload = JSON.parse(String(result.stdout ?? '')) as { rawOutput?: unknown } | null;
     return parseStopReviewOutput(payload?.rawOutput);
   } catch {
     return {
@@ -150,6 +154,24 @@ function runStopReview(cwd: string, input: StopHookInput = {}): StopReviewDecisi
         'The stop-time Codex review task returned invalid JSON. Run /stereo:review --wait manually or bypass the gate.',
     };
   }
+}
+
+function runStopReview(cwd: string, input: StopHookInput = {}): StopReviewDecision {
+  const scriptPath = COMPANION_ENTRY;
+  const prompt = buildStopReviewPrompt(input);
+  const childEnv = {
+    ...process.env,
+    ...(input.session_id ? { [SESSION_ID_ENV]: input.session_id } : {}),
+  };
+  const timeoutMs = resolveStopReviewTimeoutMs();
+  const result = spawnSync(process.execPath, [scriptPath, 'task', '--json', prompt], {
+    cwd,
+    env: childEnv,
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return interpretStopReviewSpawn(result, timeoutMs);
 }
 
 export function evaluateStopReview(

@@ -582,7 +582,7 @@ checks:
    `status <jobId> --json` first:
    - For `queued` or `running`, report its phase and elapsed time and ask exactly once whether to
      wait or stop and leave it running. Waiting uses the routing skill's bounded
-     `status <jobId> --wait --timeout-ms 90000 --json` windows; once terminal, fetch its result and
+     `status <jobId> --wait --timeout-ms 90000` windows; once terminal, fetch its result and
      continue.
    - For `completed`, run `result <jobId> --json` and use the real report as the round-1 implementer
      report in `{{REVIEW_CONTEXT}}`, rather than a stored summary.

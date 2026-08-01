@@ -91,6 +91,7 @@ test('directly-wired commands disable model invocation of the command file', () 
     'rescue.md',
     'result.md',
     'review.md',
+    'setup.md',
     'status.md',
     'transfer.md',
   ]) {
@@ -101,7 +102,11 @@ test('directly-wired commands disable model invocation of the command file', () 
 test('pair commands load the canonical routing skill and keep workflow wiring', () => {
   const continuationSection = 'Continuing an agent across review rounds';
   const routing = read('skills/model-routing/SKILL.md');
-  assert.match(routing, /status <jobId> --wait --timeout-ms 90000 --json/);
+  assert.match(
+    routing,
+    /status <jobId> --wait --timeout-ms 90000 \| grep -E 'Phase\|Elapsed\|\^ \{4\}'/,
+  );
+  assert.match(routing, /result <jobId> --json/);
   for (const role of [
     'planner',
     'plan-reviewer',

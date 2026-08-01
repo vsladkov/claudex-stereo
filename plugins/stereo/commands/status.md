@@ -15,7 +15,9 @@ If the user did not pass a job ID:
 
 - When the user passed `--verbose`, do not compress the command output to the single compact table; include its per-job detail lines for log paths, timestamps, and progress.
 - When the user did not pass `--verbose`, render the command output as a single Markdown table for the current and past runs in this session.
-- Keep non-verbose output compact. Do not include progress blocks or extra prose outside the table, except for a `Warnings:` section from the command output.
+- Keep non-verbose output compact. Preserve the `Session runtime:` and `Review gate:` header lines
+  above the table, but do not include progress blocks or other prose outside the table except for
+  a `Warnings:` section from the command output.
 - Preserve the actionable fields from the command output, including job ID, kind, model, status, phase, elapsed or duration, summary, and follow-up commands.
 - Keep the `Model` column in the table; it may show `model@provider`, and an absent model must remain `-`.
 

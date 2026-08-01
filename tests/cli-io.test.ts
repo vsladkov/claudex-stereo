@@ -5,6 +5,8 @@ import test from 'node:test';
 
 import { makeTempDir } from './helpers.ts';
 import { parseCommandInput, readUserFile, wasJsonRequested } from '../plugins/stereo/src/cli/io.ts';
+import { readStdinSyncBestEffort, resolveStdinTimeoutMs } from '../plugins/stereo/src/shared/fs.ts';
+import { PLUGIN_ROOT } from '../plugins/stereo/src/shared/paths.ts';
 
 // wasJsonRequested keeps module-level state: the raw-argv fallback applies
 // only until the first parseCommandInput call in this process, so this test
@@ -101,5 +103,117 @@ test('readUserFile reports the flag name and resolved path when the read fails',
     (error: unknown) =>
       error instanceof Error &&
       error.message.startsWith(`Could not read --prompt-file ${resolved}:`),
+  );
+});
+
+test('readStdinSyncBestEffort retries EAGAIN and returns data through EOF', () => {
+  let call = 0;
+  const readImpl = ((
+    _fd: number,
+    buffer: NodeJS.ArrayBufferView,
+    offset: number,
+    _length: number,
+  ) => {
+    call += 1;
+    if (call === 1) {
+      throw Object.assign(new Error('try again'), { code: 'EAGAIN' });
+    }
+    if (call === 2) {
+      return Buffer.from('hook input').copy(buffer as Buffer, offset);
+    }
+    throw Object.assign(new Error('end of file'), { code: 'EOF' });
+  }) as typeof fs.readSync;
+
+  assert.equal(readStdinSyncBestEffort({ readImpl, nowImpl: () => 0 }), 'hook input');
+});
+
+test('readStdinSyncBestEffort bounds persistent EAGAIN and swallows other errors', () => {
+  let now = 0;
+  const eagain = (() => {
+    throw Object.assign(new Error('try again'), { code: 'EAGAIN' });
+  }) as typeof fs.readSync;
+  assert.equal(
+    readStdinSyncBestEffort({
+      readImpl: eagain,
+      nowImpl: () => {
+        now += 125;
+        return now;
+      },
+      budgetMs: 250,
+    }),
+    '',
+  );
+
+  const denied = (() => {
+    throw Object.assign(new Error('denied'), { code: 'EACCES' });
+  }) as typeof fs.readSync;
+  assert.equal(readStdinSyncBestEffort({ readImpl: denied }), '');
+});
+
+test('resolveStdinTimeoutMs uses the broker-style positive deadline parser', () => {
+  assert.equal(resolveStdinTimeoutMs({}), 10_000);
+  assert.equal(resolveStdinTimeoutMs({ CODEX_STDIN_TIMEOUT_MS: '500' }), 500);
+  assert.equal(resolveStdinTimeoutMs({ CODEX_STDIN_TIMEOUT_MS: '0' }), 0);
+  assert.equal(resolveStdinTimeoutMs({ CODEX_STDIN_TIMEOUT_MS: 'invalid' }), 10_000);
+});
+
+test('readUserFile allows workspace, temp, and plugin files', () => {
+  const workspace = makeTempDir();
+  const nested = path.join(workspace, 'nested');
+  fs.mkdirSync(nested);
+  fs.writeFileSync(path.join(workspace, 'workspace.md'), 'workspace\n', 'utf8');
+  const tempFile = path.join(makeTempDir(), 'temp.md');
+  fs.writeFileSync(tempFile, 'temp\n', 'utf8');
+
+  assert.equal(readUserFile(nested, '--prompt-file', '../workspace.md'), 'workspace\n');
+  assert.equal(readUserFile(nested, '--prompt-file', tempFile), 'temp\n');
+  assert.match(
+    readUserFile(
+      nested,
+      '--output-schema',
+      path.join(PLUGIN_ROOT, 'schemas', 'review-output.schema.json'),
+    ),
+    /"findings"/,
+  );
+});
+
+test('readUserFile rejects lexical escapes and symlinks whose targets are outside every root', () => {
+  const outside = fs.realpathSync(process.execPath);
+  const escaped = path.relative(PLUGIN_ROOT, outside);
+  const escapedResolved = path.resolve(PLUGIN_ROOT, escaped);
+  assert.throws(
+    () => readUserFile(PLUGIN_ROOT, '--prompt-file', escaped),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.startsWith(`Refusing to read --prompt-file ${escapedResolved}:`),
+  );
+
+  const tempDir = makeTempDir();
+  const link = path.join(tempDir, 'outside-link');
+  try {
+    fs.symlinkSync(outside, link, 'file');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+      return;
+    }
+    throw error;
+  }
+  assert.throws(
+    () => readUserFile(tempDir, '--prompt-file', link),
+    (error: unknown) =>
+      error instanceof Error && error.message.startsWith(`Refusing to read --prompt-file ${link}:`),
+  );
+});
+
+test('readUserFile rejects files larger than 16 MiB', () => {
+  const cwd = makeTempDir();
+  const oversized = path.join(cwd, 'oversized.md');
+  fs.writeFileSync(oversized, Buffer.alloc(16 * 1024 * 1024 + 1, 0x61));
+
+  assert.throws(
+    () => readUserFile(cwd, '--prompt-file', oversized),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === `--prompt-file ${oversized} is larger than 16 MiB.`,
   );
 });

@@ -1,10 +1,16 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
 import { parseArgs, splitRawArgumentString } from '../shared/args.ts';
 import type { ParseArgsConfig, ParsedArgs, ParsedOptionValue } from '../shared/args.ts';
-import { readStdinIfPiped } from '../shared/fs.ts';
+import {
+  isOutsideAllowedRootsError,
+  readStdinTextIfPiped,
+  resolveContainedUserFile,
+} from '../shared/fs.ts';
+import { PLUGIN_ROOT } from '../shared/paths.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 
 // Parsed option bags as the command handlers receive them.
@@ -74,35 +80,84 @@ export function resolveCommandWorkspace(options: CommandOptions = {}): string {
   return resolveWorkspaceRoot(resolveCommandCwd(options));
 }
 
-export function readUserFile(cwd: string, flagName: string, value: string): string {
+const MAX_USER_FILE_BYTES = 16 * 1024 * 1024;
+
+export function readUserFile(cwd: string, flagName: string, value: string): string;
+export function readUserFile<T>(
+  cwd: string,
+  flagName: string,
+  value: string,
+  readImpl: (filePath: string) => T,
+): T;
+export function readUserFile<T = string>(
+  cwd: string,
+  flagName: string,
+  value: string,
+  readImpl: (filePath: string) => T = (filePath) => fs.readFileSync(filePath, 'utf8') as T,
+): T {
   const resolved = path.resolve(cwd, value);
+  let contained: string;
   try {
-    return fs.readFileSync(resolved, 'utf8');
+    const allowedRoots = [resolveWorkspaceRoot(cwd), cwd, os.tmpdir(), PLUGIN_ROOT];
+    if (process.env.CLAUDE_PLUGIN_ROOT) {
+      allowedRoots.push(process.env.CLAUDE_PLUGIN_ROOT);
+    }
+    contained = resolveContainedUserFile(resolved, allowedRoots);
   } catch (error) {
+    if (isOutsideAllowedRootsError(error)) {
+      throw new Error(
+        `Refusing to read ${flagName} ${resolved}: it is outside this workspace, the OS temp directory, and the plugin directory. Copy the file into the repository or a temp directory and retry.`,
+      );
+    }
+    throw new Error(
+      `Could not read ${flagName} ${resolved}: ${(error as NodeJS.ErrnoException | null)?.message ?? error}`,
+    );
+  }
+
+  try {
+    if (fs.statSync(contained).size > MAX_USER_FILE_BYTES) {
+      throw new Error(`${flagName} ${resolved} is larger than 16 MiB.`);
+    }
+    return readImpl(contained);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === `${flagName} ${resolved} is larger than 16 MiB.`
+    ) {
+      throw error;
+    }
     throw new Error(
       `Could not read ${flagName} ${resolved}: ${(error as NodeJS.ErrnoException | null)?.message ?? error}`,
     );
   }
 }
 
-export function readTaskPrompt(
+export async function readTaskPrompt(
   cwd: string,
   options: CommandOptions,
   positionals: string[],
-): string {
+): Promise<string> {
   if (options['prompt-file']) {
     return readUserFile(cwd, '--prompt-file', options['prompt-file'] as string);
   }
 
   const positionalPrompt = positionals.join(' ');
-  return positionalPrompt || readStdinIfPiped();
+  return (
+    positionalPrompt || (await readStdinTextIfPiped({ label: 'task prompt', onTimeout: 'empty' }))
+  );
 }
 
-export function readPlanInput(cwd: string, options: CommandOptions, positionals: string[]): string {
+export async function readPlanInput(
+  cwd: string,
+  options: CommandOptions,
+  positionals: string[],
+): Promise<string> {
   if (options['plan-file']) {
     return readUserFile(cwd, '--plan-file', options['plan-file'] as string);
   }
 
   const positionalPlan = positionals.join(' ');
-  return positionalPlan || readStdinIfPiped();
+  return (
+    positionalPlan || (await readStdinTextIfPiped({ label: 'plan input', onTimeout: 'empty' }))
+  );
 }

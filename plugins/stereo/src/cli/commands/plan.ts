@@ -6,12 +6,14 @@ import {
   normalizeRequestedModel,
   PAIR_DEFAULT_MODEL,
 } from '../../models/registry.ts';
-import { readStdinIfPiped } from '../../shared/fs.ts';
+import { readStdinTextIfPiped } from '../../shared/fs.ts';
 import {
+  clearImplementState,
   clearPairPlanState,
   ensureStateDir,
   loadPairPlanState,
   nowIso,
+  readImplementStateFile,
   resolvePairPlanMarkdownFile,
   savePairPlanState,
   writeTextAtomic,
@@ -127,7 +129,7 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
   const round = normalizePlanReviewRound(options.round);
   const threadId =
     typeof options.thread === 'string' && options.thread.trim() ? options.thread.trim() : null;
-  const plan = readPlanInput(cwd, options, positionals);
+  const plan = await readPlanInput(cwd, options, positionals);
   if (!plan.trim()) {
     throw new Error('Provide the plan via --plan-file, piped stdin, or positional text.');
   }
@@ -193,11 +195,29 @@ export async function handlePlanState(
   const workspaceRoot = resolveCommandWorkspace(options);
   if (options.clear) {
     const removed = clearPairPlanState(workspaceRoot);
-    const payload = { cleared: removed.length > 0, removed };
-    const rendered =
+    const implementState = readImplementStateFile(workspaceRoot);
+    const implementStateStatus = implementState.missing
+      ? null
+      : implementState.parseError
+        ? 'unreadable'
+        : (optionalString((implementState.record as { status?: unknown } | null)?.status) ??
+          'unreadable');
+    const clearedImplementState = clearImplementState(workspaceRoot);
+    const payload = {
+      cleared: removed.length > 0,
+      removed,
+      clearedImplementState: clearedImplementState.length > 0,
+      implementStateStatus,
+    };
+    const planRendered =
       removed.length > 0
         ? `Cleared the stored plan for this repository.\n${removed.map((filePath) => `- ${filePath}`).join('\n')}\n`
         : 'No stored plan for this repository. Nothing to clear.\n';
+    const implementRendered =
+      clearedImplementState.length > 0
+        ? `Also cleared the implementation record (status: ${implementStateStatus ?? 'unreadable'}).\n${clearedImplementState.map((filePath) => `- ${filePath}`).join('\n')}\n`
+        : '';
+    const rendered = `${planRendered}${implementRendered}`;
     outputCommandResult(payload, rendered, options.json);
     return;
   }
@@ -240,7 +260,7 @@ export async function handlePlanState(
   );
 }
 
-export function handlePlanStore(argv: string[]): void {
+export async function handlePlanStore(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ['cwd', 'verdict', 'round', 'reviewed-by', 'summary', 'findings-file', 'thread'],
     arrayOptions: ['open-question', 'residual-risk'],
@@ -259,7 +279,7 @@ export function handlePlanStore(argv: string[]): void {
     throw new Error('Provide --verdict <value>.');
   }
 
-  const plan = readStdinIfPiped();
+  const plan = await readStdinTextIfPiped({ label: 'plan-store', onTimeout: 'error' });
   if (!plan.trim()) {
     throw new Error('Provide the plan via piped stdin.');
   }

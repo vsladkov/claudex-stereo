@@ -141,6 +141,40 @@ test('an asynchronous detached-worker spawn error terminalizes the queued job', 
   );
 });
 
+test('the post-spawn pid patch preserves a worker-written running status', (t) => {
+  useTempCodexHome(t);
+  const workspaceRoot = makeTempDir('companion-spawn-race-');
+  const job = createCompanionJob({
+    prefix: 'task',
+    kind: 'task',
+    title: 'Spawn race task',
+    workspaceRoot,
+    jobClass: 'task',
+    summary: 'Preserve the worker transition',
+    model: null,
+  });
+  const child = Object.assign(new EventEmitter(), {
+    pid: 8765,
+    unref: () => child,
+  });
+  const spawnImpl = (() => {
+    const queued = readJobFile(resolveJobFile(workspaceRoot, job.id));
+    writeJobFile(workspaceRoot, job.id, {
+      ...queued,
+      status: 'running',
+      phase: 'running',
+    });
+    return child;
+  }) as unknown as typeof spawn;
+
+  enqueueBackgroundTask(workspaceRoot, job, { prompt: 'run' }, { spawnImpl });
+
+  const stored = readJobFile(resolveJobFile(workspaceRoot, job.id));
+  assert.equal(stored.status, 'running');
+  assert.equal(stored.phase, 'running');
+  assert.equal(stored.pid, 8765);
+});
+
 test('signal terminalization cancels an active job and is idempotent', () => {
   const workspaceRoot = makeTempDir('companion-signal-terminal-');
   const jobId = 'running-signal-job';

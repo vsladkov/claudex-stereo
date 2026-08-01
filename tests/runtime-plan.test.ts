@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -25,8 +26,10 @@ import {
 import {
   loadPairPlanState,
   resolveDurableStateDir,
+  resolveImplementStateFile,
   resolvePairPlanFile,
   resolvePairPlanMarkdownFile,
+  saveImplementState,
   savePairPlanState,
 } from '../plugins/stereo/src/workspace/state.ts';
 import {
@@ -75,6 +78,44 @@ function storedPlan(overrides: Partial<StoredPairPlanState> = {}): StoredPairPla
     residualRisks: ['Manual fallback remains available.'],
     ...overrides,
   };
+}
+
+async function runWithOpenStdin(
+  args: string[],
+  options: { cwd: string; env?: NodeJS.ProcessEnv },
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const child = spawn(process.execPath, [SCRIPT, ...args], {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(
+        new Error(`child did not exit after stdin deadline; stdout=${stdout} stderr=${stderr}`),
+      );
+    }, 5_000);
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once('close', (status) => {
+      clearTimeout(timeout);
+      resolve({ status, stdout, stderr });
+    });
+  });
 }
 
 test('plan-review applies sol/max defaults and names a pair thread', () => {
@@ -779,6 +820,67 @@ test('plan-store rejects a missing verdict and empty stdin with JSON usage error
   });
 });
 
+test('plan-store times out a pipe that never closes with a structured error', async () => {
+  const workspace = makeTempDir();
+  const result = await runWithOpenStdin(['plan-store', '--json', '--verdict', 'approve'], {
+    cwd: workspace,
+    env: { ...process.env, CODEX_STDIN_TIMEOUT_MS: '500' },
+  });
+  const expected =
+    'plan-store requires the plan document on stdin; piped input timed out after 0.5s. Redirect a file with < "<planFile>" instead of leaving stdin open.';
+
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), { error: expected });
+  assert.equal(result.stderr.trim(), expected);
+});
+
+test('plan-review degrades an optional never-closing stdin pipe to its usage error', async () => {
+  const workspace = makeTempDir();
+  const result = await runWithOpenStdin(['plan-review', '--json'], {
+    cwd: workspace,
+    env: { ...process.env, CODEX_STDIN_TIMEOUT_MS: '500' },
+  });
+  const expected = 'Provide the plan via --plan-file, piped stdin, or positional text.';
+
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), { error: expected });
+  assert.match(result.stderr, /Ignoring piped stdin for plan input: no input within 0\.5s\./);
+  assert.match(result.stderr, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
+
+test(
+  'plan-store handles a non-blocking FIFO without leaking raw EAGAIN',
+  { skip: process.platform === 'win32' },
+  () => {
+    const workspace = makeTempDir();
+    const fifo = path.join(workspace, 'stdin.fifo');
+    const made = spawnSync('mkfifo', [fifo], { encoding: 'utf8' });
+    assert.equal(made.status, 0, made.stderr);
+    const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [SCRIPT, 'plan-store', '--json', '--verdict', 'approve'],
+        {
+          cwd: workspace,
+          env: { ...process.env, CODEX_STDIN_TIMEOUT_MS: '500' },
+          encoding: 'utf8',
+          stdio: [reader, 'pipe', 'pipe'],
+          timeout: 5_000,
+        },
+      );
+      assert.notEqual(result.status, 0);
+      assert.doesNotMatch(result.stderr, /EAGAIN: resource temporarily unavailable/);
+      assert.match(
+        String(result.stderr),
+        /plan-store requires the plan document on stdin; piped input timed out after 0\.5s\./,
+      );
+    } finally {
+      fs.closeSync(reader);
+    }
+  },
+);
+
 test('plan-store rejects invalid findings files before writing plan state', () => {
   const invalidCases = [
     {
@@ -963,10 +1065,37 @@ test('plan-state --clear removes both artifacts and remains idempotent', async (
   const jsonOutput = await captureStdout(() =>
     handlePlanState(['--cwd', workspace, '--clear', '--json']),
   );
-  assert.deepEqual(JSON.parse(jsonOutput), { cleared: false, removed: [] });
+  assert.deepEqual(JSON.parse(jsonOutput), {
+    cleared: false,
+    removed: [],
+    clearedImplementState: false,
+    implementStateStatus: null,
+  });
+
+  const noRecordOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--clear']),
+  );
+  assert.equal(noRecordOutput, 'No stored plan for this repository. Nothing to clear.\n');
 
   const openOutput = await captureStdout(() => handlePlanState(['--cwd', workspace, '--open']));
   assert.equal(openOutput, 'No stored plan for this repository. Run /stereo:plan first.\n');
+});
+
+test('plan-state --clear also removes and reports the implementation record', async () => {
+  const workspace = makeTempDir();
+  const record = storedPlan();
+  const planPath = resolvePairPlanFile(workspace);
+  const implementPath = resolveImplementStateFile(workspace);
+  savePairPlanState(workspace, record);
+  saveImplementState(workspace, { status: 'in-progress', baselineCommit: 'abc123' });
+
+  const output = await captureStdout(() => handlePlanState(['--cwd', workspace, '--clear']));
+  assert.equal(
+    output,
+    `Cleared the stored plan for this repository.\n- ${planPath}\nAlso cleared the implementation record (status: in-progress).\n- ${implementPath}\n`,
+  );
+  assert.equal(fs.existsSync(planPath), false);
+  assert.equal(fs.existsSync(implementPath), false);
 });
 
 test('plan-state --mark-implemented preserves review time and renders the marker', async () => {

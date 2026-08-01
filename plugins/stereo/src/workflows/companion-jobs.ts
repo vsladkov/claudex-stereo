@@ -392,7 +392,13 @@ export function enqueueBackgroundTask(
     throw error;
   }
   if (child.pid) {
-    writeJobFile(job.workspaceRoot, job.id, { ...queuedRecord, pid: child.pid });
+    let current = null;
+    try {
+      current = readStoredJob(job.workspaceRoot, job.id);
+    } catch {
+      // Preserve the previous whole-record fallback when the stored job cannot be read.
+    }
+    writeJobFile(job.workspaceRoot, job.id, { ...(current ?? queuedRecord), pid: child.pid });
     upsertJob(job.workspaceRoot, { id: job.id, pid: child.pid });
   }
 

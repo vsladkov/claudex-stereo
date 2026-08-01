@@ -252,22 +252,32 @@ whether the round was continued or re-briefed.
 ## Codex background jobs
 
 Launch every Codex pair turn with the command's step-specific companion invocation plus
-`--background --json`. Parse the launch object's `jobId`. Poll in bounded windows:
+`--background --json`. Parse the launch object's `jobId`. Poll in bounded windows with this
+rendered single-pipe command:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 | grep -E 'Phase|Elapsed|^ {4}'
 ```
 
-After every non-terminal poll, report the job phase, elapsed time, and last entry of
-`job.progressPreview`. Poll again while status is `queued` or `running`. At terminal status, fetch:
+Polls run in the foreground and are never backgrounded. A poll is exactly one command and one
+plain `grep`: never use a multi-command chain, a background watcher, or an interpreter pipeline
+such as `node -e`, `jq`, or `python`. The four-space-indented lines retained by the grep are the
+`progressPreview` entries. After every non-terminal window, report the phase, elapsed time, and
+last progress entry as text between tool calls, then poll again while the job is queued or
+running. If the poll exits nonzero or prints nothing, rerun it once without the pipe to read the
+full error, then apply the failure rule below. At terminal status, fetch:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" result <jobId> --json
 ```
 
-Treat a top-level `{"error": ...}` from launch, status, or result as a command failure: surface it
-and stop or follow the command's explicit retry rule. Do not confuse an empty terminal
-`progressPreview` with missing progress.
+Treat a top-level `{"error": ...}` from launch or result, or an error from the rendered status
+poll, as a command failure: surface it and stop or follow the command's explicit retry rule. Do
+not confuse an empty terminal `progressPreview` with missing progress.
+
+A malformed-output retry relaunches on the same thread carrying the original `--model` and effort
+selection arguments plus a `--prompt-file` retry instruction that names the exact validation
+error. A bare `--thread` retry is prohibited because it silently runs the Codex CLI default model.
 
 From every successful `result <jobId> --json` fetch, record `storedJob.tokenUsage.job` as that
 invocation's usage. `storedJob.tokenUsage.thread` is cumulative for the whole Codex thread: it may

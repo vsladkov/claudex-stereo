@@ -18,6 +18,7 @@ const PAIR_PLAN_MARKDOWN_FILE_NAME = 'pair-plan.md';
 const IMPLEMENT_STATE_FILE_NAME = 'implement-state.json';
 export const MAX_JOBS = 50;
 const migrationChecked = new Set<string>();
+const migrationWarningsEmitted = new Set<string>();
 
 export type StereoRoleKey = 'planner' | 'planReviewer' | 'implementer' | 'implementationReviewer';
 
@@ -270,7 +271,12 @@ function copyFileExclusive(source: string, destination: string): void {
   }
 }
 
-function migrateLegacyJobs(legacyJobsDir: string, durableJobsDir: string, relativeDir = ''): void {
+function migrateLegacyJobs(
+  legacyJobsDir: string,
+  durableJobsDir: string,
+  skipped: string[],
+  relativeDir = '',
+): void {
   const sourceDir = path.join(legacyJobsDir, relativeDir);
   if (!fs.existsSync(sourceDir)) {
     return;
@@ -282,14 +288,21 @@ function migrateLegacyJobs(legacyJobsDir: string, durableJobsDir: string, relati
     const source = path.join(legacyJobsDir, relativePath);
     const destination = path.join(durableJobsDir, relativePath);
     if (entry.isDirectory()) {
-      migrateLegacyJobs(legacyJobsDir, durableJobsDir, relativePath);
+      migrateLegacyJobs(legacyJobsDir, durableJobsDir, skipped, relativePath);
       continue;
     }
     if (!entry.isFile()) {
       continue;
     }
     if (entry.name.endsWith('.json')) {
-      const parsed = JSON.parse(fs.readFileSync(source, 'utf8'));
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(fs.readFileSync(source, 'utf8'));
+      } catch {
+        copyFileExclusive(source, destination);
+        skipped.push(source);
+        continue;
+      }
       writeJsonExclusive(destination, rewriteJobLogFile(parsed, legacyJobsDir, durableJobsDir));
       continue;
     }
@@ -317,9 +330,10 @@ export function migrateLegacyState(cwd: string): void {
 
   const legacyJobsDir = path.join(legacyDir, JOBS_DIR_NAME);
   const durableJobsDir = path.join(durableDir, JOBS_DIR_NAME);
+  const skipped: string[] = [];
   try {
     fs.mkdirSync(durableJobsDir, { recursive: true });
-    migrateLegacyJobs(legacyJobsDir, durableJobsDir);
+    migrateLegacyJobs(legacyJobsDir, durableJobsDir, skipped);
 
     const legacyPairPlanFile = path.join(legacyDir, PAIR_PLAN_FILE_NAME);
     if (fs.existsSync(legacyPairPlanFile)) {
@@ -335,6 +349,12 @@ export function migrateLegacyState(cwd: string): void {
     );
     if (fs.existsSync(durableStateFile)) {
       migrationChecked.add(durableDir);
+      if (skipped.length > 0 && !migrationWarningsEmitted.has(durableDir)) {
+        migrationWarningsEmitted.add(durableDir);
+        process.stderr.write(
+          `Stereo: skipped ${skipped.length} unreadable legacy job file(s) during state migration: ${skipped.join(', ')}.\n`,
+        );
+      }
     }
   } catch {
     // Migration is additive and best effort. Leaving the marker absent lets a

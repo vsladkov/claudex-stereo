@@ -41,9 +41,24 @@ function importedThreadIdForSource(sourcePath: string): string | null {
   if (!fs.existsSync(ledgerPath)) {
     return null;
   }
-  const ledger = readJsonFile(ledgerPath) as { records?: unknown } | null;
-  const canonicalSource = fs.realpathSync(sourcePath);
-  const contentSha256 = sourceContentSha256(canonicalSource);
+  let ledger: { records?: unknown } | null;
+  try {
+    ledger = readJsonFile(ledgerPath) as { records?: unknown } | null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not read Codex's external session import ledger at ${ledgerPath}: ${detail}. Remove or repair that file, then rerun /stereo:transfer.`,
+    );
+  }
+  let canonicalSource: string;
+  let contentSha256: string;
+  try {
+    canonicalSource = fs.realpathSync(sourcePath);
+    contentSha256 = sourceContentSha256(canonicalSource);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not read the Claude session file ${sourcePath}: ${detail}.`);
+  }
   const records: Array<ImportLedgerRecord | null | undefined> = Array.isArray(ledger?.records)
     ? ledger.records
     : [];

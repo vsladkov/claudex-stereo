@@ -298,6 +298,24 @@ test('implement-state --complete applies a final patch and --clear is idempotent
   assert.deepEqual(JSON.parse(secondClear.stdout), { cleared: false, removed: [] });
 });
 
+test('implement-state --clear leaves the stored plan intact', async () => {
+  const { repo, env } = setupRepo();
+  storePlan(repo, env, '# Plan retained after implementation-state clear');
+  const stateFile = writePayload(repo, { baselineCommit: 'abc123' });
+  assert.equal(
+    (await runImplementState(repo, env, ['--record', '--state-file', stateFile, '--json'])).status,
+    0,
+  );
+
+  const cleared = await runImplementState(repo, env, ['--clear', '--json']);
+  assert.equal(cleared.status, 0, cleared.stderr);
+  assert.equal(JSON.parse(cleared.stdout).cleared, true);
+  assert.equal(
+    fs.existsSync(path.join(resolveDurableStateDir(repo, env.CODEX_HOME), 'pair-plan.json')),
+    true,
+  );
+});
+
 test('implement-state exposes corrupt state and rejects conflicting or misplaced flags', async () => {
   const { repo, env } = setupRepo();
   const durableDir = resolveDurableStateDir(repo, env.CODEX_HOME);

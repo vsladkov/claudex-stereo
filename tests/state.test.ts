@@ -283,42 +283,41 @@ test('legacy migration ignores legacy data when durable state already exists', (
   });
 });
 
-test('legacy migration retries after a JSON transform failure and handles each workspace once', () => {
-  const workspaceA = makeTempDir();
-  const workspaceB = makeTempDir();
+test('legacy migration preserves corrupt job bytes, publishes its marker, and warns once', () => {
+  const workspace = makeTempDir();
   const pluginDataDir = makeTempDir();
   const codexHome = makeTempDir();
 
   withStateHomes(pluginDataDir, codexHome, () => {
-    const legacyA = writeLegacyWorkspace(workspaceA, { jobId: 'job-a' });
-    writeLegacyWorkspace(workspaceB, { jobId: 'job-b' });
-    fs.writeFileSync(legacyA.legacyJobFile, '{', 'utf8');
+    const legacy = writeLegacyWorkspace(workspace, { jobId: 'job-valid' });
+    const corruptSource = path.join(legacy.legacyDir, 'jobs', 'job-corrupt.json');
+    const corruptBytes = '{corrupt legacy job\n';
+    fs.writeFileSync(corruptSource, corruptBytes, 'utf8');
+    const durableDir = resolveDurableStateDir(workspace);
+    const corruptDestination = path.join(durableDir, 'jobs', 'job-corrupt.json');
+    let stderr = '';
+    const originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderr += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      assert.deepEqual(
+        loadState(workspace).jobs.map((job) => job.id),
+        ['job-valid'],
+      );
+      assert.equal(fs.existsSync(path.join(durableDir, 'state.json')), true);
+      assert.equal(fs.readFileSync(corruptDestination, 'utf8'), corruptBytes);
+      assert.match(stderr, /Stereo: skipped 1 unreadable legacy job file\(s\)/);
+      assert.match(stderr, new RegExp(corruptSource.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
-    assert.deepEqual(loadState(workspaceA).jobs, []);
-    assert.equal(fs.existsSync(path.join(resolveDurableStateDir(workspaceA), 'state.json')), false);
-
-    fs.writeFileSync(
-      legacyA.legacyJobFile,
-      `${JSON.stringify(
-        {
-          id: 'job-a',
-          status: 'failed',
-          logFile: legacyA.legacyLogFile,
-        },
-        null,
-        2,
-      )}\n`,
-      'utf8',
-    );
-
-    assert.deepEqual(
-      loadState(workspaceA).jobs.map((job) => job.id),
-      ['job-a'],
-    );
-    assert.deepEqual(
-      loadState(workspaceB).jobs.map((job) => job.id),
-      ['job-b'],
-    );
+      fs.writeFileSync(corruptSource, '{changed after migration', 'utf8');
+      loadState(workspace);
+      assert.equal(fs.readFileSync(corruptDestination, 'utf8'), corruptBytes);
+      assert.equal((stderr.match(/Stereo: skipped/g) ?? []).length, 1);
+    } finally {
+      process.stderr.write = originalWrite;
+    }
   });
 });
 

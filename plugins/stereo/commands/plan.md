@@ -202,11 +202,18 @@ For a named-Claude draft, record the Agent result's token usage and duration. Fo
 record any invocation metrics the harness exposes. Use `usage unavailable` when the relevant
 result omits metrics.
 
-Validate the seven headings. For malformed named-Claude or Codex output, apply the routing skill's
-single retry. A Codex retry resumes only `plannerThreadId` with a read-only
-`task --background --json --thread <plannerThreadId>`. If the second result is malformed, ask
-whether to draft inline or stop. Correct malformed inline output once; if it still violates the
-heading contract, ask whether to retry inline or stop.
+Validate the seven headings. For malformed named-Claude output, apply the routing skill's single
+retry. For malformed Codex output, apply the routing skill's malformed-output retry: write a retry
+instruction naming the exact validation error, restating the seven-heading contract, and saying
+"return the corrected full plan" to `<retryPayloadFile>` under the routing skill's
+temporary-directory rule, then run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --thread <plannerThreadId> <plannerSelectionArgs> --prompt-file "<retryPayloadFile>"
+```
+
+If the second result is malformed, ask whether to draft inline or stop. Correct malformed inline
+output once; if it still violates the heading contract, ask whether to retry inline or stop.
 
 For `--draft-only`, derive a one-line summary. Write the full draft plan verbatim to
 `<payloadFile>` under the routing skill's temporary-directory rule, then store the draft with no

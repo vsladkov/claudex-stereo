@@ -11,6 +11,7 @@ import { reapWorkspaceBroker } from './broker-reaper.ts';
 import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
 import {
   evaluateStopReview,
+  interpretStopReviewSpawn,
   parseStopReviewOutput,
   resolveStopReviewTimeoutMs,
 } from '../plugins/stereo/src/hooks/stop-review-gate.ts';
@@ -69,6 +70,46 @@ test('stop review timeout defaults below the hooks.json Stop budget and honors t
     defaultTimeout,
   );
   assert.equal(resolveStopReviewTimeoutMs({ CODEX_STOP_REVIEW_TIMEOUT_MS: '-1' }), defaultTimeout);
+});
+
+test('interpretStopReviewSpawn distinguishes overflow, timeout, command, and JSON failures', () => {
+  const overflow = interpretStopReviewSpawn(
+    {
+      error: Object.assign(new Error('overflow'), { code: 'ENOBUFS' }),
+      status: null,
+      stdout: '',
+      stderr: '',
+    },
+    120_000,
+  );
+  assert.equal(overflow.ok, false);
+  assert.match(overflow.reason!, /produced more output than the review hook can buffer/);
+
+  const timeout = interpretStopReviewSpawn(
+    {
+      error: Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }),
+      status: null,
+      stdout: '',
+      stderr: '',
+    },
+    120_000,
+  );
+  assert.match(timeout.reason!, /timed out after 2 minutes/);
+
+  const failed = interpretStopReviewSpawn(
+    { status: 1, stdout: '', stderr: 'review failed' },
+    120_000,
+  );
+  assert.match(failed.reason!, /review task failed: review failed/);
+
+  const invalid = interpretStopReviewSpawn({ status: 0, stdout: '{not-json', stderr: '' }, 120_000);
+  assert.match(invalid.reason!, /returned invalid JSON/);
+
+  const allowed = interpretStopReviewSpawn(
+    { status: 0, stdout: JSON.stringify({ rawOutput: 'ALLOW: clean' }), stderr: '' },
+    120_000,
+  );
+  assert.deepEqual(allowed, { ok: true, reason: null });
 });
 
 const STOP_HOOK = path.join(ROOT, 'plugins', 'stereo', 'scripts', 'stop-review-gate-hook.ts');

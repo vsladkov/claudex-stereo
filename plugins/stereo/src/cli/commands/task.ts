@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 import { normalizeReasoningEffort, normalizeRequestedModel } from '../../models/registry.ts';
 import {
   filterJobsForCurrentSession,
@@ -42,6 +40,7 @@ import {
   outputCommandResult,
   parseCommandInput,
   readTaskPrompt,
+  readUserFile,
   resolveCommandCwd,
   resolveCommandWorkspace,
 } from '../io.ts';
@@ -134,9 +133,9 @@ export async function handleTask(argv: string[]): Promise<void> {
   const effort = normalizeReasoningEffort(options.effort);
   const outputSchema =
     typeof options['output-schema'] === 'string'
-      ? readOutputSchema(path.resolve(cwd, options['output-schema']))
+      ? readUserFile(cwd, '--output-schema', options['output-schema'], readOutputSchema)
       : undefined;
-  const prompt = readTaskPrompt(cwd, options, positionals);
+  const prompt = await readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options['resume-last'] || options.resume);
   const fresh = Boolean(options.fresh);

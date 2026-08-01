@@ -10,6 +10,7 @@ const MAX_UNTRACKED_BYTES = 24 * 1024;
 const DEFAULT_INLINE_DIFF_MAX_FILES = 2;
 const DEFAULT_INLINE_DIFF_MAX_BYTES = 256 * 1024;
 const DEFAULT_REPOSITORY_FILES_MAX_BUFFER_BYTES = 1024 * 1024;
+const COLLECT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 export interface WorkingTreeReviewTarget {
   mode: 'working-tree';
@@ -111,6 +112,23 @@ function gitChecked(
   options: RunCommandOptions = {},
 ): CommandResult {
   return runCommandChecked('git', args, { cwd, ...options, shell: false });
+}
+
+export function gitCollect(
+  cwd: string,
+  args: readonly string[],
+  maxBuffer = COLLECT_MAX_BUFFER_BYTES,
+): CommandResult {
+  try {
+    return gitChecked(cwd, args, { maxBuffer });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'ENOBUFS') {
+      throw new Error(
+        `git ${args[0]} produced more than 64 MiB of output; narrow the review scope (--scope working-tree or --base <ref>).`,
+      );
+    }
+    throw error;
+  }
 }
 
 function listUniqueFiles(...groups: string[][]): string[] {
@@ -444,19 +462,19 @@ function collectWorkingTreeContext(
   options: { includeDiff?: boolean; maxUntrackedTotalBytes: number },
 ): WorkingTreeReviewDetails {
   const includeDiff = options.includeDiff !== false;
-  const status = gitChecked(cwd, ['status', '--short', '--untracked-files=all']).stdout.trim();
+  const status = gitCollect(cwd, ['status', '--short', '--untracked-files=all']).stdout.trim();
   const changedFiles = listUniqueFiles(state.staged, state.unstaged, state.untracked);
 
   let parts;
   if (includeDiff) {
-    const stagedDiff = gitChecked(cwd, [
+    const stagedDiff = gitCollect(cwd, [
       'diff',
       '--cached',
       '--binary',
       '--no-ext-diff',
       '--submodule=diff',
     ]).stdout;
-    const unstagedDiff = gitChecked(cwd, [
+    const unstagedDiff = gitCollect(cwd, [
       'diff',
       '--binary',
       '--no-ext-diff',
@@ -474,8 +492,8 @@ function collectWorkingTreeContext(
       formatSection('Untracked Files', untrackedBody),
     ];
   } else {
-    const stagedStat = gitChecked(cwd, ['diff', '--shortstat', '--cached']).stdout.trim();
-    const unstagedStat = gitChecked(cwd, ['diff', '--shortstat']).stdout.trim();
+    const stagedStat = gitCollect(cwd, ['diff', '--shortstat', '--cached']).stdout.trim();
+    const unstagedStat = gitCollect(cwd, ['diff', '--shortstat']).stdout.trim();
     const untrackedBody = formatUntrackedFiles(
       cwd,
       state.untracked,
@@ -506,17 +524,17 @@ function collectBranchContext(
   const includeDiff = options.includeDiff !== false;
   const comparison = options.comparison ?? buildBranchComparison(cwd, baseRef);
   const currentBranch = getCurrentBranch(cwd);
-  const changedFiles = gitChecked(cwd, ['diff', '--name-only', comparison.commitRange])
+  const changedFiles = gitCollect(cwd, ['diff', '--name-only', comparison.commitRange])
     .stdout.trim()
     .split('\n')
     .filter(Boolean);
-  const logOutput = gitChecked(cwd, [
+  const logOutput = gitCollect(cwd, [
     'log',
     '--oneline',
     '--decorate',
     comparison.commitRange,
   ]).stdout.trim();
-  const diffStat = gitChecked(cwd, ['diff', '--stat', comparison.commitRange]).stdout.trim();
+  const diffStat = gitCollect(cwd, ['diff', '--stat', comparison.commitRange]).stdout.trim();
 
   return {
     mode: 'branch',
@@ -527,7 +545,7 @@ function collectBranchContext(
           formatSection('Diff Stat', diffStat),
           formatSection(
             'Branch Diff',
-            gitChecked(cwd, [
+            gitCollect(cwd, [
               'diff',
               '--binary',
               '--no-ext-diff',
@@ -587,7 +605,7 @@ export function collectReviewContext(
     });
   } else {
     const comparison = buildBranchComparison(repoRoot, target.baseRef);
-    const fileCount = gitChecked(repoRoot, ['diff', '--name-only', comparison.commitRange])
+    const fileCount = gitCollect(repoRoot, ['diff', '--name-only', comparison.commitRange])
       .stdout.trim()
       .split('\n')
       .filter(Boolean).length;

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   collectReviewContext,
   getWorkingTreeState,
+  gitCollect,
   listRepositoryFiles,
   resolveReviewTarget,
 } from '../plugins/stereo/src/platform/git.ts';
@@ -152,6 +153,21 @@ test('collectReviewContext keeps inline diffs for tiny adversarial reviews', () 
   assert.equal(context.fileCount, 1);
   assert.match(context.collectionGuidance, /primary evidence/i);
   assert.match(context.content, /INLINE_MARKER/);
+});
+
+test('collection overflow reports an actionable 64 MiB review-scope error', () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  const changedFile = path.join(cwd, 'changed.txt');
+  fs.writeFileSync(changedFile, 'base\n', 'utf8');
+  run('git', ['add', 'changed.txt'], { cwd });
+  run('git', ['commit', '-m', 'init'], { cwd });
+  fs.writeFileSync(changedFile, 'enough output to exceed a tiny injected buffer\n', 'utf8');
+
+  assert.throws(
+    () => gitCollect(cwd, ['diff'], 1),
+    /git diff produced more than 64 MiB of output; narrow the review scope \(--scope working-tree or --base <ref>\)\./,
+  );
 });
 
 test('collectReviewContext skips untracked directories in working tree review', () => {
