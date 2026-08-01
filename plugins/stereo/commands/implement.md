@@ -1,6 +1,6 @@
 ---
 description: Implement or review the stored plan with independently selected Claude or Codex role models
-argument-hint: '[--implement-only|--review-only] [--resume] [--base <ref>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
+argument-hint: '[--implement-only|--review-only] [--resume] [--isolated] [--base <ref>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -36,6 +36,9 @@ After reading the routing skill, parse all arguments before loading state:
 - `--review-only` reviews the current dirty/untracked implementation delta once without fixing.
 - `--resume` re-enters a recorded incomplete implementation phase after a crashed, compacted, or
   closed Claude session.
+- `--isolated` runs implementation in a throwaway detached git worktree outside the repository
+  and hands the delta back as a user-confirmed patch. It never commits and never writes in the
+  main working tree.
 - `--base <ref>` reviews the committed `<ref>...HEAD` range and is valid only with
   `--review-only`.
 - Without a mode flag, run the complete implement-plus-review/fix phase.
@@ -60,6 +63,12 @@ to run without `--resume` to start over. `--implementation-reviewer`,
 `--resume`. Reject `--base` without `--review-only`. Reject `--scope` in every mode and name
 `--base <ref>` as the supported standalone range control: auto-detecting a default base could
 silently review commits the plan never covered.
+
+Reject `--isolated` with `--review-only` and with `--base`. It remains legal with
+`--implement-only` and `--resume`. On `--resume`, the durable record is authoritative: a bare
+`--resume` against an isolated record resumes in its recorded worktree and says so. Reject
+`--isolated --resume` against a non-isolated record and tell the user to run without `--resume` to
+start a new isolated phase.
 
 On resume, the recorded implementer model and effort remain fixed for later fixes. Re-resolve the
 implementation reviewer through the normal reviewer flag/workspace/default precedence; its
@@ -230,11 +239,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --clear 
 The record carries `baselineCommit`, the baseline-dirty paths, `implementationThreadId`, `jobId`
 (the launched implementation or fix background job, replaced at every launch), implementer
 selection/model/effort/route, implementation-reviewer selection, `mode`, `maxFixRounds`, `round`,
-and `rounds[]`. Every round entry contains its review number, numbered fixes with the latest
-`resolved`/`unresolved` judgment, and bounded implementer-report and host-result summaries. It also
-carries `latestVerdict`, `status`, timestamps, and the plan fingerprint snapshot added by the CLI.
-Store bounded summaries rather than verbatim reports and keep the complete payload below 512 KiB;
-the companion rejects larger files instead of truncating them silently.
+and `rounds[]`. An isolated record additionally carries `isolated: true` and
+`worktree: { "path": "<worktreePath>", "baselineCommit": "<baselineCommit>" }`. Every round entry
+contains its review number, numbered fixes with the latest `resolved`/`unresolved` judgment, and
+bounded implementer-report and host-result summaries. It also carries `latestVerdict`, `status`,
+timestamps, and the plan fingerprint snapshot added by the CLI. Store bounded summaries rather
+than verbatim reports and keep the complete payload below 512 KiB; the companion rejects larger
+files instead of truncating them silently.
 
 Read the current record with:
 
@@ -252,14 +263,17 @@ For the full phase or `--implement-only`, record:
 - The exact paths from `git status --porcelain=v1 --untracked-files=all`.
 
 If dirty, ask whether to stop so the user can commit/stash (recommended) or continue. Preserve the
-baseline-dirty list for attribution and rollback. If the stop-time review gate is enabled, mention
-that completion triggers an additional Codex review and how to disable it during long pair runs.
+baseline-dirty list for attribution and rollback. In isolated mode, use the expanded question in
+**Isolated worktree mode** instead of asking twice. If the stop-time review gate is enabled,
+mention that completion triggers an additional Codex review and how to disable it during long
+pair runs.
 
 After recording the baseline and resolving the implementer, write the initial launch record with
 `implement-state --record --state-file "<statePayloadFile>"`. Include all fields defined above,
-with `round: 0`, `rounds: []`, `status: in-progress`, and no implementation thread or job yet. This
-applies to the full phase and `--implement-only`, so an interrupted implement-only launch can later
-resume at review round 1. Report a write failure and continue.
+with `round: 0`, `rounds: []`, `status: in-progress`, and no implementation thread or job yet. In
+isolated mode, create the worktree first and include its fields as specified below. This applies to
+the full phase and `--implement-only`, so an interrupted implement-only launch can later resume at
+review round 1. Report a write failure and continue.
 
 If the selected implementer is Claude, scan the stored plan's `## Step-by-step changes` before any
 edit for commands beyond the fixed host verification gates: version bumps, package installation,
@@ -271,6 +285,106 @@ code generation, migrations, or interactive/long-running processes. If present, 
 
 Record every user-owned step. The Claude implementer never requests commands, and the orchestrator
 never executes shell text on an agent's behalf.
+
+## Isolated worktree mode
+
+This section applies to a fresh `--isolated` run and to `--resume` when the durable record says
+`isolated: true`. Set `<mainRoot>` to `git rev-parse --show-toplevel`. The worktree is detached and
+temporary; no command in this flow creates a branch or commit.
+
+1. **Extra preflight.** After recording `baselineCommit` and the baseline-dirty paths, if the main
+   tree is dirty, explain that the isolated worktree starts from `HEAD` and therefore does not
+   contain those uncommitted changes. Hand-back refuses patched paths that overlap the dirty set.
+   Ask exactly once whether to stop and commit/stash (recommended) or continue. If the stop-time
+   review gate is enabled, also explain that it reviews the main tree, which remains clean during
+   the isolated run, and point to `/stereo:setup --disable-review-gate`.
+2. **Creation.** Derive `<repoSlug>` from the basename of `<mainRoot>` by replacing every run of
+   characters outside `[A-Za-z0-9._-]` with `-`. Generate a fresh unique `<shortId>` and create the
+   worktree only outside the repository working tree:
+
+   ```bash
+   git -C "<mainRoot>" worktree add --detach "${TMPDIR:-/tmp}/stereo-worktrees/<repoSlug>-<shortId>" HEAD
+   ```
+
+   `git worktree add` creates the missing temporary parent directories. Save the resulting
+   absolute path as `<worktreePath>`. Never place it inside `<mainRoot>`. If creation fails, report
+   the exact failure and stop without launching an implementer.
+
+3. **Companion routing.** Define `<isolationArgs>` as empty in every non-isolated run. In isolated
+   mode it is:
+
+   ```text
+   --cwd "<worktreePath>" --workspace "<mainRoot>"
+   ```
+
+   `--cwd` sets the Codex thread cwd, which confines Codex writes to the worktree. `--workspace`
+   keeps the job record, log, durable state, and shared broker keyed to the main workspace. Thus
+   `/stereo:status`, `/stereo:result`, and `/stereo:cancel` continue to work unchanged from the
+   main repository, and no second worktree-keyed broker is started.
+
+4. **Durable fields.** Add `isolated: true` and
+   `worktree: { "path": "<worktreePath>", "baselineCommit": "<baselineCommit>" }` to the initial
+   `implement-state --record` payload. Both fields survive all later `--update` and `--complete`
+   patches.
+5. **Post-turn containment guard.** After every implementation or fix turn, run
+   `git -C "<mainRoot>" status --porcelain=v1 --untracked-files=all` and compare its exact path set
+   with the recorded baseline-dirty set. Any new main-tree path means the implementer wrote outside
+   the worktree: stop, report the paths verbatim, and do not continue the loop. Codex-reported
+   `touchedFiles` are absolute to the worktree; do not mistake them for main-tree writes.
+6. **Review and verification target.** Use `git -C "<worktreePath>" ...` for every diff, status,
+   and file inspection. `{{BASELINE_CONTEXT}}` must say that the delta lives in the isolated
+   worktree at `<worktreePath>`, provide its `baselineCommit`, and say that fix `file` values remain
+   repository-relative and are identical in both trees. For a named-Claude or `claude:session`
+   reviewer, provide the absolute worktree path and require inspection with
+   `git -C "<worktreePath>"` and absolute Read paths. If the harness denies reads outside the main
+   workspace, fall back to the complete diff already embedded in `{{BASELINE_CONTEXT}}` and record
+   that limitation in the round note. A contained `stereo:implementer` also receives absolute
+   worktree paths for every Edit, Write, and Read operation. If its Edit or Write is denied outside
+   the main workspace, stop and report the denial instead of falling back to the main tree.
+7. **Host gates.** Run repository gates with the worktree as their working directory. For npm
+   projects use `npm --prefix "<worktreePath>" test`, and the corresponding `npm --prefix` form for
+   every other script. If a gate cannot run because gitignored dependencies or generated artifacts
+   are absent, record its exact result as `not runnable in the isolated worktree`, carry it into
+   `{{HOST_RESULTS}}` and the final report, and do not call it passed. After a confirmed hand-back,
+   rerun the complete gate set in the main tree before the final report.
+8. **Delta hand-back.** At every terminal exit—accepted full phase, `--implement-only` stop,
+   safeguard stop, or max-rounds stop—create a patch under the routing skill's temporary-directory
+   rule, never inside either repository tree:
+
+   ```bash
+   git -C "<worktreePath>" add -N .
+   git -C "<worktreePath>" diff --binary --no-ext-diff "<baselineCommit>" > "<patchFile>"
+   git -C "<worktreePath>" diff --stat "<baselineCommit>"
+   git -C "<worktreePath>" diff --name-only "<baselineCommit>"
+   ```
+
+   If the patch is empty, say so and proceed directly to cleanup. Otherwise recompute
+   `git -C "<mainRoot>" status --porcelain=v1 --untracked-files=all` and
+   `git -C "<mainRoot>" rev-parse HEAD`. Report every overlap between patched paths and currently
+   dirty main-tree paths and report when `HEAD` moved from `baselineCommit`. Show the patch stat and
+   ask exactly once:
+
+   - `Apply the patch to the working tree (Recommended)`
+   - `Leave the patch and the worktree for me`
+   - `Discard the worktree without applying`
+
+   When `HEAD` moved, include in that apply question itself that a 3-way merge may conflict. On
+   apply, first run `git -C "<mainRoot>" apply --3way --check "<patchFile>"`; only after it succeeds
+   run `git -C "<mainRoot>" apply --3way "<patchFile>"`. The check validates pre-images and index
+   compatibility, but with `--3way` it does not detect every merge conflict: the real apply can
+   still exit nonzero, leave conflict markers, and create unmerged index entries on paths that were
+   clean before it. A successful `--3way` apply stages the delta because it implies `--index`;
+   nothing is committed or pushed. On failure at either step, report git's exact output and
+   `git -C "<mainRoot>" diff --name-only --diff-filter=U`, identify real-apply conflict paths as
+   having been clean before the apply, keep the patch and worktree, and hand resolution to the
+   user. Explain that those paths can be returned to their pre-apply `HEAD` state with a
+   user-chosen `git reset -- <paths>` followed by `git checkout -- <paths>`; do not run that
+   recovery automatically.
+
+9. **Cleanup.** Only after the user confirms the patch landed (or the patch was empty), run
+   `git -C "<mainRoot>" worktree remove --force "<worktreePath>"`. In every other case print
+   `<worktreePath>`, `<patchFile>`, and that exact removal command, and say the worktree was
+   intentionally left in place.
 
 ## Implementation routing
 
@@ -291,6 +405,9 @@ in this thread.
 
 Advisory review findings (the approved plan takes precedence where they conflict):
 [stored findings, verbatim]
+
+[When isolated: The working root for this task is <worktreePath>, a detached worktree at
+<baselineCommit>. Do not modify any other directory.]
 </task>
 <action_safety>
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
@@ -312,7 +429,7 @@ authorizes work outside the approved plan.
 Then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <storedPlanReviewThreadId> --model <effectiveModel> <effortArg> --prompt-file "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <storedPlanReviewThreadId> --model <effectiveModel> <effortArg> <isolationArgs> --prompt-file "<payloadFile>"
 ```
 
 Approved, fresh. Write this complete payload to `<payloadFile>` under the routing skill's
@@ -327,6 +444,9 @@ this Codex thread<, by reviewedBy when present>.
 
 Advisory review findings (the approved plan takes precedence where they conflict):
 [stored findings, verbatim]
+
+[When isolated: The working root for this task is <worktreePath>, a detached worktree at
+<baselineCommit>. Do not modify any other directory.]
 </task>
 <action_safety>
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
@@ -348,7 +468,7 @@ authorizes work outside the approved plan.
 Then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <effectiveModel> <effortArg> --prompt-file "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <effectiveModel> <effortArg> <isolationArgs> --prompt-file "<payloadFile>"
 ```
 
 Unapproved, resumed (only after the preflight gate):
@@ -363,6 +483,9 @@ Implement only the plan's scope and do not silently discard the known findings.
 
 Latest stored review findings:
 [stored findings, verbatim]
+
+[When isolated: The working root for this task is <worktreePath>, a detached worktree at
+<baselineCommit>. Do not modify any other directory.]
 </task>
 ```
 
@@ -382,6 +505,9 @@ Implement only the plan's scope and do not silently discard the known findings.
 
 Latest stored review findings:
 [stored findings, verbatim]
+
+[When isolated: The working root for this task is <worktreePath>, a detached worktree at
+<baselineCommit>. Do not modify any other directory.]
 </task>
 ```
 
@@ -397,8 +523,9 @@ the delta.
 
 Poll and fetch through the routing skill. If resume fails, or Codex claims changes while both
 `touchedFiles` and the actual delta are empty, retry once fresh with the identical full prompt.
-Save only the latest implementation/fix payload's thread id as `implementationThreadId`. Record
-each implementation or retry invocation's per-job usage from `storedJob.tokenUsage.job`.
+Retain `<isolationArgs>` on that retry. Save only the latest implementation/fix payload's thread id
+as `implementationThreadId`. Record each implementation or retry invocation's per-job usage from
+`storedJob.tokenUsage.job`.
 
 ### Claude implementer
 
@@ -500,15 +627,15 @@ Route every round:
   `implementationReviewThreadId`:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" --prompt-file "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --model <effectiveReviewModel> <reviewEffortArg> --output-schema "${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json" <isolationArgs> --prompt-file "<payloadFile>"
 ```
 
 Parse named-Claude output directly and Codex output from `storedJob.result.rawOutput`. Apply the
 routing skill's validation and retry, including its continuation ladder for later named-Claude
 rounds. A Codex retry resumes only
-`implementationReviewThreadId` and preserves the same `--output-schema` flag; never assign it to
-`implementationThreadId`. After the routing skill's retries for that round are exhausted, ask
-whether to review inline or stop.
+`implementationReviewThreadId` and preserves the same `--output-schema` flag and
+`<isolationArgs>`; never assign it to `implementationThreadId`. After the routing skill's retries
+for that round are exhausted, ask whether to review inline or stop.
 
 After every completed review round, report its number, verdict/fix count, and reviewer
 per-invocation usage and duration (or `usage unavailable`), and whether the round was continued or
@@ -537,7 +664,7 @@ Report which findings were fixed, how, and what verification ran.
 Then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <implementationThreadId> --model <effectiveModel> <effortArg> --prompt-file "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <implementationThreadId> --model <effectiveModel> <effortArg> <isolationArgs> --prompt-file "<payloadFile>"
 ```
 
 For Claude fixes, invoke the same contained implementer with the original model, full plan, and
@@ -575,10 +702,19 @@ checks:
    `parseError`, then stop. If the record status is `complete`, report its round, verdict, and
    `completedAt`, then ask exactly once whether to start a fresh phase, clear the record and stop,
    or stop without changing it.
-2. Run `plan-state --json`. If unavailable, stop. When `planMatches` is false, show both recorded
+2. Read `isolated` and `worktree.path` from the record. For an isolated record, announce that the
+   bare resume will use the recorded worktree. Require a non-empty absolute path, verify the path
+   is still a directory, and verify the exact path appears in
+   `git -C "<mainRoot>" worktree list --porcelain`. When either check fails, report the recorded
+   path, explain that the isolated delta is no longer recoverable from the record, and offer
+   `implement-state --clear` followed by a fresh `/stereo:implement --isolated`; do not launch a
+   worker. When it is present, reuse it as `<worktreePath>` for `<isolationArgs>`, every diff and
+   gate, and patch hand-back. For a non-isolated record, reject an explicit `--isolated --resume`
+   and tell the user to run without `--resume` to start an isolated phase.
+3. Run `plan-state --json`. If unavailable, stop. When `planMatches` is false, show both recorded
    and current plan fingerprints and timestamps, warn that `{{PLAN_INPUT}}` will use the current
    stored plan, and ask exactly once whether to continue against that current plan or stop.
-3. Check the recorded worker before inspecting a possibly partial delta. When `jobId` exists, run
+4. Check the recorded worker before inspecting a possibly partial delta. When `jobId` exists, run
    `status <jobId> --json` first:
    - For `queued` or `running`, report its phase and elapsed time and ask exactly once whether to
      wait or stop and leave it running. Waiting uses the routing skill's bounded
@@ -588,33 +724,35 @@ checks:
      report in `{{REVIEW_CONTEXT}}`, rather than a stored summary.
    - For `failed`, `cancelled`, or an unknown id, report the condition and continue with the
      recorded state.
-4. Compare `git rev-parse HEAD` with recorded `baselineCommit`. When equal, resume normally. When
-   HEAD moved, verify the baseline with `git cat-file -e <baselineCommit>^{commit}` and inspect its
-   delta; if it resolves and a delta exists, report the move, retain that baseline for attribution,
-   and ask exactly once whether to continue or stop. If it no longer resolves, stop as stale,
-   explain why attribution is impossible, and offer `implement-state --clear`. When HEAD equals the
-   baseline but no attributed delta exists beyond the recorded baseline-dirty paths, report that
-   the work is gone and ask whether to clear and restart or stop.
-5. Re-inspect the actual status, diff, every changed/untracked file, and baseline-dirty exclusions.
+5. Compare `git rev-parse HEAD` with recorded `baselineCommit` for a non-isolated record. For an
+   isolated record, make that comparison with
+   `git -C "<worktreePath>" rev-parse HEAD`. When equal, resume normally. When HEAD moved, verify
+   the baseline with `git cat-file -e <baselineCommit>^{commit}` against the same target and inspect
+   its delta; if it resolves and a delta exists, report the move, retain that baseline for
+   attribution, and ask exactly once whether to continue or stop. If it no longer resolves, stop as
+   stale, explain why attribution is impossible, and offer `implement-state --clear`. When HEAD
+   equals the baseline but no attributed delta exists beyond the recorded baseline-dirty paths,
+   report that the work is gone and ask whether to clear and restart or stop.
+6. Re-inspect the actual status, diff, every changed/untracked file, and baseline-dirty exclusions.
    Rerun the complete host-verification gates. Recorded host results are historical summaries,
    never current evidence.
-6. Re-enter at review round `record.round + 1`; `record.round` counts completed review rounds.
+7. Re-enter at review round `record.round + 1`; `record.round` counts completed review rounds.
    Round 0 therefore resumes at round 1, and a crash after fixes but before review correctly
-   re-reviews the actual delta. Use the fetched report from step 3 when available; otherwise label
+   re-reviews the actual delta. Use the fetched report from step 4 when available; otherwise label
    the implementer report as unavailable or as a stored pre-resume summary.
-7. The first resumed reviewer round is always the stateless re-brief path. Rebuild
+8. The first resumed reviewer round is always the stateless re-brief path. Rebuild
    `{{REVIEW_CONTEXT}}` from `record.rounds`: retain round-1 context, every prior numbered fix and
    latest `resolved`/`unresolved` judgment, and label stored reports as pre-resume summaries. State
    that a fresh session has no continuation handle. A named-Claude reviewer may keep the new handle
    for later rounds in this resumed command run.
-8. For Codex fixes, resume recorded `implementationThreadId` with the recorded implementer model
+9. For Codex fixes, resume recorded `implementationThreadId` with the recorded implementer model
    and effort. If the id is null, pruned, or resume fails, use the existing retry-fresh rule and
    embed the complete current plan plus every numbered fix in the new write thread. For a
    Claude-routed implementer, re-invoke the contained implementer with the recorded model, full
    plan, and numbered fixes.
-9. `--max-fix-rounds` counts recorded rounds too. An explicit flag overrides recorded
-   `maxFixRounds`; otherwise retain the recorded cap. If the record already reached the effective
-   cap, ask the existing safeguard question before starting another review or fix round.
+10. `--max-fix-rounds` counts recorded rounds too. An explicit flag overrides recorded
+    `maxFixRounds`; otherwise retain the recorded cap. If the record already reached the effective
+    cap, ask the existing safeguard question before starting another review or fix round.
 
 After these checks, use the normal full review/fix loop and state updates. Resume never reuses
 recorded host results as proof and never assumes conversation history survived.
@@ -635,6 +773,11 @@ complete, while an interrupted phase remains available through `/stereo:implemen
 a completed record is explicitly cleared to start over, say so. For `--review-only --base`, repeat
 that the committed range was reviewed in full and list uncommitted dirty/untracked paths as out of
 scope, including every range/dirty overlap warning.
+
+For an isolated run, also report the worktree path, patch file, hand-back decision and result,
+including `staged, not committed` on success and every conflicted path on failure. Say whether the
+worktree was removed and list every gate recorded as `not runnable in the isolated worktree` plus
+the result of its post-hand-back main-tree rerun.
 
 Give rollback guidance relative to `baselineCommit` without erasing baseline-dirty paths. If HEAD
 is unchanged, state that nothing was committed or pushed. If it moved, retract that statement and

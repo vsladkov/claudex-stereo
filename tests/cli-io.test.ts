@@ -3,8 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { makeTempDir } from './helpers.ts';
-import { parseCommandInput, readUserFile, wasJsonRequested } from '../plugins/stereo/src/cli/io.ts';
+import { initGitRepo, makeTempDir } from './helpers.ts';
+import {
+  parseCommandInput,
+  readUserFile,
+  resolveCommandWorkspace,
+  wasJsonRequested,
+} from '../plugins/stereo/src/cli/io.ts';
 import { readStdinSyncBestEffort, resolveStdinTimeoutMs } from '../plugins/stereo/src/shared/fs.ts';
 import { PLUGIN_ROOT } from '../plugins/stereo/src/shared/paths.ts';
 
@@ -216,4 +221,45 @@ test('readUserFile rejects files larger than 16 MiB', () => {
       error instanceof Error &&
       error.message === `--prompt-file ${oversized} is larger than 16 MiB.`,
   );
+});
+
+test('--workspace overrides --cwd when resolving command state', () => {
+  const cwd = makeTempDir();
+  const workspace = makeTempDir();
+
+  assert.equal(resolveCommandWorkspace({ cwd, workspace }), workspace);
+});
+
+test('--workspace normalizes a repository subdirectory to the git top level', () => {
+  const repo = makeTempDir();
+  const nested = path.join(repo, 'nested', 'directory');
+  initGitRepo(repo);
+  fs.mkdirSync(nested, { recursive: true });
+
+  assert.equal(path.resolve(resolveCommandWorkspace({ workspace: nested })), path.resolve(repo));
+});
+
+test('--workspace accepts a plain existing directory', () => {
+  const workspace = makeTempDir();
+
+  assert.equal(resolveCommandWorkspace({ workspace }), workspace);
+});
+
+test('--workspace rejects missing and empty paths with stable errors', () => {
+  const missing = path.join(makeTempDir(), 'missing-workspace');
+
+  assert.throws(
+    () => resolveCommandWorkspace({ workspace: missing }),
+    new Error(`--workspace ${missing} is not an existing directory.`),
+  );
+  assert.throws(
+    () => resolveCommandWorkspace({ workspace: '' }),
+    new Error('Provide a directory path for --workspace.'),
+  );
+});
+
+test('command workspace resolution is unchanged without --workspace', () => {
+  const cwd = makeTempDir();
+
+  assert.equal(resolveCommandWorkspace({ cwd }), cwd);
 });

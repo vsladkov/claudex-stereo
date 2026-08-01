@@ -294,6 +294,7 @@ export async function runForegroundCommand(
 export interface SpawnDetachedTaskWorkerOptions {
   spawnImpl?: typeof spawn;
   onSpawnError?: (error: Error) => void;
+  workspaceRoot?: string | null;
 }
 
 export function spawnDetachedTaskWorker(
@@ -301,17 +302,17 @@ export function spawnDetachedTaskWorker(
   jobId: string,
   options: SpawnDetachedTaskWorkerOptions = {},
 ): ChildProcess {
-  const child = (options.spawnImpl ?? spawn)(
-    process.execPath,
-    [COMPANION_ENTRY, 'task-worker', '--cwd', cwd, '--job-id', jobId],
-    {
-      cwd,
-      env: process.env,
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    },
-  );
+  const args = [COMPANION_ENTRY, 'task-worker', '--cwd', cwd, '--job-id', jobId];
+  if (typeof options.workspaceRoot === 'string' && options.workspaceRoot.trim()) {
+    args.push('--workspace', options.workspaceRoot);
+  }
+  const child = (options.spawnImpl ?? spawn)(process.execPath, args, {
+    cwd,
+    env: process.env,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
   child.once('error', (error) => options.onSpawnError?.(error));
   child.unref();
   return child;
@@ -372,6 +373,7 @@ export function enqueueBackgroundTask(
   try {
     child = spawnDetachedTaskWorker(cwd, job.id, {
       spawnImpl: options.spawnImpl,
+      workspaceRoot: job.workspaceRoot,
       // Best effort: an asynchronous spawn failure may race the detached
       // parent's exit, but a live parent records it immediately.
       onSpawnError: (error) => {

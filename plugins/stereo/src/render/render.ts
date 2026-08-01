@@ -67,6 +67,8 @@ export interface StoredPairPlanState {
 export interface StoredImplementState {
   baselineCommit?: unknown;
   baselineDirtyPaths?: unknown;
+  isolated?: unknown;
+  worktree?: unknown;
   implementer?: unknown;
   implementerSelection?: unknown;
   implementerModel?: unknown;
@@ -734,6 +736,7 @@ export function renderImplementState(record: StoredImplementState | null): strin
     storedPlanMetadataValue(record.implementerEffort) ??
     storedPlanMetadataValue(implementer?.effort);
   const plan = storedRecord(record.plan);
+  const worktree = storedRecord(record.worktree);
   const baselineDirtyCount = Array.isArray(record.baselineDirtyPaths)
     ? record.baselineDirtyPaths.length
     : 0;
@@ -742,11 +745,19 @@ export function renderImplementState(record: StoredImplementState | null): strin
     '',
     `Baseline commit: ${storedPlanMetadataValue(record.baselineCommit) ?? '-'}`,
     `Baseline-dirty paths: ${baselineDirtyCount}`,
+  ];
+  if (record.isolated) {
+    lines.push(
+      `Isolated worktree: ${storedPlanMetadataValue(worktree?.path) ?? '-'}`,
+      `Worktree baseline: ${storedPlanMetadataValue(worktree?.baselineCommit) ?? '-'}`,
+    );
+  }
+  lines.push(
     `Implementer selection: ${selection ?? '-'}`,
     `Implementer model: ${model ?? '-'}`,
     `Implementer effort: ${effort ?? '-'}`,
     `Implementation thread ID: ${storedPlanMetadataValue(record.implementationThreadId) ?? '-'}`,
-  ];
+  );
   const jobId = storedPlanMetadataValue(record.jobId);
   if (jobId) {
     lines.push(`Background job ID: ${jobId}`);

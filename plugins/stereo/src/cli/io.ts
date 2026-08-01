@@ -77,6 +77,23 @@ export function resolveCommandCwd(options: CommandOptions = {}): string {
 }
 
 export function resolveCommandWorkspace(options: CommandOptions = {}): string {
+  // --workspace keys durable state, jobs, logs, and the broker record; --cwd
+  // sets the Codex thread cwd. They differ only for worktree-isolated runs.
+  if (Object.hasOwn(options, 'workspace')) {
+    const raw = String(options.workspace ?? '').trim();
+    if (!raw) {
+      throw new Error('Provide a directory path for --workspace.');
+    }
+    const resolved = path.resolve(process.cwd(), raw);
+    try {
+      if (!fs.statSync(resolved).isDirectory()) {
+        throw new Error('not a directory');
+      }
+    } catch {
+      throw new Error(`--workspace ${resolved} is not an existing directory.`);
+    }
+    return resolveWorkspaceRoot(resolved);
+  }
   return resolveWorkspaceRoot(resolveCommandCwd(options));
 }
 

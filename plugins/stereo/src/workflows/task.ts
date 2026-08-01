@@ -87,13 +87,16 @@ export async function waitForSingleJobSnapshot(
 
 export interface ResolveLatestTaskThreadOptions {
   excludeJobId?: string | null;
+  workspaceRoot?: string | null;
 }
 
 export async function resolveLatestTrackedTaskThread(
   cwd: string,
   options: ResolveLatestTaskThreadOptions = {},
 ): Promise<{ id: string } | null> {
-  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const workspaceRoot = options.workspaceRoot?.trim()
+    ? options.workspaceRoot
+    : resolveWorkspaceRoot(cwd);
   const sessionId = getCurrentClaudeSessionId();
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot)).filter(
     (job) => job.id !== options.excludeJobId,
@@ -118,7 +121,7 @@ export async function resolveLatestTrackedTaskThread(
     return null;
   }
 
-  return findLatestTaskThread(workspaceRoot);
+  return findLatestTaskThread(cwd, { brokerCwd: workspaceRoot });
 }
 
 export function requireTaskRequest(prompt: string | null | undefined, resumeLast: boolean): void {
@@ -156,6 +159,8 @@ export function buildTaskRunMetadata({
 
 export interface TaskRunRequest {
   cwd: string;
+  // Durable-state/broker key; defaults to the thread cwd's repository root.
+  workspaceRoot?: string | null;
   model?: string | null;
   effort?: string | null;
   outputSchema?: unknown;
@@ -168,7 +173,11 @@ export interface TaskRunRequest {
 }
 
 export async function executeTaskRun(request: TaskRunRequest): Promise<CompanionExecution> {
-  const workspaceRoot = resolveWorkspaceRoot(request.cwd);
+  const threadCwd = resolveWorkspaceRoot(request.cwd);
+  const workspaceRoot =
+    typeof request.workspaceRoot === 'string' && request.workspaceRoot.trim()
+      ? request.workspaceRoot
+      : threadCwd;
 
   const taskMetadata = buildTaskRunMetadata({
     prompt: request.prompt,
@@ -177,8 +186,9 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
 
   let resumeThreadId = request.threadId ?? null;
   if (!resumeThreadId && request.resumeLast) {
-    const latestThread = await resolveLatestTrackedTaskThread(workspaceRoot, {
+    const latestThread = await resolveLatestTrackedTaskThread(threadCwd, {
       excludeJobId: request.jobId,
+      workspaceRoot,
     });
     if (!latestThread) {
       throw new Error('No previous Codex task thread was found for this repository.');
@@ -188,7 +198,7 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
 
   requireTaskRequest(request.prompt, Boolean(resumeThreadId));
 
-  const result = await runAppServerTurn(workspaceRoot, {
+  const result = await runAppServerTurn(threadCwd, {
     resumeThreadId,
     prompt: request.prompt,
     defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : '',
@@ -203,6 +213,7 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
     threadName: resumeThreadId
       ? null
       : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT),
+    brokerCwd: workspaceRoot,
   });
 
   const rawOutput = typeof result.finalMessage === 'string' ? result.finalMessage : '';

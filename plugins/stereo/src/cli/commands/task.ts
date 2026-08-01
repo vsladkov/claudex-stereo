@@ -85,6 +85,7 @@ function buildTaskJob(
 
 interface BuildTaskRequestInput extends TaskRunRequest {
   cwd: string;
+  workspaceRoot: string;
   model: string | null;
   effort: string | null;
   prompt: string;
@@ -96,6 +97,7 @@ interface BuildTaskRequestInput extends TaskRunRequest {
 
 function buildTaskRequest({
   cwd,
+  workspaceRoot,
   model,
   effort,
   outputSchema,
@@ -107,6 +109,7 @@ function buildTaskRequest({
 }: BuildTaskRequestInput): TaskRunRequest {
   return {
     cwd,
+    workspaceRoot,
     model,
     effort,
     outputSchema,
@@ -120,7 +123,7 @@ function buildTaskRequest({
 
 export async function handleTask(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['model', 'effort', 'cwd', 'prompt-file', 'thread', 'output-schema'],
+    valueOptions: ['model', 'effort', 'cwd', 'workspace', 'prompt-file', 'thread', 'output-schema'],
     booleanOptions: ['json', 'write', 'resume-last', 'resume', 'fresh', 'background'],
     aliasMap: {
       m: 'model',
@@ -163,6 +166,7 @@ export async function handleTask(argv: string[]): Promise<void> {
     const job = buildTaskJob(workspaceRoot, taskMetadata, model, write);
     const request = buildTaskRequest({
       cwd,
+      workspaceRoot,
       model,
       effort,
       outputSchema,
@@ -183,6 +187,7 @@ export async function handleTask(argv: string[]): Promise<void> {
     (progress) =>
       executeTaskRun({
         cwd,
+        workspaceRoot,
         model,
         effort,
         outputSchema,
@@ -202,7 +207,7 @@ export async function handleTaskWorker(
   deps: TaskWorkerDeps = defaultTaskWorkerDeps,
 ): Promise<void> {
   const { options } = parseCommandInput(argv, {
-    valueOptions: ['cwd', 'job-id'],
+    valueOptions: ['cwd', 'workspace', 'job-id'],
   });
 
   if (!options['job-id']) {
@@ -210,10 +215,13 @@ export async function handleTaskWorker(
   }
 
   const jobId = assertSafeJobId(options['job-id'] as string);
-  const workspaceRoot = resolveCommandWorkspace(options);
+  // Keep a cwd-derived fallback so a malformed --workspace still gets a
+  // best-effort failed record instead of leaving a detached worker queued.
+  let workspaceRoot = resolveCommandWorkspace(options.cwd ? { cwd: options.cwd } : {});
   let storedJob: JobRecord | null = null;
   let request: PersistedWorkerRequest | null = null;
   try {
+    workspaceRoot = resolveCommandWorkspace(options);
     storedJob = readStoredJob(workspaceRoot, jobId);
     if (!storedJob) {
       throw new Error(`No stored job found for ${jobId}.`);
@@ -257,7 +265,9 @@ export async function handleTaskWorker(
 
   // The catch above always rethrows, so both bootstrap values are set here.
   const workerJob = storedJob as JobRecord;
-  const workerRequest = request as PersistedWorkerRequest;
+  const workerRequest = Object.hasOwn(options, 'workspace')
+    ? ({ ...(request as PersistedWorkerRequest), workspaceRoot } as PersistedWorkerRequest)
+    : (request as PersistedWorkerRequest);
 
   const disposeSignalCleanup = installSignalCleanup({ jobId, workspaceRoot });
   try {

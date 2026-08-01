@@ -229,10 +229,39 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     '--implementation-reviewer-effort',
     '--resume',
     '--base',
+    '--isolated',
   ]) {
     assert.match(implementHint, new RegExp(flag));
   }
   assert.doesNotMatch(implementHint, /--impl-reviewer\b/);
+  const implementLines = implement.split('\n');
+  const standaloneStart = implementLines.findIndex(
+    (line) => line === '## Standalone implementation-review step',
+  );
+  const standaloneEnd = implementLines.findIndex(
+    (line, index) => index > standaloneStart && line.startsWith('## '),
+  );
+  const isolatedTaskLines = implementLines.filter(
+    (line, index) =>
+      line.startsWith('node ') &&
+      line.includes('task --background') &&
+      (line.includes('--write') || line.includes('--output-schema')) &&
+      !(index > standaloneStart && index < standaloneEnd),
+  );
+  assert.equal(isolatedTaskLines.length, 4);
+  for (const line of isolatedTaskLines) {
+    assert.match(line, /<isolationArgs>/);
+  }
+  const standaloneTaskLine = implementLines
+    .slice(standaloneStart, standaloneEnd)
+    .find(
+      (line) =>
+        line.startsWith('node ') &&
+        line.includes('task --background') &&
+        line.includes('--output-schema'),
+    );
+  assert.ok(standaloneTaskLine);
+  assert.doesNotMatch(standaloneTaskLine, /<isolationArgs>/);
   assert.equal(
     (
       implement.match(

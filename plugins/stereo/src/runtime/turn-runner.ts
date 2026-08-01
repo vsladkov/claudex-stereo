@@ -239,6 +239,7 @@ export interface RunAppServerTurnOptions {
   jobId?: string | null;
   jobPid?: number | null;
   onProgress?: ProgressReporter | null;
+  brokerCwd?: string | null;
 }
 
 export interface AppServerTurnResult {
@@ -261,16 +262,20 @@ export async function runAppServerTurn(
   cwd: string,
   options: RunAppServerTurnOptions = {},
 ): Promise<AppServerTurnResult> {
-  const availability = getCodexAvailability(cwd);
+  const { model: bareModel, modelProvider: explicitModelProvider } = options.model
+    ? parseQualifiedModel(options.model)
+    : { model: options.model, modelProvider: null };
+  const modelProvider = explicitModelProvider ?? (bareModel ? modelProviderFor(bareModel) : null);
+  // cwd is the Codex thread cwd (a worktree for isolated runs); brokerCwd is
+  // the workspace root that keys the shared broker and broker.json, so an
+  // isolated thread reuses the main workspace's broker instead of starting a second one.
+  const brokerCwd = options.brokerCwd?.trim() ? options.brokerCwd : cwd;
+  const availability = getCodexAvailability(brokerCwd);
   if (!availability.available) {
     throw new Error(
       'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
     );
   }
-  const { model: bareModel, modelProvider: explicitModelProvider } = options.model
-    ? parseQualifiedModel(options.model)
-    : { model: options.model, modelProvider: null };
-  const modelProvider = explicitModelProvider ?? (bareModel ? modelProviderFor(bareModel) : null);
 
   const reservationMeta = {
     jobId: options.jobId ?? null,
@@ -311,7 +316,7 @@ export async function runAppServerTurn(
             const endpoint = (client as { endpoint?: string | null }).endpoint ?? null;
             mismatch = {
               endpoint,
-              ownedEndpoint: endpoint ? (loadBrokerSession(cwd)?.endpoint ?? null) : null,
+              ownedEndpoint: endpoint ? (loadBrokerSession(brokerCwd)?.endpoint ?? null) : null,
             };
             emitProgress(
               options.onProgress,
@@ -392,8 +397,8 @@ export async function runAppServerTurn(
     };
 
     return connectOptions.disableBroker
-      ? withDirectAppServer(cwd, runWithClient)
-      : withAppServer(cwd, runWithClient);
+      ? withDirectAppServer(brokerCwd, runWithClient)
+      : withAppServer(brokerCwd, runWithClient);
   };
 
   try {

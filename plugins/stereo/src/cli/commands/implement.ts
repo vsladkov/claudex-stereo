@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { renderImplementState } from '../../render/render.ts';
 import {
   clearImplementState,
@@ -22,6 +24,19 @@ type JsonRecord = Record<string, unknown>;
 
 function recordLike(value: unknown): JsonRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
+}
+
+function assertIsolationShape(record: JsonRecord): void {
+  if (!record.isolated) {
+    return;
+  }
+  const worktreePath = recordLike(record.worktree)?.path;
+  if (typeof worktreePath !== 'string' || !worktreePath.trim()) {
+    throw new Error('Provide worktree.path in --state-file when isolated is true.');
+  }
+  if (!path.isAbsolute(worktreePath)) {
+    throw new Error('worktree.path must be an absolute path.');
+  }
 }
 
 function readStatePayload(cwd: string, value: unknown): JsonRecord {
@@ -173,12 +188,28 @@ export function handleImplementState(argv: string[]): void {
   const workspaceRoot = resolveCommandWorkspace(options);
 
   if (action === 'clear') {
+    const previous = recordLike(readImplementStateFile(workspaceRoot).record);
+    const previousWorktree = recordLike(previous?.worktree);
+    const worktreePath =
+      previous?.isolated &&
+      typeof previousWorktree?.path === 'string' &&
+      previousWorktree.path.trim()
+        ? previousWorktree.path.trim()
+        : null;
     const removed = clearImplementState(workspaceRoot);
-    const payload = { cleared: removed.length > 0, removed };
-    const rendered =
+    const payload = {
+      cleared: removed.length > 0,
+      removed,
+      ...(worktreePath ? { worktreePath } : {}),
+    };
+    const clearRendered =
       removed.length > 0
         ? `Cleared the implementation state for this repository.\n${removed.map((filePath) => `- ${filePath}`).join('\n')}\n`
         : 'No implementation state for this repository. Nothing to clear.\n';
+    const worktreeRendered = worktreePath
+      ? `Isolated worktree ${worktreePath}; remove it with git -C "${workspaceRoot}" worktree remove --force "${worktreePath}".\n`
+      : '';
+    const rendered = `${clearRendered}${worktreeRendered}`;
     outputCommandResult(payload, rendered, options.json);
     return;
   }
@@ -244,6 +275,7 @@ export function handleImplementState(argv: string[]): void {
     }
   }
 
+  assertIsolationShape(record);
   saveImplementState(workspaceRoot, record);
   outputCommandResult(
     buildReadPayload(workspaceRoot, record),

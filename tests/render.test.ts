@@ -574,6 +574,22 @@ test('renderImplementState shows the durable phase metadata and recorded job id'
   assert.match(output, /Background job ID: task-background-7/);
   assert.match(output, /Completed review rounds: 2/);
   assert.match(output, /Recorded plan fingerprint: 0123456789abcdef0123456789abcdef/);
+  assert.doesNotMatch(output, /Isolated worktree:/);
+  assert.doesNotMatch(output, /Worktree baseline:/);
+});
+
+test('renderImplementState shows isolated worktree metadata when enabled', () => {
+  const output = renderImplementState({
+    baselineCommit: '8b995ad',
+    isolated: true,
+    worktree: {
+      path: '/tmp/stereo-worktrees/example-1234',
+      baselineCommit: '8b995ad',
+    },
+  });
+
+  assert.match(output, /Isolated worktree: \/tmp\/stereo-worktrees\/example-1234/);
+  assert.match(output, /Worktree baseline: 8b995ad/);
 });
 
 test('renderImplementState preserves the unavailable message', () => {

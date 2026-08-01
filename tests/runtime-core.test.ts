@@ -2011,6 +2011,7 @@ test('handleCancel reports a kill warning but still terminalizes after EPERM', a
 
 test('handleTaskWorker dependency injection dispatches task, plan-review, and review requests', async () => {
   const workspace = makeTempDir();
+  const worktree = makeTempDir();
   const seedWorker = (id: string, request: Record<string, unknown>) => {
     const job = {
       id,
@@ -2026,7 +2027,7 @@ test('handleTaskWorker dependency injection dispatches task, plan-review, and re
     upsertJob(workspace, job);
   };
   seedWorker('task-worker-di', {
-    cwd: workspace,
+    cwd: worktree,
     prompt: 'run the task branch',
   });
   seedWorker('plan-worker-di', {
@@ -2050,6 +2051,8 @@ test('handleTaskWorker dependency injection dispatches task, plan-review, and re
     },
     executeTaskRun: async (request) => {
       calls.push('task');
+      assert.equal(request.cwd, worktree);
+      assert.equal(request.workspaceRoot, workspace);
       assert.equal(request.prompt, 'run the task branch');
       assert.equal(typeof request.onProgress, 'function');
       return {
@@ -2095,11 +2098,45 @@ test('handleTaskWorker dependency injection dispatches task, plan-review, and re
     },
   };
 
-  await handleTaskWorker(['--cwd', workspace, '--job-id', 'task-worker-di'], deps);
+  await handleTaskWorker(
+    ['--cwd', worktree, '--workspace', workspace, '--job-id', 'task-worker-di'],
+    deps,
+  );
   await handleTaskWorker(['--cwd', workspace, '--job-id', 'plan-worker-di'], deps);
   await handleTaskWorker(['--cwd', workspace, '--job-id', 'review-worker-di'], deps);
 
   assert.deepEqual(calls, ['tracked', 'task', 'tracked', 'plan', 'tracked', 'review']);
+});
+
+test('handleTaskWorker records a bootstrap failure when --workspace is invalid', async () => {
+  const workspace = makeTempDir();
+  const jobId = 'task-worker-invalid-workspace';
+  const job = {
+    id: jobId,
+    status: 'queued',
+    title: 'Queued worker',
+    jobClass: 'task',
+    workspaceRoot: workspace,
+    request: { cwd: workspace, prompt: 'run the task branch' },
+  };
+  writeJobFile(workspace, jobId, job);
+  upsertJob(workspace, job);
+  const missingWorkspace = path.join(workspace, 'missing-workspace');
+
+  await assert.rejects(
+    handleTaskWorker(['--cwd', workspace, '--workspace', missingWorkspace, '--job-id', jobId]),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === `--workspace ${missingWorkspace} is not an existing directory.`,
+  );
+
+  const failed = JSON.parse(fs.readFileSync(resolveJobFile(workspace, jobId), 'utf8'));
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.phase, 'failed');
+  assert.equal(
+    failed.errorMessage,
+    `--workspace ${missingWorkspace} is not an existing directory.`,
+  );
 });
 
 test('handleTaskWorker rejects an unsafe job id before bootstrap failure persistence', async () => {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import process from 'node:process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { spawn } from 'node:child_process';
+import type { SpawnOptions, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { TestContext } from 'node:test';
 
@@ -23,6 +23,7 @@ import {
   createTurnCaptureState,
 } from '../plugins/stereo/src/runtime/turn-capture.ts';
 import type { AppServerNotification } from '../plugins/stereo/src/protocol/app-server.ts';
+import { COMPANION_ENTRY } from '../plugins/stereo/src/shared/paths.ts';
 import {
   loadState,
   readJobFile,
@@ -173,6 +174,50 @@ test('the post-spawn pid patch preserves a worker-written running status', (t) =
   assert.equal(stored.status, 'running');
   assert.equal(stored.phase, 'running');
   assert.equal(stored.pid, 8765);
+});
+
+test('a detached task worker receives the authoritative workspace without changing spawn cwd', (t) => {
+  useTempCodexHome(t);
+  const workspaceRoot = makeTempDir('companion-worker-workspace-');
+  const threadCwd = makeTempDir('companion-worker-cwd-');
+  const job = createCompanionJob({
+    prefix: 'task',
+    kind: 'task',
+    title: 'Isolated worker task',
+    workspaceRoot,
+    jobClass: 'task',
+    summary: 'Forward the workspace key',
+    model: null,
+  });
+  const child = Object.assign(new EventEmitter(), {
+    pid: 0,
+    unref: () => child,
+  });
+  let capturedArgv: readonly string[] = [];
+  let capturedOptions: SpawnOptions | undefined;
+  const spawnImpl = ((
+    _command: string,
+    argv: readonly string[] = [],
+    options: SpawnOptions = {},
+  ) => {
+    capturedArgv = argv;
+    capturedOptions = options;
+    return child;
+  }) as unknown as typeof spawn;
+
+  enqueueBackgroundTask(threadCwd, job, { prompt: 'run' }, { spawnImpl });
+
+  assert.deepEqual(capturedArgv, [
+    COMPANION_ENTRY,
+    'task-worker',
+    '--cwd',
+    threadCwd,
+    '--job-id',
+    job.id,
+    '--workspace',
+    workspaceRoot,
+  ]);
+  assert.equal(capturedOptions?.cwd, threadCwd);
 });
 
 test('signal terminalization cancels an active job and is idempotent', () => {

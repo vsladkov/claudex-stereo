@@ -196,6 +196,24 @@ export async function handlePlanState(
   if (options.clear) {
     const removed = clearPairPlanState(workspaceRoot);
     const implementState = readImplementStateFile(workspaceRoot);
+    const implementStateRecord =
+      implementState.record &&
+      typeof implementState.record === 'object' &&
+      !Array.isArray(implementState.record)
+        ? (implementState.record as Record<string, unknown>)
+        : null;
+    const implementStateWorktreeRecord =
+      implementStateRecord?.worktree &&
+      typeof implementStateRecord.worktree === 'object' &&
+      !Array.isArray(implementStateRecord.worktree)
+        ? (implementStateRecord.worktree as Record<string, unknown>)
+        : null;
+    const implementStateWorktree =
+      implementStateRecord?.isolated &&
+      typeof implementStateWorktreeRecord?.path === 'string' &&
+      implementStateWorktreeRecord.path.trim()
+        ? implementStateWorktreeRecord.path.trim()
+        : null;
     const implementStateStatus = implementState.missing
       ? null
       : implementState.parseError
@@ -208,15 +226,20 @@ export async function handlePlanState(
       removed,
       clearedImplementState: clearedImplementState.length > 0,
       implementStateStatus,
+      ...(implementStateWorktree ? { implementStateWorktree } : {}),
     };
     const planRendered =
       removed.length > 0
         ? `Cleared the stored plan for this repository.\n${removed.map((filePath) => `- ${filePath}`).join('\n')}\n`
         : 'No stored plan for this repository. Nothing to clear.\n';
-    const implementRendered =
+    const implementClearRendered =
       clearedImplementState.length > 0
         ? `Also cleared the implementation record (status: ${implementStateStatus ?? 'unreadable'}).\n${clearedImplementState.map((filePath) => `- ${filePath}`).join('\n')}\n`
         : '';
+    const implementWorktreeRendered = implementStateWorktree
+      ? `Isolated worktree ${implementStateWorktree}; remove it with git -C "${workspaceRoot}" worktree remove --force "${implementStateWorktree}".\n`
+      : '';
+    const implementRendered = `${implementClearRendered}${implementWorktreeRendered}`;
     const rendered = `${planRendered}${implementRendered}`;
     outputCommandResult(payload, rendered, options.json);
     return;

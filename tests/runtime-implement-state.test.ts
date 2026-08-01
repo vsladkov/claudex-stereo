@@ -116,6 +116,11 @@ test('implement-state --record snapshots the plan and round-trips durable launch
     baselineCommit: 'abc123',
     baselineDirtyPaths: ['README.md'],
     jobId: 'task-launch-1',
+    isolated: true,
+    worktree: {
+      path: path.join(repo, 'isolated-worktree'),
+      baselineCommit: 'abc123',
+    },
   });
 
   const recorded = await runImplementState(repo, env, [
@@ -132,6 +137,11 @@ test('implement-state --record snapshots the plan and round-trips durable launch
   assert.equal(payload.record.round, 0);
   assert.deepEqual(payload.record.rounds, []);
   assert.equal(payload.record.jobId, 'task-launch-1');
+  assert.equal(payload.record.isolated, true);
+  assert.deepEqual(payload.record.worktree, {
+    path: path.join(repo, 'isolated-worktree'),
+    baselineCommit: 'abc123',
+  });
   assert.equal(payload.record.plan.fingerprint, fingerprintPlanText(plan));
   assert.equal(payload.planMatches, true);
 
@@ -154,6 +164,12 @@ test('implement-state validates record payload shape, JSON, size, and baseline c
   const invalidJson = writePayload(repo, '{not json');
   const oversize = writePayload(repo, `{"value":"${'x'.repeat(512 * 1024)}"}`);
   const invalidRound = writePayload(repo, { baselineCommit: 'abc123', round: '1' });
+  const missingWorktreePath = writePayload(repo, { baselineCommit: 'abc123', isolated: true });
+  const relativeWorktreePath = writePayload(repo, {
+    baselineCommit: 'abc123',
+    isolated: true,
+    worktree: { path: 'relative-worktree' },
+  });
 
   await assertJsonError(
     repo,
@@ -184,6 +200,18 @@ test('implement-state validates record payload shape, JSON, size, and baseline c
     env,
     ['--record', '--state-file', invalidRound],
     'Unsupported implementation round "1". Use a non-negative integer.',
+  );
+  await assertJsonError(
+    repo,
+    env,
+    ['--record', '--state-file', missingWorktreePath],
+    'Provide worktree.path in --state-file when isolated is true.',
+  );
+  await assertJsonError(
+    repo,
+    env,
+    ['--record', '--state-file', relativeWorktreePath],
+    'worktree.path must be an absolute path.',
   );
 });
 
@@ -271,7 +299,12 @@ test('implement-state detects a re-stored plan without changing the recorded sna
 
 test('implement-state --complete applies a final patch and --clear is idempotent', async () => {
   const { repo, env } = setupRepo();
-  const stateFile = writePayload(repo, { baselineCommit: 'abc123' });
+  const worktreePath = path.join(repo, 'isolated-worktree');
+  const stateFile = writePayload(repo, {
+    baselineCommit: 'abc123',
+    isolated: true,
+    worktree: { path: worktreePath, baselineCommit: 'abc123' },
+  });
   assert.equal(
     (await runImplementState(repo, env, ['--record', '--state-file', stateFile, '--json'])).status,
     0,
@@ -293,6 +326,7 @@ test('implement-state --complete applies a final patch and --clear is idempotent
   const firstClear = await runImplementState(repo, env, ['--clear', '--json']);
   assert.equal(firstClear.status, 0, firstClear.stderr);
   assert.equal(JSON.parse(firstClear.stdout).cleared, true);
+  assert.equal(JSON.parse(firstClear.stdout).worktreePath, worktreePath);
   const secondClear = await runImplementState(repo, env, ['--clear', '--json']);
   assert.equal(secondClear.status, 0, secondClear.stderr);
   assert.deepEqual(JSON.parse(secondClear.stdout), { cleared: false, removed: [] });

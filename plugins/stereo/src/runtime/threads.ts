@@ -262,15 +262,19 @@ export async function drainMismatchingBroker(
   }
 }
 
-export async function findLatestTaskThread(cwd: string): Promise<Thread | null> {
-  const availability = getCodexAvailability(cwd);
+export async function findLatestTaskThread(
+  cwd: string,
+  options: { brokerCwd?: string | null } = {},
+): Promise<Thread | null> {
+  const brokerCwd = options.brokerCwd?.trim() ? options.brokerCwd : cwd;
+  const availability = getCodexAvailability(brokerCwd);
   if (!availability.available) {
     throw new Error(
       'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
     );
   }
 
-  return withAppServer(cwd, async (client) => {
+  return withAppServer(brokerCwd, async (client) => {
     const response = await client.request('thread/list', {
       cwd,
       limit: 20,

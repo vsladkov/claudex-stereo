@@ -37,7 +37,7 @@ import {
   buildSingleJobSnapshot,
   DEFAULT_MAX_PROGRESS_LINES,
 } from '../plugins/stereo/src/jobs/job-control.ts';
-import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { resolveDurableStateDir, resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
 
 registerBrokerReaping();
 
@@ -993,6 +993,32 @@ test('task --background enqueues a detached worker and exposes per-job status', 
   assert.equal(resultPayload.job.id, launchPayload.jobId);
   assert.equal(resultPayload.job.status, 'completed');
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
+});
+
+test('task --workspace keeps isolated thread state on the main workspace broker', (t) => {
+  const repo = initializeBasicRepo();
+  const worktreeParent = makeTempDir('isolated-task-worktree-');
+  const worktree = path.join(worktreeParent, 'checkout');
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+  registerSessionCleanup(t, repo, env);
+
+  const added = run('git', ['-C', repo, 'worktree', 'add', '--detach', worktree, 'HEAD']);
+  assert.equal(added.status, 0, added.stderr);
+
+  const result = run(
+    process.execPath,
+    [SCRIPT, 'task', '--write', '--cwd', worktree, '--workspace', repo, 'implement it'],
+    { cwd: repo, env },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readCompanionState(repo, env)?.jobs.length, 1);
+  assert.equal(fs.existsSync(resolveDurableStateDir(worktree, env.CODEX_HOME)), false);
+  assert.equal(fs.existsSync(path.join(resolveStateDir(worktree), 'broker.json')), false);
+  assert.equal(fs.existsSync(path.join(resolveStateDir(repo), 'broker.json')), true);
+  assert.equal(readFakeState(binDir).threads[0].cwd, worktree);
 });
 
 test('task results report dropped malformed notifications without failing the run', () => {

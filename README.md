@@ -403,6 +403,13 @@ mark the record complete. A new non-resume run deliberately replaces an older re
 clearing is otherwise user-chosen. The first resumed reviewer is always freshly and fully briefed
 because agent continuation never crosses command runs.
 
+`--isolated` runs implementation in a throwaway detached worktree under the OS temporary
+directory, confining Codex writes there while durable state, jobs, and the shared broker remain
+keyed to the main workspace, so `/stereo:status` works as usual. Review and host checks target the
+worktree, then Stereo creates a binary patch and asks before handing it back with
+`git apply --3way`; it never creates a commit. Isolation is rejected with `--review-only` and
+`--base`, while `--resume` follows the worktree recorded by the interrupted phase.
+
 Codex implementation-review tasks pass the shipped implementation-review schema to the runtime,
 so their final messages are schema-constrained before the command performs its normal validation
 and retry checks. Claude routes retain command-side validation.
@@ -431,6 +438,7 @@ Examples:
 /stereo:implement --fresh
 /stereo:implement --implement-only
 /stereo:implement --resume
+/stereo:implement --isolated
 /stereo:implement --review-only --implementation-reviewer claude:opus
 /stereo:implement --review-only --base main
 ```
