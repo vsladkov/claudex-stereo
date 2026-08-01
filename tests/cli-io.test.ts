@@ -230,6 +230,9 @@ test('--workspace overrides --cwd when resolving command state', () => {
   assert.equal(resolveCommandWorkspace({ cwd, workspace }), workspace);
 });
 
+// git rev-parse --show-toplevel emits forward slashes on Windows, hence the
+// path.resolve on both sides; makeTempDir already hands back the canonical
+// long path, so the runner's 8.3 short form never enters the comparison.
 test('--workspace normalizes a repository subdirectory to the git top level', () => {
   const repo = makeTempDir();
   const nested = path.join(repo, 'nested', 'directory');

@@ -42,8 +42,20 @@ function installTempDirCleanup(): void {
   });
 }
 
+// Canonical, not raw: os.tmpdir() is an 8.3 short path on GitHub's Windows
+// runners (TEMP=C:\Users\RUNNER~1\...) and a /var symlink on macOS, while
+// `git rev-parse --show-toplevel` and every realpath-based resolver report the
+// long/physical form. Comparing a raw temp path against a resolved one is a
+// whole class of platform-only failures. realpathSync.native, not
+// realpathSync: only the native call expands 8.3 short names.
 export function makeTempDir(prefix = 'codex-plugin-test-'): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const created = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  let dir = created;
+  try {
+    dir = fs.realpathSync.native(created);
+  } catch {
+    dir = created;
+  }
   createdTempDirs.push(dir);
   allTempDirs.push(dir);
   installTempDirCleanup();

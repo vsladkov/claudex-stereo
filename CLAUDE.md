@@ -119,6 +119,12 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   fixture state) must go through `readJsonIfReadable` plus a retrying waitFor
   predicate — raw `JSON.parse(readFileSync(...))` on such files is the
   torn-read flake class.
+- `makeTempDir` returns the **canonicalized** (`fs.realpathSync.native`) temp
+  directory: `os.tmpdir()` is an 8.3 short path on GitHub's Windows runners
+  (`C:\Users\RUNNER~1\...`) and a `/var` symlink on macOS, while
+  `git rev-parse --show-toplevel` and every realpath-based resolver report the
+  long/physical form. Never compare a raw `os.tmpdir()`-derived path against a
+  resolved one.
 - Set `STEREO_KEEP_TEST_TMP=1` to retain test temp directories for debugging;
   otherwise each test process removes the directories it created at exit.
 
@@ -149,5 +155,12 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   Endpoint-pinned and manually spawned record-less brokers never self-check.
 - A client that dies mid-turn is handled by the broker (interrupt + short
   grace gate); clients fall back to a direct app-server on busy rejections.
+- A helper that takes an explicit `platform` argument must build paths with
+  `path.posix`/`path.win32` explicitly, never the host-bound `path` facade —
+  `createBrokerEndpoint` once returned `unix:\tmp\...` when a Windows host
+  asked for a non-win32 endpoint. Path canonicalization that must bridge
+  Windows 8.3 short names uses `fs.realpathSync.native`
+  (`resolveWorkspaceStateKey`, `resolveContainedUserFile`), never plain
+  `fs.realpathSync`.
 - The `--json` error contract: failures print `{"error": message}` on stdout
   only when JSON output was requested; error strings are pinned by tests.

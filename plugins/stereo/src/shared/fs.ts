@@ -201,9 +201,13 @@ export function resolveContainedUserFile(
   allowedRoots: readonly string[],
 ): string {
   const resolved = path.resolve(candidate);
-  const canonicalCandidate = fs.realpathSync(resolved);
+  // realpathSync.native, not realpathSync: only the native call expands
+  // Windows 8.3 short names (os.tmpdir() is short-form on GitHub's Windows
+  // runners), and containment must compare candidate and roots in the same
+  // canonical form. Same primitive as resolveWorkspaceStateKey.
+  const canonicalCandidate = fs.realpathSync.native(resolved);
   const contained = allowedRoots.some((root) => {
-    const canonicalRoot = fs.realpathSync(path.resolve(root));
+    const canonicalRoot = fs.realpathSync.native(path.resolve(root));
     const relative = path.relative(canonicalRoot, canonicalCandidate);
     return (
       relative === '' ||

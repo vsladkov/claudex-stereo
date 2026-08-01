@@ -21,7 +21,11 @@ export function createBrokerEndpoint(
     return `pipe:\\\\.\\pipe\\${pipeName}`;
   }
 
-  return `unix:${path.join(sessionDir, 'broker.sock')}`;
+  // path.posix, not the host-bound path facade: this function is
+  // platform-parameterized (the win32 branch above already uses path.win32),
+  // so a Windows host asking for a non-win32 endpoint must still get a Unix
+  // socket path with forward slashes.
+  return `unix:${path.posix.join(sessionDir, 'broker.sock')}`;
 }
 
 export function parseBrokerEndpoint(endpoint: string): BrokerEndpointTarget {
