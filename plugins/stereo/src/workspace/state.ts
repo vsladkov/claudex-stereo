@@ -15,7 +15,8 @@ const STATE_FILE_NAME = 'state.json';
 const JOBS_DIR_NAME = 'jobs';
 const PAIR_PLAN_FILE_NAME = 'pair-plan.json';
 const PAIR_PLAN_MARKDOWN_FILE_NAME = 'pair-plan.md';
-const MAX_JOBS = 50;
+const IMPLEMENT_STATE_FILE_NAME = 'implement-state.json';
+export const MAX_JOBS = 50;
 const migrationChecked = new Set<string>();
 
 export type StereoRoleKey = 'planner' | 'planReviewer' | 'implementer' | 'implementationReviewer';
@@ -572,6 +573,64 @@ export function resolvePairPlanFile(cwd: string): string {
 
 export function resolvePairPlanMarkdownFile(cwd: string): string {
   return path.join(resolveDurableStateDir(cwd), PAIR_PLAN_MARKDOWN_FILE_NAME);
+}
+
+export function resolveImplementStateFile(cwd: string): string {
+  return path.join(resolveDurableStateDir(cwd), IMPLEMENT_STATE_FILE_NAME);
+}
+
+export function saveImplementState<T>(cwd: string, record: T): T {
+  ensureStateDir(cwd);
+  writeJsonAtomic(resolveImplementStateFile(cwd), record);
+  return record;
+}
+
+export function readImplementStateFile(cwd: string): {
+  missing: boolean;
+  record: unknown;
+  parseError: string | null;
+} {
+  const implementStateFile = resolveImplementStateFile(cwd);
+  if (!fs.existsSync(implementStateFile)) {
+    return { missing: true, record: null, parseError: null };
+  }
+  try {
+    return {
+      missing: false,
+      record: JSON.parse(fs.readFileSync(implementStateFile, 'utf8')),
+      parseError: null,
+    };
+  } catch (error) {
+    return {
+      missing: false,
+      record: null,
+      parseError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export function loadImplementState(cwd: string): unknown {
+  return readImplementStateFile(cwd).record;
+}
+
+export function clearImplementState(cwd: string): string[] {
+  const implementStateFile = resolveImplementStateFile(cwd);
+  try {
+    fs.unlinkSync(implementStateFile);
+    return [implementStateFile];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
+      throw error;
+    }
+    return [];
+  }
+}
+
+export function fingerprintPlanText(plan: unknown): string | null {
+  if (typeof plan !== 'string' || !plan.trim()) {
+    return null;
+  }
+  return createHash('sha256').update(String(plan)).digest('hex').slice(0, 32);
 }
 
 export function savePairPlanState<T>(cwd: string, record: T): T {

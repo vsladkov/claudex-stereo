@@ -1,6 +1,7 @@
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
+  buildUsageSnapshot,
   readStoredJob,
   resolveResultJob,
   VERBOSE_MAX_PROGRESS_LINES,
@@ -11,6 +12,7 @@ import {
   renderJobStatusReport,
   renderStatusReport,
   renderStoredJobResult,
+  renderUsageReport,
 } from '../../render/render.ts';
 import type { StatusRenderOptions, StoredJobLike } from '../../render/render.ts';
 import { resolveJobFile } from '../../workspace/state.ts';
@@ -29,13 +31,24 @@ function renderStatusPayload(
 export async function handleStatus(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ['cwd', 'timeout-ms', 'poll-interval-ms'],
-    booleanOptions: ['json', 'all', 'wait', 'verbose'],
+    booleanOptions: ['json', 'all', 'wait', 'verbose', 'usage'],
     aliasMap: {
       v: 'verbose',
     },
   });
 
   const cwd = resolveCommandCwd(options);
+  if (options.usage) {
+    if (positionals.length > 0) {
+      throw new Error('`status --usage` does not take a job id.');
+    }
+    if (options.wait) {
+      throw new Error('`status --usage` cannot be combined with --wait.');
+    }
+    const snapshot = buildUsageSnapshot(cwd, { all: options.all });
+    outputResult(options.json ? snapshot : renderUsageReport(snapshot), options.json);
+    return;
+  }
   const reference = positionals[0] ?? '';
   const verbose = Boolean(options.verbose);
   const maxProgressLines = verbose ? VERBOSE_MAX_PROGRESS_LINES : undefined;

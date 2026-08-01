@@ -9,6 +9,7 @@ import { makeTempDir } from './helpers.ts';
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
+  buildUsageSnapshot,
   enrichJob,
   filterJobsForCurrentSession,
   formatJobModel,
@@ -78,6 +79,140 @@ test('filterJobsForCurrentSession prefers an explicit session id', () => {
     ['b'],
   );
   assert.equal(filterJobsForCurrentSession(jobs, {}).length >= 1, true);
+});
+
+test('buildUsageSnapshot groups job usage, backfills files, and never sums thread usage', (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  const usage = (input: number, cached: number, output: number, reasoning: number) => ({
+    job: {
+      inputTokens: input,
+      cachedInputTokens: cached,
+      outputTokens: output,
+      reasoningOutputTokens: reasoning,
+      totalTokens: input + output,
+      cacheWriteInputTokens: 0,
+    },
+    thread: {
+      inputTokens: 900_000,
+      cachedInputTokens: 800_000,
+      outputTokens: 100_000,
+      reasoningOutputTokens: 50_000,
+      totalTokens: 1_000_000,
+      cacheWriteInputTokens: 0,
+    },
+    modelContextWindow: 258_000,
+  });
+  const indexed = [
+    jobAt('review-sol', 3, {
+      kind: 'review',
+      jobClass: 'review',
+      model: 'gpt-5.6-sol',
+      tokenUsage: usage(100, 40, 25, 5),
+    }),
+    jobAt('task-missing-usage', 2, {
+      kind: 'task',
+      jobClass: 'task',
+      model: null,
+    }),
+    jobAt('task-backfilled', 1, {
+      kind: 'task',
+      jobClass: 'task',
+      model: null,
+    }),
+    jobAt('other-session', 4, {
+      sessionId: 'sess-other',
+      kind: 'review',
+      jobClass: 'review',
+      model: 'gpt-5.6-terra',
+      tokenUsage: usage(500, 100, 50, 10),
+    }),
+  ];
+  seedJobs(workspace, indexed);
+  writeJobFile(workspace, 'task-backfilled', {
+    ...indexed[2],
+    request: { model: 'kimi-k3' },
+    tokenUsage: usage(60, 20, 15, 3),
+  });
+
+  const scoped = buildUsageSnapshot(workspace, { sessionId: 'sess-current' });
+  assert.equal(scoped.scope, 'session');
+  assert.equal(scoped.sessionId, 'sess-current');
+  assert.deepEqual(scoped.window, {
+    retainedJobs: 4,
+    countedJobs: 3,
+    maxRetainedJobs: 50,
+  });
+  assert.deepEqual(scoped.totals, {
+    jobs: 3,
+    jobsWithUsage: 2,
+    inputTokens: 160,
+    cachedInputTokens: 60,
+    outputTokens: 40,
+    reasoningOutputTokens: 8,
+    totalTokens: 200,
+  });
+  assert.deepEqual(scoped.byKind, [
+    {
+      key: 'review',
+      jobs: 1,
+      jobsWithUsage: 1,
+      inputTokens: 100,
+      cachedInputTokens: 40,
+      outputTokens: 25,
+      reasoningOutputTokens: 5,
+      totalTokens: 125,
+    },
+    {
+      key: 'rescue',
+      jobs: 2,
+      jobsWithUsage: 1,
+      inputTokens: 60,
+      cachedInputTokens: 20,
+      outputTokens: 15,
+      reasoningOutputTokens: 3,
+      totalTokens: 75,
+    },
+  ]);
+  assert.deepEqual(
+    scoped.byModel.map((group) => [group.key, group.jobs, group.totalTokens]),
+    [
+      ['gpt-5.6-sol', 1, 125],
+      ['kimi-k3@moonshot', 1, 75],
+      ['-', 1, 0],
+    ],
+  );
+
+  const all = buildUsageSnapshot(workspace, { sessionId: 'sess-current', all: true });
+  assert.equal(all.scope, 'workspace');
+  assert.equal(all.window.countedJobs, 4);
+  assert.equal(all.totals.totalTokens, 750);
+  assert.equal(all.totals.jobsWithUsage, 3);
+});
+
+test('buildUsageSnapshot returns an empty workspace window', (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  const snapshot = buildUsageSnapshot(workspace, { env: {} });
+
+  assert.equal(snapshot.scope, 'workspace');
+  assert.equal(snapshot.sessionId, null);
+  assert.deepEqual(snapshot.window, {
+    retainedJobs: 0,
+    countedJobs: 0,
+    maxRetainedJobs: 50,
+  });
+  assert.deepEqual(snapshot.totals, {
+    jobs: 0,
+    jobsWithUsage: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+  });
+  assert.deepEqual(snapshot.byKind, []);
+  assert.deepEqual(snapshot.byModel, []);
 });
 
 test('resolveResultJob reports a referenced running job as still running', (t) => {

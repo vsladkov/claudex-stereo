@@ -55,6 +55,10 @@ renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
 `--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements. Quick
 has no configurable round-count flags.
 
+`/stereo:quick` has no `--resume`: an interrupted Quick run restarts from the beginning. Use
+`/stereo:plan` plus `/stereo:implement` for a long task that needs durable phase state and
+`/stereo:implement --resume`.
+
 Define these invocation placeholders before any routed step:
 
 - `<plannerSelectionArgs>` = `--model <effectivePlannerModel> <plannerEffortArg>`.

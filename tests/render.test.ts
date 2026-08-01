@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   formatTokenUsage,
   renderConfigReport,
+  renderImplementState,
   renderJobStatusReport,
   renderPlanReviewResult,
   renderReviewResult,
@@ -12,6 +13,7 @@ import {
   renderStoredJobResult,
   renderStoredPlanState,
   renderTaskResult,
+  renderUsageReport,
 } from '../plugins/stereo/src/render/render.ts';
 
 const tokenUsage = {
@@ -541,6 +543,141 @@ test('renderStoredPlanState preserves the unavailable message byte-for-byte', ()
     renderStoredPlanState(null),
     'No stored plan for this repository. Run /stereo:plan first.\n',
   );
+});
+
+test('renderImplementState shows the durable phase metadata and recorded job id', () => {
+  const output = renderImplementState({
+    baselineCommit: '8b995ad',
+    baselineDirtyPaths: ['README.md', 'src/local.ts'],
+    implementer: {
+      selection: 'codex:sol',
+      model: 'gpt-5.6-sol',
+      effort: 'max',
+    },
+    implementationThreadId: 'thr_implementation',
+    jobId: 'task-background-7',
+    round: 2,
+    latestVerdict: 'needs-fixes',
+    status: 'in-progress',
+    updatedAt: '2026-08-01T10:00:00.000Z',
+    plan: {
+      fingerprint: '0123456789abcdef0123456789abcdef',
+      updatedAt: '2026-08-01T09:00:00.000Z',
+    },
+  });
+
+  assert.match(output, /^# Stereo Implementation State/m);
+  assert.match(output, /Baseline commit: 8b995ad/);
+  assert.match(output, /Baseline-dirty paths: 2/);
+  assert.match(output, /Implementer selection: codex:sol/);
+  assert.match(output, /Implementation thread ID: thr_implementation/);
+  assert.match(output, /Background job ID: task-background-7/);
+  assert.match(output, /Completed review rounds: 2/);
+  assert.match(output, /Recorded plan fingerprint: 0123456789abcdef0123456789abcdef/);
+});
+
+test('renderImplementState preserves the unavailable message', () => {
+  assert.equal(
+    renderImplementState(null),
+    'No implementation state for this repository. Run /stereo:implement first.\n',
+  );
+});
+
+test('renderUsageReport renders a scoped window, exact tables, and escaped keys', () => {
+  const output = renderUsageReport({
+    workspaceRoot: '/tmp/repo',
+    scope: 'session',
+    sessionId: 'sess-1',
+    window: { retainedJobs: 4, countedJobs: 3, maxRetainedJobs: 50 },
+    totals: {
+      jobs: 3,
+      jobsWithUsage: 2,
+      inputTokens: 1160,
+      cachedInputTokens: 600,
+      outputTokens: 240,
+      reasoningOutputTokens: 80,
+      totalTokens: 1400,
+    },
+    byKind: [
+      {
+        key: 'review|native',
+        jobs: 1,
+        jobsWithUsage: 1,
+        inputTokens: 1000,
+        cachedInputTokens: 500,
+        outputTokens: 200,
+        reasoningOutputTokens: 70,
+        totalTokens: 1200,
+      },
+      {
+        key: 'rescue',
+        jobs: 2,
+        jobsWithUsage: 1,
+        inputTokens: 160,
+        cachedInputTokens: 100,
+        outputTokens: 40,
+        reasoningOutputTokens: 10,
+        totalTokens: 200,
+      },
+    ],
+    byModel: [
+      {
+        key: 'gpt-5.6-sol',
+        jobs: 2,
+        jobsWithUsage: 2,
+        inputTokens: 1160,
+        cachedInputTokens: 600,
+        outputTokens: 240,
+        reasoningOutputTokens: 80,
+        totalTokens: 1400,
+      },
+      {
+        key: '-',
+        jobs: 1,
+        jobsWithUsage: 0,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+        totalTokens: 0,
+      },
+    ],
+  });
+
+  assert.match(output, /^# Codex Usage/m);
+  assert.match(output, /3 counted of 4 retained jobs .*cap 50.*scope: current session sess-1/);
+  assert.match(output, /not Codex account usage, and not all-time history/);
+  assert.match(output, /Total: 1\.4K tokens/);
+  assert.match(
+    output,
+    /\| Kind \| Jobs \| With usage \| Input \| Cached input \| Output \| Reasoning \| Total \|/,
+  );
+  assert.match(output, /\| review\\\|native \| 1 \| 1 \| 1000 \| 500 \| 200 \| 70 \| 1200 \|/);
+  assert.match(output, /\| Model \| Jobs \| With usage/);
+});
+
+test('renderUsageReport renders the empty retained-index case', () => {
+  const output = renderUsageReport({
+    workspaceRoot: '/tmp/repo',
+    scope: 'workspace',
+    sessionId: null,
+    window: { retainedJobs: 0, countedJobs: 0, maxRetainedJobs: 50 },
+    totals: {
+      jobs: 0,
+      jobsWithUsage: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+      totalTokens: 0,
+    },
+    byKind: [],
+    byModel: [],
+  });
+
+  assert.match(output, /0 counted of 0 retained jobs .*cap 50.*scope: workspace/);
+  assert.match(output, /No recorded token usage in the retained job index\./);
+  assert.doesNotMatch(output, /By kind:/);
 });
 
 test('renderPlanReviewResult orders findings by severity and lists revision guidance', () => {

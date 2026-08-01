@@ -1,11 +1,15 @@
 ---
 description: Show active and recent Codex jobs for this repository, including review-gate status
-argument-hint: '[job-id] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--verbose]'
+argument-hint: '[job-id] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--usage] [--verbose]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
 !`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status "$ARGUMENTS"`
+
+When the user passed `--usage`, present the usage headline and both tables verbatim. Preserve the
+window and scope sentence exactly, including whether it covers this session or the workspace.
+Never describe these local retained-job totals as Codex account usage or all-time history.
 
 If the user did not pass a job ID:
 

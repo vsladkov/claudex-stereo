@@ -7,7 +7,14 @@ import {
   looksLikeVerificationCommand,
 } from '../runtime/index.ts';
 import type { SessionRuntimeStatus, StrandedReservationEntry } from '../runtime/index.ts';
-import { getConfig, listJobs, readJobFile, resolveJobFile, upsertJob } from '../workspace/state.ts';
+import {
+  getConfig,
+  listJobs,
+  MAX_JOBS,
+  readJobFile,
+  resolveJobFile,
+  upsertJob,
+} from '../workspace/state.ts';
 import type { JobRecord, StereoConfig } from '../workspace/state.ts';
 import { modelProviderFor } from '../models/registry.ts';
 import { SESSION_ID_ENV } from './tracked-jobs.ts';
@@ -30,6 +37,34 @@ export interface EnrichJobOptions {
 export interface StatusSnapshotOptions extends SessionFilterOptions, EnrichJobOptions {
   all?: unknown;
   maxJobs?: number;
+}
+
+export interface UsageTotals {
+  jobs: number;
+  jobsWithUsage: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+}
+
+export interface UsageGroup extends UsageTotals {
+  key: string;
+}
+
+export interface UsageSnapshot {
+  workspaceRoot: string;
+  scope: 'session' | 'workspace';
+  sessionId: string | null;
+  window: {
+    retainedJobs: number;
+    countedJobs: number;
+    maxRetainedJobs: number;
+  };
+  totals: UsageTotals;
+  byKind: UsageGroup[];
+  byModel: UsageGroup[];
 }
 
 // A job as presented by status/result surfaces: the raw record plus the
@@ -123,6 +158,100 @@ export function filterJobsForCurrentSession(
     return jobs;
   }
   return jobs.filter((job) => job.sessionId === sessionId);
+}
+
+function emptyUsageTotals(): UsageTotals {
+  return {
+    jobs: 0,
+    jobsWithUsage: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0,
+  };
+}
+
+function finiteNonnegativeUsageNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function addUsage(totals: UsageTotals, usage: Record<string, unknown> | null): void {
+  totals.jobs += 1;
+  if (!usage) {
+    return;
+  }
+  totals.jobsWithUsage += 1;
+  totals.inputTokens += finiteNonnegativeUsageNumber(usage.inputTokens);
+  totals.cachedInputTokens += finiteNonnegativeUsageNumber(usage.cachedInputTokens);
+  totals.outputTokens += finiteNonnegativeUsageNumber(usage.outputTokens);
+  totals.reasoningOutputTokens += finiteNonnegativeUsageNumber(usage.reasoningOutputTokens);
+  totals.totalTokens += finiteNonnegativeUsageNumber(usage.totalTokens);
+}
+
+function usageGroup(groups: Map<string, UsageGroup>, key: string): UsageGroup {
+  const existing = groups.get(key);
+  if (existing) {
+    return existing;
+  }
+  const created = { key, ...emptyUsageTotals() };
+  groups.set(key, created);
+  return created;
+}
+
+function sortedUsageGroups(groups: Map<string, UsageGroup>): UsageGroup[] {
+  return [...groups.values()].sort(
+    (left, right) => right.totalTokens - left.totalTokens || left.key.localeCompare(right.key),
+  );
+}
+
+export function buildUsageSnapshot(
+  cwd: string,
+  options: StatusSnapshotOptions = {},
+): UsageSnapshot {
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const retained = listJobs(workspaceRoot);
+  const retainedJobs = retained.length;
+  const sessionId = options.sessionId ?? getCurrentSessionId(options);
+  const scope = options.all || !sessionId ? 'workspace' : 'session';
+  const jobs = options.all ? retained : filterJobsForCurrentSession(retained, options);
+  const totals = emptyUsageTotals();
+  const byKind = new Map<string, UsageGroup>();
+  const byModel = new Map<string, UsageGroup>();
+
+  for (const job of jobs) {
+    let storedJob: JobRecord | null = null;
+    if (!job.tokenUsage || !resolveJobModel(job)) {
+      try {
+        storedJob = readStoredJob(workspaceRoot, job.id);
+      } catch {
+        // Older or degraded bookkeeping may leave a missing/corrupt job file.
+        // Usage reporting remains a best-effort read of the retained index.
+        storedJob = null;
+      }
+    }
+    const tokenUsage = recordLike(job.tokenUsage) ?? recordLike(storedJob?.tokenUsage);
+    const jobUsage = recordLike(tokenUsage?.job);
+    const kind = getJobTypeLabel(job);
+    const model = formatJobModel(resolveJobModel(job, storedJob));
+    addUsage(totals, jobUsage);
+    addUsage(usageGroup(byKind, kind), jobUsage);
+    addUsage(usageGroup(byModel, model), jobUsage);
+  }
+
+  return {
+    workspaceRoot,
+    scope,
+    sessionId,
+    window: {
+      retainedJobs,
+      countedJobs: jobs.length,
+      maxRetainedJobs: MAX_JOBS,
+    },
+    totals,
+    byKind: sortedUsageGroups(byKind),
+    byModel: sortedUsageGroups(byModel),
+  };
 }
 
 export function getJobTypeLabel(job: JobRecord): string {

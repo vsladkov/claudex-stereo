@@ -1,6 +1,7 @@
 import { describeStrandedReservation } from '../runtime/reservations.ts';
 import type { StrandedReservationEntry } from '../runtime/reservations.ts';
 import { formatJobModel, resolveJobModel } from '../jobs/job-control.ts';
+import type { UsageGroup, UsageSnapshot } from '../jobs/job-control.ts';
 import type { SessionJobAnnouncement } from '../jobs/job-announcements.ts';
 import type { RoleDefaultEntry } from '../models/role-defaults.ts';
 
@@ -60,6 +61,23 @@ export interface StoredPairPlanState {
   findings?: unknown;
   openQuestions?: unknown;
   residualRisks?: unknown;
+  [key: string]: unknown;
+}
+
+export interface StoredImplementState {
+  baselineCommit?: unknown;
+  baselineDirtyPaths?: unknown;
+  implementer?: unknown;
+  implementerSelection?: unknown;
+  implementerModel?: unknown;
+  implementerEffort?: unknown;
+  implementationThreadId?: unknown;
+  jobId?: unknown;
+  round?: unknown;
+  latestVerdict?: unknown;
+  status?: unknown;
+  updatedAt?: unknown;
+  plan?: unknown;
   [key: string]: unknown;
 }
 
@@ -694,6 +712,56 @@ export function renderStoredPlanState(record: StoredPairPlanState | null): strin
   return output.endsWith('\n') ? output : `${output}\n`;
 }
 
+function storedRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+export function renderImplementState(record: StoredImplementState | null): string {
+  if (!record) {
+    return 'No implementation state for this repository. Run /stereo:implement first.\n';
+  }
+
+  const implementer = storedRecord(record.implementer);
+  const selection =
+    storedPlanMetadataValue(record.implementerSelection) ??
+    storedPlanMetadataValue(implementer?.selection) ??
+    storedPlanMetadataValue(record.implementer);
+  const model =
+    storedPlanMetadataValue(record.implementerModel) ?? storedPlanMetadataValue(implementer?.model);
+  const effort =
+    storedPlanMetadataValue(record.implementerEffort) ??
+    storedPlanMetadataValue(implementer?.effort);
+  const plan = storedRecord(record.plan);
+  const baselineDirtyCount = Array.isArray(record.baselineDirtyPaths)
+    ? record.baselineDirtyPaths.length
+    : 0;
+  const lines = [
+    '# Stereo Implementation State',
+    '',
+    `Baseline commit: ${storedPlanMetadataValue(record.baselineCommit) ?? '-'}`,
+    `Baseline-dirty paths: ${baselineDirtyCount}`,
+    `Implementer selection: ${selection ?? '-'}`,
+    `Implementer model: ${model ?? '-'}`,
+    `Implementer effort: ${effort ?? '-'}`,
+    `Implementation thread ID: ${storedPlanMetadataValue(record.implementationThreadId) ?? '-'}`,
+  ];
+  const jobId = storedPlanMetadataValue(record.jobId);
+  if (jobId) {
+    lines.push(`Background job ID: ${jobId}`);
+  }
+  lines.push(
+    `Completed review rounds: ${storedPlanMetadataValue(record.round) ?? '0'}`,
+    `Latest verdict: ${storedPlanMetadataValue(record.latestVerdict) ?? '-'}`,
+    `Status: ${storedPlanMetadataValue(record.status) ?? 'unknown'}`,
+    `Updated: ${storedPlanMetadataValue(record.updatedAt) ?? '-'}`,
+    `Recorded plan fingerprint: ${storedPlanMetadataValue(plan?.fingerprint) ?? '-'}`,
+    `Recorded plan updated: ${storedPlanMetadataValue(plan?.updatedAt) ?? '-'}`,
+  );
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
 export function renderConfigReport(report: ConfigRenderReport): string {
   const lines = ['# Stereo Config', '', 'Role defaults:'];
   for (const entry of report.roleDefaults) {
@@ -1169,6 +1237,51 @@ export function renderTaskResult(
   const message =
     String(parsedResult?.failureMessage ?? '').trim() || 'Codex did not return a final message.';
   return `${message}\n`;
+}
+
+function appendUsageTable(lines: string[], label: string, groups: UsageGroup[]): void {
+  lines.push(
+    `| ${label} | Jobs | With usage | Input | Cached input | Output | Reasoning | Total |`,
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+  );
+  for (const group of [...groups].sort(
+    (left, right) => right.totalTokens - left.totalTokens || left.key.localeCompare(right.key),
+  )) {
+    lines.push(
+      `| ${escapeMarkdownCell(group.key)} | ${group.jobs} | ${group.jobsWithUsage} | ${group.inputTokens} | ${group.cachedInputTokens} | ${group.outputTokens} | ${group.reasoningOutputTokens} | ${group.totalTokens} |`,
+    );
+  }
+}
+
+export function renderUsageReport(report: UsageSnapshot): string {
+  const scope =
+    report.scope === 'session'
+      ? `current session${report.sessionId ? ` ${report.sessionId}` : ''}`
+      : 'workspace';
+  const lines = [
+    '# Codex Usage',
+    '',
+    `Window: ${report.window.countedJobs} counted of ${report.window.retainedJobs} retained jobs (retained-index cap ${report.window.maxRetainedJobs}); scope: ${scope}.`,
+    'These totals are local job records, not Codex account usage, and not all-time history.',
+    'For usage, `--all` widens session scope to all retained workspace jobs; unlike the job listing, it changes scope.',
+  ];
+
+  if (report.totals.jobsWithUsage === 0) {
+    lines.push('', 'No recorded token usage in the retained job index.');
+    return `${lines.join('\n')}\n`;
+  }
+
+  const breakdown = formatUsageBreakdown(report.totals, true);
+  lines.push(
+    '',
+    `Total: ${formatCompactTokenCount(report.totals.totalTokens)} tokens${breakdown ? ` · ${breakdown}` : ''}`,
+    '',
+    'By kind:',
+  );
+  appendUsageTable(lines, 'Kind', report.byKind);
+  lines.push('', 'By model:');
+  appendUsageTable(lines, 'Model', report.byModel);
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
 export function renderStatusReport(

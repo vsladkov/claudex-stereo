@@ -242,7 +242,10 @@ generic immediate-stop rule above. If that fresh invocation reports a selected-m
 error, surface it and stop without substituting a model.
 
 Continuation never crosses command runs or Claude sessions. Every new command starts with a fresh
-round-1 agent. For every review round, report the token usage and duration from its invocation or
+round-1 agent. `/stereo:implement --resume` therefore always re-briefs statelessly on its first
+resumed round; across command runs, the durable implementation-state record rather than the
+conversation carries `implementationReviewHistory`. For every review round, report the token
+usage and duration from its invocation or
 follow-up when the harness provides them; otherwise report `usage unavailable`. Also report
 whether the round was continued or re-briefed.
 

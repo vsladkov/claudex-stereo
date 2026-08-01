@@ -8,17 +8,22 @@ import { makeTempDir } from './helpers.ts';
 import { loadBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import { buildSingleJobSnapshot } from '../plugins/stereo/src/jobs/job-control.ts';
 import {
+  clearImplementState,
   clearPairPlanState,
+  fingerprintPlanText,
+  loadImplementState,
   loadState,
   loadPairPlanState,
   resolveDurableStateDir,
   resolveJobFile,
   resolveJobLogFile,
+  resolveImplementStateFile,
   resolvePairPlanFile,
   resolvePairPlanMarkdownFile,
   resolveStateDir,
   resolveStateFile,
   savePairPlanState,
+  saveImplementState,
   saveState,
   upsertJob,
   writeTextAtomic,
@@ -90,6 +95,10 @@ test('durable state is rooted in CODEX_HOME while broker state remains plugin-sc
     );
     assert.equal(
       resolvePairPlanFile(workspace).startsWith(resolveDurableStateDir(workspace)),
+      true,
+    );
+    assert.equal(
+      resolveImplementStateFile(workspace).startsWith(resolveDurableStateDir(workspace)),
       true,
     );
   } finally {
@@ -406,6 +415,29 @@ test('clearPairPlanState removes both artifacts and is idempotent', () => {
   assert.equal(fs.existsSync(planPath), false);
   assert.equal(fs.existsSync(markdownPath), false);
   assert.deepEqual(clearPairPlanState(workspace), []);
+});
+
+test('implementation state round-trips in the durable directory and clears idempotently', () => {
+  const workspace = makeTempDir();
+  const statePath = resolveImplementStateFile(workspace);
+  const record = { version: 1, baselineCommit: 'abc123', round: 2 };
+
+  assert.equal(statePath.startsWith(resolveDurableStateDir(workspace)), true);
+  assert.deepEqual(saveImplementState(workspace, record), record);
+  assert.deepEqual(loadImplementState(workspace), record);
+  assert.deepEqual(clearImplementState(workspace), [statePath]);
+  assert.equal(loadImplementState(workspace), null);
+  assert.deepEqual(clearImplementState(workspace), []);
+});
+
+test('fingerprintPlanText is stable and rejects empty or non-string plans', () => {
+  const fingerprint = fingerprintPlanText('# Plan\n\nImplement it.');
+  assert.match(fingerprint ?? '', /^[a-f0-9]{32}$/);
+  assert.equal(fingerprintPlanText('# Plan\n\nImplement it.'), fingerprint);
+  assert.notEqual(fingerprintPlanText('# Plan\n\nImplement something else.'), fingerprint);
+  assert.equal(fingerprintPlanText(''), null);
+  assert.equal(fingerprintPlanText('   '), null);
+  assert.equal(fingerprintPlanText({ plan: 'text' }), null);
 });
 
 test('clearPairPlanState creates no durable directory when nothing is stored', () => {

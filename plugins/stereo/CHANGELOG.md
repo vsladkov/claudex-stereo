@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.30.0
+
+- Add durable workspace-scoped implementation-phase records and `/stereo:implement --resume`,
+  including recorded background-job recovery, plan-fingerprint drift detection, and bounded round
+  summaries
+- Add review ergonomics with prompted adversarial-review effort control and named-model pair-effort
+  defaults, an explicit native-review effort rejection, standalone implementation review against
+  `--base <ref>`, and user-side `--pr <n>` resolution without worktree mutation
+- Add `/stereo:status --usage` for local retained-job token totals grouped by job kind and model,
+  with session/workspace scopes and JSON output
+
 ## 1.29.0
 
 - Add durable per-workspace model and Codex effort defaults for the four pair roles, with the new

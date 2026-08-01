@@ -1,6 +1,6 @@
 ---
 description: Implement or review the stored plan with independently selected Claude or Codex role models
-argument-hint: '[--implement-only|--review-only] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
+argument-hint: '[--implement-only|--review-only] [--resume] [--base <ref>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -34,6 +34,10 @@ After reading the routing skill, parse all arguments before loading state:
 - `--fresh` skips a reusable stored Codex plan-review thread.
 - `--implement-only` implements and verifies once, then stops before review.
 - `--review-only` reviews the current dirty/untracked implementation delta once without fixing.
+- `--resume` re-enters a recorded incomplete implementation phase after a crashed, compacted, or
+  closed Claude session.
+- `--base <ref>` reviews the committed `<ref>...HEAD` range and is valid only with
+  `--review-only`.
 - Without a mode flag, run the complete implement-plus-review/fix phase.
 
 Reject missing values, duplicates, positionals, invalid effort/round values, unknown flags,
@@ -48,6 +52,19 @@ For `--review-only`, reject `--implementer`, `--implementer-effort`, `--fresh`, 
 `--max-fix-rounds`. For `--implement-only`, reject `--implementation-reviewer`,
 `--implementation-reviewer-effort`, and `--max-fix-rounds`. Reject a role effort flag when its
 selected role is Claude-routed.
+
+Reject `--resume` with `--implement-only`, `--review-only`, or `--fresh`. Reject `--resume` with
+`--implementer` or `--implementer-effort`: the durable record owns the implementer; tell the user
+to run without `--resume` to start over. `--implementation-reviewer`,
+`--implementation-reviewer-effort`, `--effort`, and `--max-fix-rounds` remain legal with
+`--resume`. Reject `--base` without `--review-only`. Reject `--scope` in every mode and name
+`--base <ref>` as the supported standalone range control: auto-detecting a default base could
+silently review commits the plan never covered.
+
+On resume, the recorded implementer model and effort remain fixed for later fixes. Re-resolve the
+implementation reviewer through the normal reviewer flag/workspace/default precedence; its
+recorded selection is historical context, and the legal reviewer/effort flags may choose a new
+reviewer for this command run.
 
 Reject `claude:session` as the implementer; Claude writes must use the contained named agent.
 
@@ -80,6 +97,11 @@ as Claude routes and never pass them to the companion's `--model` flag. When a w
 supplies the implementer, say so in the final effective-role note.
 
 ## Common stored-plan preflight
+
+For `--resume`, use the ordered checks in **Resuming an interrupted phase** instead of this fresh
+phase preflight; that flow loads both records, detects plan drift, and then returns to the normal
+review/fix loop. Do not ask the fresh-phase `implementedAt` questions before inspecting the
+implementation record.
 
 Load:
 
@@ -116,7 +138,28 @@ present, reviewer label when present, whether residual risks exist, and the stor
 
 ## Standalone implementation-review step
 
-For `--review-only`, do not use the normal dirty-worktree attribution rule:
+For `--review-only --base <ref>`, replace the normal standalone steps with this committed-range
+flow:
+
+1. Verify the ref with `git rev-parse --verify <ref>^{commit}`. Stop and report the resolution
+   error if it does not resolve.
+2. Set `mergeBase` from `git merge-base <ref> HEAD`. Collect `git diff <mergeBase>..HEAD` and
+   `git log --oneline <mergeBase>..HEAD`; this has the same three-dot semantics as branch review,
+   excluding commits that exist only on `<ref>`.
+3. If `git diff --name-only <mergeBase>..HEAD` is empty, stop with
+   `Nothing to review: <ref>...HEAD is empty.`
+4. Read `git status --porcelain=v1 --untracked-files=all`. The committed `mergeBase..HEAD` diff is
+   reviewed in full, including files that are also dirty on disk. Only uncommitted working-tree
+   content is out of scope: record and list every dirty/untracked path in `{{BASELINE_CONTEXT}}`,
+   tell the reviewer not to judge those uncommitted changes, and warn when a dirty path also
+   appears in the committed range because the file on disk differs from the reviewed committed
+   content. Repeat this exclusion in the final report.
+5. Attribute the entire committed range. Do not apply the baseline-dirty exclusion and do not
+   filter range files merely because they are dirty on disk.
+6. Run the repository's identifiable host checks and build the brief through the unchanged
+   routing below. This mode does not fix or store implementation state.
+
+For `--review-only` without `--base`, do not use the normal phase attribution rule:
 
 1. Record `baselineCommit = HEAD`.
 2. Read `git status --porcelain=v1 --untracked-files=all`.
@@ -130,9 +173,12 @@ Read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md` and fill it once w
 any other text:
 
 - `{{PLAN_INPUT}}` = the full stored plan.
-- `{{BASELINE_CONTEXT}}` = the literal standalone-review rule that the entire current dirty and
-  untracked worktree is the delta against `HEAD`, with the recorded HEAD, status, diff, and
-  untracked-file inventory. Explicitly say not to apply the normal baseline-dirty exclusion.
+- `{{BASELINE_CONTEXT}}` = for worktree mode, the literal standalone-review rule that the entire
+  current dirty and untracked worktree is the delta against `HEAD`, with the recorded HEAD,
+  status, diff, and untracked-file inventory. Explicitly say not to apply the normal
+  baseline-dirty exclusion. For `--base`, provide the resolved ref, `mergeBase`, complete committed
+  range, log, dirty/untracked inventory, and the explicit uncommitted-content exclusion and
+  overlap warnings above.
 - `{{REVIEW_CONTEXT}}` = `This is a standalone implementation review. There is no implementer
 report and there are no prior implementation-review rounds.` Append `storedPlanFindings` verbatim
   when non-empty, labeled as "Advisory findings from the approving plan review, context only: the
@@ -162,6 +208,42 @@ Codex retry preserves the same `--output-schema` flag. Report the exact
 `{acceptable, summary, fixes}` result, host checks, and reviewer per-invocation usage and duration
 (or `usage unavailable`), then stop. Do not fix or store implementation state.
 
+## Implementation state record
+
+The durable workspace record lets an incomplete implementation/review/fix phase survive a
+crashed, compacted, or closed Claude session. Only `/stereo:implement` writes it; it lives beside
+the stored plan under the workspace's `$CODEX_HOME/companion-state/<workspaceKey>/` directory.
+One implementation phase per workspace is assumed. A fresh `--record` deliberately replaces any
+older record, and concurrent implementations are last-write-wins.
+
+Use the companion subactions exactly as follows. Create `<statePayloadFile>` with the Write tool
+under the routing skill's temporary-directory and quoting rules; never deliver record JSON through
+the shell:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --record --state-file "<statePayloadFile>" --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --update --state-file "<statePayloadFile>" --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --complete --state-file "<statePayloadFile>" --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --clear --json
+```
+
+The record carries `baselineCommit`, the baseline-dirty paths, `implementationThreadId`, `jobId`
+(the launched implementation or fix background job, replaced at every launch), implementer
+selection/model/effort/route, implementation-reviewer selection, `mode`, `maxFixRounds`, `round`,
+and `rounds[]`. Every round entry contains its review number, numbered fixes with the latest
+`resolved`/`unresolved` judgment, and bounded implementer-report and host-result summaries. It also
+carries `latestVerdict`, `status`, timestamps, and the plan fingerprint snapshot added by the CLI.
+Store bounded summaries rather than verbatim reports and keep the complete payload below 512 KiB;
+the companion rejects larger files instead of truncating them silently.
+
+Read the current record with:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --json
+```
+
+Every state-write failure is reported but does not fail implementation, verification, or review.
+
 ## Implementation preflight
 
 For the full phase or `--implement-only`, record:
@@ -172,6 +254,12 @@ For the full phase or `--implement-only`, record:
 If dirty, ask whether to stop so the user can commit/stash (recommended) or continue. Preserve the
 baseline-dirty list for attribution and rollback. If the stop-time review gate is enabled, mention
 that completion triggers an additional Codex review and how to disable it during long pair runs.
+
+After recording the baseline and resolving the implementer, write the initial launch record with
+`implement-state --record --state-file "<statePayloadFile>"`. Include all fields defined above,
+with `round: 0`, `rounds: []`, `status: in-progress`, and no implementation thread or job yet. This
+applies to the full phase and `--implement-only`, so an interrupted implement-only launch can later
+resume at review round 1. Report a write failure and continue.
 
 If the selected implementer is Claude, scan the stored plan's `## Step-by-step changes` before any
 edit for commands beyond the fixed host verification gates: version bumps, package installation,
@@ -301,6 +389,12 @@ Use this task block in the approved-fresh command and retain all four safety/out
 Include the findings block only when the stored findings array is non-empty. `--fresh` always
 selects the corresponding fresh variant, even when a stored review thread exists.
 
+Immediately after every implementation or retry background launch, update the implementation
+record with that launch's `jobId`. After fetching the result and saving
+`implementationThreadId`, update the record with the thread id as well. Apply the same `jobId`
+replacement to every later fix launch, so resume checks the worker most recently responsible for
+the delta.
+
 Poll and fetch through the routing skill. If resume fails, or Codex claims changes while both
 `touchedFiles` and the actual delta are empty, retry once fresh with the identical full prompt.
 Save only the latest implementation/fix payload's thread id as `implementationThreadId`. Record
@@ -418,8 +512,10 @@ whether to review inline or stop.
 
 After every completed review round, report its number, verdict/fix count, and reviewer
 per-invocation usage and duration (or `usage unavailable`), and whether the round was continued or
-re-briefed. If acceptable, finish. Otherwise send the exact numbered fixes to the same implementer
-kind that produced the delta.
+re-briefed. Update the implementation record after every review with `round` equal to the number of
+completed review rounds, the numbered fixes and their latest judgments, `latestVerdict`, and
+bounded implementer-report and host-result summaries. If acceptable, finish. Otherwise send the
+exact numbered fixes to the same implementer kind that produced the delta.
 
 Codex fix. Write this complete payload to `<payloadFile>` under the routing skill's
 temporary-directory rule:
@@ -447,22 +543,81 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json
 For Claude fixes, invoke the same contained implementer with the original model, full plan, and
 numbered fixes. Recheck HEAD and the delta immediately. After every fix, rerun host checks and the
 selected reviewer. Update every prior fix's `resolved`/`unresolved` status before constructing the
-next round's `{{REVIEW_CONTEXT}}`.
+next round's `{{REVIEW_CONTEXT}}`. After the fix launch/result and fresh host checks, update the
+durable round entry with bounded reports and judgments without incrementing `round`; that field
+counts completed review rounds, so a crash after fixes resumes by re-reviewing the actual delta.
 
 At `--max-fix-rounds` (default 4), or when substantially the same issue survives three rounds,
 show remaining fixes and ask whether to send one more implementer round, let the orchestrator fix
 directly, or stop and report as-is.
 
 After the full phase receives an `acceptable` implementation review, and before the final report,
-run:
+run both lifecycle writes immediately:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implemented --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --complete --state-file "<statePayloadFile>" --json
 ```
 
-Report a failure to set the marker but never fail the implementation run because of it.
+The completion payload contains the accepted final review summary, final round, and latest host
+summary. Report a failure to set either marker but never fail the implementation run because of
+it.
 `--implement-only` and `--review-only` stop before a full accepted phase completes and never mark
 the plan implemented.
+
+## Resuming an interrupted phase
+
+For `--resume`, do not create a new baseline or launch an implementer before completing these
+checks:
+
+1. Run `implement-state --json`. If `available` is false, stop and direct the user to run
+   `/stereo:implement` without `--resume`. If `unreadable` is true, report its `path` and
+   `parseError`, then stop. If the record status is `complete`, report its round, verdict, and
+   `completedAt`, then ask exactly once whether to start a fresh phase, clear the record and stop,
+   or stop without changing it.
+2. Run `plan-state --json`. If unavailable, stop. When `planMatches` is false, show both recorded
+   and current plan fingerprints and timestamps, warn that `{{PLAN_INPUT}}` will use the current
+   stored plan, and ask exactly once whether to continue against that current plan or stop.
+3. Check the recorded worker before inspecting a possibly partial delta. When `jobId` exists, run
+   `status <jobId> --json` first:
+   - For `queued` or `running`, report its phase and elapsed time and ask exactly once whether to
+     wait or stop and leave it running. Waiting uses the routing skill's bounded
+     `status <jobId> --wait --timeout-ms 90000 --json` windows; once terminal, fetch its result and
+     continue.
+   - For `completed`, run `result <jobId> --json` and use the real report as the round-1 implementer
+     report in `{{REVIEW_CONTEXT}}`, rather than a stored summary.
+   - For `failed`, `cancelled`, or an unknown id, report the condition and continue with the
+     recorded state.
+4. Compare `git rev-parse HEAD` with recorded `baselineCommit`. When equal, resume normally. When
+   HEAD moved, verify the baseline with `git cat-file -e <baselineCommit>^{commit}` and inspect its
+   delta; if it resolves and a delta exists, report the move, retain that baseline for attribution,
+   and ask exactly once whether to continue or stop. If it no longer resolves, stop as stale,
+   explain why attribution is impossible, and offer `implement-state --clear`. When HEAD equals the
+   baseline but no attributed delta exists beyond the recorded baseline-dirty paths, report that
+   the work is gone and ask whether to clear and restart or stop.
+5. Re-inspect the actual status, diff, every changed/untracked file, and baseline-dirty exclusions.
+   Rerun the complete host-verification gates. Recorded host results are historical summaries,
+   never current evidence.
+6. Re-enter at review round `record.round + 1`; `record.round` counts completed review rounds.
+   Round 0 therefore resumes at round 1, and a crash after fixes but before review correctly
+   re-reviews the actual delta. Use the fetched report from step 3 when available; otherwise label
+   the implementer report as unavailable or as a stored pre-resume summary.
+7. The first resumed reviewer round is always the stateless re-brief path. Rebuild
+   `{{REVIEW_CONTEXT}}` from `record.rounds`: retain round-1 context, every prior numbered fix and
+   latest `resolved`/`unresolved` judgment, and label stored reports as pre-resume summaries. State
+   that a fresh session has no continuation handle. A named-Claude reviewer may keep the new handle
+   for later rounds in this resumed command run.
+8. For Codex fixes, resume recorded `implementationThreadId` with the recorded implementer model
+   and effort. If the id is null, pruned, or resume fails, use the existing retry-fresh rule and
+   embed the complete current plan plus every numbered fix in the new write thread. For a
+   Claude-routed implementer, re-invoke the contained implementer with the recorded model, full
+   plan, and numbered fixes.
+9. `--max-fix-rounds` counts recorded rounds too. An explicit flag overrides recorded
+   `maxFixRounds`; otherwise retain the recorded cap. If the record already reached the effective
+   cap, ask the existing safeguard question before starting another review or fix round.
+
+After these checks, use the normal full review/fix loop and state updates. Resume never reuses
+recorded host results as proof and never assumes conversation history survived.
 
 ## Final report
 
@@ -474,6 +629,12 @@ duration. For Codex implementation, include `implementationThreadId` and
 `codex resume <implementationThreadId>`. Label `storedJob.tokenUsage.thread` cumulative when shown
 and never compare it with one Claude invocation. Label `storedPlanReviewThreadId` and
 `implementationReviewThreadId` by role and never present them as implementation resume targets.
+
+Report the durable implementation record and its final lifecycle: a fully accepted phase marks it
+complete, while an interrupted phase remains available through `/stereo:implement --resume`. When
+a completed record is explicitly cleared to start over, say so. For `--review-only --base`, repeat
+that the committed range was reviewed in full and list uncommitted dirty/untracked paths as out of
+scope, including every range/dirty overlap warning.
 
 Give rollback guidance relative to `baselineCommit` without erasing baseline-dirty paths. If HEAD
 is unchanged, state that nothing was committed or pushed. If it moved, retract that statement and

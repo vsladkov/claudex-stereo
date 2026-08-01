@@ -197,12 +197,21 @@ The command also supports `--wait`, `--background`, and a Codex `--model`. It is
 does not take custom focus text. Claude model selections are rejected because this command maps to
 Codex's built-in reviewer; use
 [`/stereo:adversarial-review`](#stereoadversarial-review) for a Claude-routed challenge review.
+An explicit `--effort` is also rejected: the built-in `review/start` API has no reasoning-effort
+control. Use adversarial review when effort control is required.
+
+`--pr <n>` is user-side sugar for reviewing a checked-out pull request. When the optional `gh` CLI
+is installed and authenticated, Stereo resolves the PR's base and verifies that `HEAD` exactly
+matches the PR head before reviewing. It never checks out or otherwise mutates the worktree; when
+the heads differ, run `gh pr checkout <n>` yourself. Without `gh`, check out the PR branch and pass
+`--base <ref>` manually.
 
 Examples:
 
 ```bash
 /stereo:review
 /stereo:review --base main
+/stereo:review --pr 42
 /stereo:review --background
 ```
 
@@ -219,11 +228,17 @@ approach would have been safer or simpler.
 
 It uses the same review target selection and `--scope`/`--base` rules as `/stereo:review`.
 
-It also supports `--wait`, `--background`, and `--model`. Unlike `/stereo:review`, it can take
-extra focus text after the flags. Codex models can run in the foreground or background; all
-Claude selections, including `claude:session` and `claude:inherit`, use the same adversarial
-brief and structured output contract in the foreground. `--background --model claude:*` is
-rejected ([Background jobs](#background-jobs)).
+It also supports `--wait`, `--background`, `--model`, `--effort`, and the same `--pr <n>` checkout
+and optional-`gh` behavior as normal review. Unlike `/stereo:review`, it can take extra focus text
+after the flags. Codex models can run in the foreground or background; all Claude selections,
+including `claude:session` and `claude:inherit`, use the same adversarial brief and structured
+output contract in the foreground. `--background --model claude:*` is rejected
+([Background jobs](#background-jobs)).
+
+Adversarial-review effort precedence is explicit `--effort`, then the named model's pair default
+when `--model` was supplied, then Codex's configured default when no model was named. No workspace
+role default applies because adversarial review is not one of the four pair roles. `--effort` with
+a `claude:*` route is rejected rather than silently ignored.
 
 Use it when you want:
 
@@ -236,6 +251,7 @@ Examples:
 ```bash
 /stereo:adversarial-review
 /stereo:adversarial-review --base main challenge whether this was the right caching and retry design
+/stereo:adversarial-review --pr 42 --effort high challenge the authorization boundary
 /stereo:adversarial-review --background look for race conditions and question the chosen approach
 /stereo:adversarial-review --model claude:opus challenge the rollback design
 /stereo:adversarial-review --model claude:inherit challenge the session's assumptions with fresh context
@@ -363,6 +379,30 @@ review. Use `--review-only` to treat the current dirty and untracked worktree as
 implementation delta, run one implementation-review step, and stop without applying fixes. A
 clean worktree has nothing to review.
 
+Use `--review-only --base <ref>` to review the committed `<ref>...HEAD` range instead. Stereo
+resolves the merge base and reviews the full committed range, including committed versions of
+files that are also dirty on disk. Uncommitted working-tree content remains out of scope and is
+listed explicitly; overlaps are warned because the on-disk file differs from the committed content
+being reviewed. `--base` is rejected outside review-only mode, and `--scope` is not accepted by
+`/stereo:implement`.
+
+`--resume` re-enters an interrupted implementation/review/fix phase from
+`$CODEX_HOME/companion-state/<workspace>/implement-state.json`. The bounded record includes the
+baseline and baseline-dirty paths, selected implementer/model/effort, implementation thread,
+latest implementation or fix background job ID, completed review rounds and fix judgments,
+summarized reports and host results, the stored-plan fingerprint, and timestamps. Resume checks
+the recorded job first: it can wait for a still-running worker or fetch a completed worker's real
+report before reviewing. It then re-reads the current delta and reruns host checks; historical host
+summaries are never treated as current evidence.
+
+When the stored plan changed, resume shows both fingerprints and asks before using the current
+plan. When `HEAD` moved but the baseline still resolves, it preserves that baseline for attribution
+and asks before continuing; when the baseline vanished, it stops as stale. A complete record
+reports its final round and offers to start fresh, clear the record, or stop. Accepted full phases
+mark the record complete. A new non-resume run deliberately replaces an older record; explicit
+clearing is otherwise user-chosen. The first resumed reviewer is always freshly and fully briefed
+because agent continuation never crosses command runs.
+
 Codex implementation-review tasks pass the shipped implementation-review schema to the runtime,
 so their final messages are schema-constrained before the command performs its normal validation
 and retry checks. Claude routes retain command-side validation.
@@ -390,7 +430,9 @@ Examples:
 /stereo:implement --max-fix-rounds 3
 /stereo:implement --fresh
 /stereo:implement --implement-only
+/stereo:implement --resume
 /stereo:implement --review-only --implementation-reviewer claude:opus
+/stereo:implement --review-only --base main
 ```
 
 The final report lists the stored `residualRisks`, verification results, selected models, and any
@@ -442,6 +484,9 @@ Each of the four roles is independently routable. By default, the current Claude
 reviews the plan, `codex:sol` implements at `max`, and a contained `claude:fable` reviews the
 implementation. The planner stays inline because the scope gate already grounds the task in this
 session.
+
+Quick deliberately has no `--resume`: an interrupted quick run restarts from the beginning. Use
+`/stereo:plan` plus `/stereo:implement` for longer work that needs resumable implementation state.
 
 Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the plan
 cap you can keep iterating, implement the reviewed but unapproved plan with its findings carried
@@ -567,6 +612,15 @@ older finished job instead of limiting the past-finished list to the eight most 
 blocks on one job and requires a job ID; `--timeout-ms <ms>` and `--poll-interval-ms <ms>` tune
 that wait. `--verbose` adds log-file paths, timestamps, and longer progress previews.
 
+**`/stereo:status --usage`** — sums per-job token usage from the retained local job index and groups
+it by job kind and model, with rendered tables or `--json`. The index retains at most 50 jobs, so
+this is a bounded window rather than all-time history. Without `--all`, usage is scoped to the
+current session when a session ID is known; here `--all` widens scope to every retained workspace
+job, unlike its listing meaning above. Only `tokenUsage.job` is summed. The cumulative
+`tokenUsage.thread` value is deliberately excluded because resumed jobs can share a thread and
+would otherwise be counted repeatedly. These totals are local job accounting, not Codex account
+usage, billing, or Claude-side agent usage.
+
 **`/stereo:result`** — shows the final stored Codex output for a finished job. When available, it
 also includes the Codex session ID so you can reopen that run directly in Codex with
 `codex resume <session-id>`.
@@ -575,6 +629,8 @@ also includes the Codex session ID so you can reopen that run directly in Codex 
 
 ```bash
 /stereo:status
+/stereo:status --usage
+/stereo:status --usage --all --json
 /stereo:status task-abc123 --wait --timeout-ms 60000 --poll-interval-ms 1000
 /stereo:status --all
 /stereo:result task-abc123

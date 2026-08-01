@@ -208,6 +208,13 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(implement, /Compare `git rev-parse HEAD` with `baselineCommit`/);
   assert.match(implement, /implementationReviewThreadId/);
   assert.match(implement, /schemas\/implementation-review-output\.schema\.json/);
+  for (const action of ['record', 'update', 'complete']) {
+    assert.match(
+      implement,
+      new RegExp(`implement-state --${action} --state-file "<statePayloadFile>"`),
+    );
+  }
+  assert.match(implement, /implement-state --clear --json/);
   const implementHint = implement.match(/^argument-hint:.*$/m)?.[0] ?? '';
   for (const flag of [
     '--implement-only',
@@ -215,6 +222,8 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     '--implementer-effort',
     '--implementation-reviewer',
     '--implementation-reviewer-effort',
+    '--resume',
+    '--base',
   ]) {
     assert.match(implementHint, new RegExp(flag));
   }
@@ -321,10 +330,20 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(adversarial, /^allowed-tools:.*\bAgent\b.*$/m);
   assert.match(adversarial, /`claude:inherit`/);
   assert.match(adversarial, /omit the Agent\s+`model` parameter/);
+  const adversarialHint = adversarial.match(/^argument-hint:.*$/m)?.[0] ?? '';
+  assert.match(adversarialHint, /--pr/);
+  assert.match(adversarialHint, /--effort/);
+  assert.match(adversarial, /^allowed-tools:.*Bash\(gh:\*\)/m);
 
   const nativeReview = read('commands/review.md');
   assert.match(nativeReview, /does not accept Claude models/);
   assert.match(nativeReview, /\/stereo:adversarial-review/);
+  assert.match(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /--pr/);
+  assert.doesNotMatch(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /--effort/);
+  assert.match(nativeReview, /^allowed-tools:.*Bash\(gh:\*\)/m);
+
+  const status = read('commands/status.md');
+  assert.match(status.match(/^argument-hint:.*$/m)?.[0] ?? '', /--usage/);
 });
 
 test('pair commands fill the canonical role briefs', () => {

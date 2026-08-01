@@ -587,6 +587,107 @@ test('adversarial review rejects staged-only scope to match review target select
   assert.match(result.stderr, /Use one of: auto, working-tree, branch, or pass --base <ref>/i);
 });
 
+test('adversarial-review passes explicit and named-model default effort only on its prompted path', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+  run('git', ['add', 'README.md'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello again\n');
+  const env = buildEnv(binDir);
+
+  const explicit = run('node', [SCRIPT, 'adversarial-review', '--effort', 'high', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(explicit.status, 0, explicit.stderr);
+  assert.equal(readFakeState(binDir).lastTurnStart.effort, 'high');
+
+  const modelDefault = run('node', [SCRIPT, 'adversarial-review', '--model', 'sol', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(modelDefault.status, 0, modelDefault.stderr);
+  assert.equal(readFakeState(binDir).lastTurnStart.effort, 'max');
+
+  const codexDefault = run('node', [SCRIPT, 'adversarial-review', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(codexDefault.status, 0, codexDefault.stderr);
+  assert.equal(readFakeState(binDir).lastTurnStart.effort, null);
+});
+
+test('native review rejects effort before normalization and companion review commands reject --pr', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  const env = buildEnv(binDir);
+  const effortError =
+    "`/stereo:review` maps to Codex's built-in reviewer, which has no reasoning-effort control. Retry with `/stereo:adversarial-review --effort <effort>` for an effort-controlled review.";
+
+  for (const effort of ['high', 'bogus']) {
+    const result = run('node', [SCRIPT, 'review', '--effort', effort, '--json'], {
+      cwd: repo,
+      env,
+    });
+    assert.notEqual(result.status, 0);
+    assert.equal(JSON.parse(result.stdout).error, effortError);
+    assert.equal(result.stderr.trim(), effortError);
+  }
+
+  const prError =
+    '--pr is resolved by /stereo:review and /stereo:adversarial-review, not by the companion CLI. Check out the pull request branch and pass --base <ref>.';
+  for (const command of ['review', 'adversarial-review']) {
+    const result = run('node', [SCRIPT, command, '--pr', '12', '--json'], {
+      cwd: repo,
+      env,
+    });
+    assert.notEqual(result.status, 0);
+    assert.equal(JSON.parse(result.stdout).error, prError);
+    assert.equal(result.stderr.trim(), prError);
+  }
+});
+
+test('native review with a named model succeeds foreground and background without persisted effort', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+  run('git', ['add', 'README.md'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello again\n');
+  const env = buildEnv(binDir);
+
+  const foreground = run('node', [SCRIPT, 'review', '--model', 'sol', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(foreground.status, 0, foreground.stderr);
+
+  const launched = run('node', [SCRIPT, 'review', '--background', '--model', 'sol', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId as string;
+  const jobFile = path.join(resolveDurableStateDir(repo, env.CODEX_HOME), 'jobs', `${jobId}.json`);
+  const stored = JSON.parse(fs.readFileSync(jobFile, 'utf8'));
+  assert.equal(Object.hasOwn(stored.request, 'effort'), false);
+
+  const status = run(
+    'node',
+    [SCRIPT, 'status', jobId, '--wait', '--timeout-ms', '15000', '--json'],
+    { cwd: repo, env },
+  );
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(JSON.parse(status.stdout).job.status, 'completed');
+});
+
 test('review --background returns a queued detached job', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -669,6 +770,138 @@ test('adversarial-review --background stores a structured detached result', () =
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.job.status, 'completed');
   assert.equal(payload.storedJob.result.result.verdict, 'needs-attention');
+});
+
+test('adversarial-review --background persists and replays explicit effort', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = 1;\n');
+  run('git', ['add', 'app.js'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = 2;\n');
+  const env = buildEnv(binDir);
+
+  const launched = run(
+    'node',
+    [SCRIPT, 'adversarial-review', '--background', '--effort', 'high', '--json'],
+    { cwd: repo, env },
+  );
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId as string;
+  const jobFile = path.join(resolveDurableStateDir(repo, env.CODEX_HOME), 'jobs', `${jobId}.json`);
+  const queued = JSON.parse(fs.readFileSync(jobFile, 'utf8'));
+  assert.equal(queued.request.effort, 'high');
+
+  const status = run(
+    'node',
+    [SCRIPT, 'status', jobId, '--wait', '--timeout-ms', '15000', '--json'],
+    { cwd: repo, env },
+  );
+  assert.equal(status.status, 0, status.stderr);
+  assert.equal(JSON.parse(status.stdout).job.status, 'completed');
+  assert.equal(readFakeState(binDir).lastTurnStart.effort, 'high');
+});
+
+test('status --usage aggregates retained job usage and rejects job ids or --wait', () => {
+  const repo = makeTempDir();
+  const stateHome = makeTempDir('usage-state-home-');
+  initGitRepo(repo);
+  const env = {
+    ...process.env,
+    CODEX_HOME: stateHome,
+    CODEX_COMPANION_SESSION_ID: 'sess-usage',
+  };
+  const stateDir = resolveDurableStateDir(repo, stateHome);
+  fs.mkdirSync(path.join(stateDir, 'jobs'), { recursive: true });
+  const usage = {
+    job: {
+      inputTokens: 80,
+      cachedInputTokens: 20,
+      outputTokens: 20,
+      reasoningOutputTokens: 5,
+      totalTokens: 100,
+      cacheWriteInputTokens: 0,
+    },
+    thread: {
+      inputTokens: 8000,
+      cachedInputTokens: 2000,
+      outputTokens: 2000,
+      reasoningOutputTokens: 500,
+      totalTokens: 10000,
+      cacheWriteInputTokens: 0,
+    },
+    modelContextWindow: 258000,
+  };
+  fs.writeFileSync(
+    path.join(stateDir, 'state.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: 'review-usage',
+            status: 'completed',
+            kind: 'review',
+            jobClass: 'review',
+            sessionId: 'sess-usage',
+            model: 'gpt-5.6-sol',
+            tokenUsage: usage,
+          },
+          {
+            id: 'task-no-usage',
+            status: 'completed',
+            kind: 'task',
+            jobClass: 'task',
+            sessionId: 'sess-usage',
+            model: null,
+          },
+          {
+            id: 'other-session',
+            status: 'completed',
+            kind: 'review',
+            jobClass: 'review',
+            sessionId: 'sess-other',
+            model: 'gpt-5.6-terra',
+            tokenUsage: usage,
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  const result = run('node', [SCRIPT, 'status', '--usage', '--json'], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  const snapshot = JSON.parse(result.stdout);
+  assert.equal(snapshot.scope, 'session');
+  assert.deepEqual(snapshot.window, {
+    retainedJobs: 3,
+    countedJobs: 2,
+    maxRetainedJobs: 50,
+  });
+  assert.equal(snapshot.totals.jobs, 2);
+  assert.equal(snapshot.totals.jobsWithUsage, 1);
+  assert.equal(snapshot.totals.totalTokens, 100);
+  assert.equal(
+    snapshot.byKind.find((group: { key: string }) => group.key === 'review').totalTokens,
+    100,
+  );
+  assert.equal(snapshot.byModel.find((group: { key: string }) => group.key === '-').jobs, 1);
+
+  for (const [args, expected] of [
+    [['status', '--usage', 'review-usage', '--json'], '`status --usage` does not take a job id.'],
+    [['status', '--usage', '--wait', '--json'], '`status --usage` cannot be combined with --wait.'],
+  ] as const) {
+    const invalid = run('node', [SCRIPT, ...args], { cwd: repo, env });
+    assert.notEqual(invalid.status, 0);
+    assert.equal(JSON.parse(invalid.stdout).error, expected);
+    assert.equal(invalid.stderr.trim(), expected);
+  }
 });
 
 test('status shows a provider-qualified model for an active background task', async (t) => {

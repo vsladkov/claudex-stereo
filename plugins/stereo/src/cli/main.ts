@@ -10,6 +10,7 @@ import { handleTransfer } from './commands/transfer.ts';
 import { handleResult, handleStatus } from './commands/status.ts';
 import { handleCancel } from './commands/cancel.ts';
 import { handleConfig } from './commands/config.ts';
+import { handleImplementState } from './commands/implement.ts';
 
 async function main(fullArgv: string[]): Promise<void> {
   const [subcommand, ...argv] = fullArgv;
@@ -42,6 +43,9 @@ async function main(fullArgv: string[]): Promise<void> {
       break;
     case 'plan-store':
       handlePlanStore(argv);
+      break;
+    case 'implement-state':
+      handleImplementState(argv);
       break;
     case 'transfer':
       await handleTransfer(argv);

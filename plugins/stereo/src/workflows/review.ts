@@ -19,6 +19,15 @@ import type { CompanionExecution } from './companion-jobs.ts';
 
 const REVIEW_SCHEMA = path.join(SCHEMAS_DIR, 'review-output.schema.json');
 
+export const NATIVE_REVIEW_EFFORT_ERROR =
+  "`/stereo:review` maps to Codex's built-in reviewer, which has no reasoning-effort control. Retry with `/stereo:adversarial-review --effort <effort>` for an effort-controlled review.";
+
+export function assertReviewEffortSupported(reviewName: string, effortProvided: boolean): void {
+  if (reviewName === 'Review' && effortProvided) {
+    throw new Error(NATIVE_REVIEW_EFFORT_ERROR);
+  }
+}
+
 export function buildAdversarialReviewPrompt(context: ReviewContext, focusText: string): string {
   const template = loadPromptTemplate(PROMPTS_ROOT, 'adversarial-review');
   return interpolateTemplate(template, {
@@ -67,6 +76,7 @@ export interface ReviewRunRequest {
   scope?: string;
   target?: ReviewTarget;
   model?: string | null;
+  effort?: string | null;
   focusText?: string;
   reviewName?: string;
   onProgress?: ProgressReporter | null;
@@ -88,6 +98,7 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
   const focusText = request.focusText?.trim() ?? '';
   const reviewName = request.reviewName ?? 'Review';
   if (reviewName === 'Review') {
+    assertReviewEffortSupported(reviewName, Boolean(request.effort));
     const reviewTarget = validateNativeReviewRequest(target, focusText);
     const result = await runAppServerReview(request.cwd, {
       target: reviewTarget,
@@ -141,6 +152,7 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
   const result = await runAppServerTurn(context.repoRoot, {
     prompt,
     model: request.model,
+    effort: request.effort ?? null,
     sandbox: 'read-only',
     outputSchema: readOutputSchema(REVIEW_SCHEMA),
     onProgress: request.onProgress,
