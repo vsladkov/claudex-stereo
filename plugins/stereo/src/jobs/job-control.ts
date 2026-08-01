@@ -125,7 +125,7 @@ export function filterJobsForCurrentSession(
   return jobs.filter((job) => job.sessionId === sessionId);
 }
 
-function getJobTypeLabel(job: JobRecord): string {
+export function getJobTypeLabel(job: JobRecord): string {
   if (typeof job.kindLabel === 'string' && job.kindLabel) {
     return job.kindLabel;
   }
@@ -208,7 +208,7 @@ export function readJobProgressPreview(
   return lines.slice(-maxLines);
 }
 
-function formatElapsedDuration(
+export function formatElapsedDuration(
   startValue: string | null | undefined,
   endValue: string | null | undefined = null,
 ): string | null {

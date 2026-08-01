@@ -11,6 +11,7 @@ import {
 } from '../../runtime/index.ts';
 import { binaryAvailable } from '../../platform/process.ts';
 import { MODEL_REGISTRY } from '../../models/registry.ts';
+import { describeRoleDefaults } from '../../models/role-defaults.ts';
 import { getConfig, setConfig } from '../../workspace/state.ts';
 import { resolveWorkspaceRoot } from '../../workspace/workspace.ts';
 import { renderSetupReport } from '../../render/render.ts';
@@ -150,6 +151,7 @@ export async function buildSetupReport(
     sessionRuntime: getSessionRuntimeStatus(env, workspaceRoot),
     strandedReservations,
     reviewGateEnabled: Boolean(config.stopReviewGate),
+    roleDefaults: describeRoleDefaults(config.roleDefaults).entries,
     actionsTaken,
     nextSteps,
   };

@@ -17,11 +17,12 @@ function read(relativePath: string): string {
 // sentences preserved stale text (a pinned README example once asserted a
 // model name that no longer existed) while taxing every legitimate edit.
 
-test('the command surface is exactly the twelve stereo commands', () => {
+test('the command surface is exactly the thirteen stereo commands', () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, 'commands')).sort();
   assert.deepEqual(commandFiles, [
     'adversarial-review.md',
     'cancel.md',
+    'config.md',
     'implement.md',
     'plan-state.md',
     'plan.md',
@@ -39,8 +40,13 @@ test('every command wires the companion entry point it documents', () => {
   const wiring: Record<string, RegExp | RegExp[]> = {
     'adversarial-review.md': /codex-companion\.ts" adversarial-review "\$ARGUMENTS"/,
     'cancel.md': /codex-companion\.ts" cancel "\$ARGUMENTS"/,
+    'config.md': /codex-companion\.ts" config "\$ARGUMENTS"/,
     'implement.md': /task --background --json --write --thread/,
-    'plan-state.md': /codex-companion\.ts" plan-state "\$ARGUMENTS"/,
+    'plan-state.md': [
+      /codex-companion\.ts" plan-state\b/,
+      /plan-state --clear/,
+      /plan-state --mark-implemented/,
+    ],
     'plan.md': [/plan-review --background --json --round 1/, /plan-store --json/],
     'quick.md': [
       /plan-review --background --json --round 1/,
@@ -77,6 +83,7 @@ test('directly-wired commands disable model invocation of the command file', () 
   for (const file of [
     'adversarial-review.md',
     'cancel.md',
+    'config.md',
     'implement.md',
     'plan-state.md',
     'plan.md',
@@ -129,6 +136,16 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(plan, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
   assert.match(plan, /`<plannerSelectionArgs>` = `--model/);
   assert.match(plan, /`<reviewSelectionArgs>` =\s*\n?\s*`--model/);
+  assert.match(plan, /config --json/);
+  assert.match(
+    plan,
+    /plan-review --background --json --round 1 <reviewSelectionArgs> --plan-file "<planFile>"/,
+  );
+  assert.equal(
+    (plan.match(/^node .*plan-store .* < "<planFile>"$/gm) ?? []).length,
+    1,
+    'Plan intake must persist the user-provided plan bytes by stdin redirect',
+  );
   assert.equal(
     (plan.match(/--plan-file "<payloadFile>"/g) ?? []).length,
     3,
@@ -146,14 +163,15 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   );
   assert.equal(
     (plan.match(/--findings-file "<findingsPayloadFile>"/g) ?? []).length,
-    1,
-    'Plan review-only must deliver findings separately while draft-only stays findings-free',
+    2,
+    'Plan review-only and external intake must deliver findings separately while draft-only stays findings-free',
   );
   assert.doesNotMatch(plan, /<<'CODEX_PAIR_/);
   const planHint = plan.match(/^argument-hint:.*$/m)?.[0] ?? '';
   for (const flag of [
     '--draft-only',
     '--review-only',
+    '--plan-file',
     '--planner-effort',
     '--plan-reviewer-effort',
   ]) {
@@ -163,6 +181,8 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   const implement = read('commands/implement.md');
   assert.match(implement, /skills\/model-routing\/SKILL\.md/);
   assert.match(implement, /plan-state --json/);
+  assert.match(implement, /config --json/);
+  assert.match(implement, /plan-state --mark-implemented/);
   assert.match(implement, /task --background --json --write --model <effectiveModel> <effortArg>/);
   assert.match(implement, /approved outside\s+this Codex thread/);
   assert.match(implement, /reviewed but unapproved/);
@@ -212,6 +232,8 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   const quick = read('commands/quick.md');
   assert.match(quick, /skills\/model-routing\/SKILL\.md/);
   assert.match(quick, /plan-state --json/);
+  assert.match(quick, /config --json/);
+  assert.match(quick, /plan-state --mark-implemented/);
   assert.match(quick, /plan-store --json/);
   assert.match(quick, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
   assert.match(quick, /^allowed-tools:.*\bEdit\b/m);
@@ -430,10 +452,16 @@ test('hooks keep session-end cleanup and stop gating enabled', () => {
   assert.match(source, /session-lifecycle-hook\.ts/);
 
   const hooks = JSON.parse(source) as {
-    hooks: { SessionEnd: Array<{ hooks?: Array<{ timeout: number }> }> };
+    hooks: {
+      SessionStart: Array<{ hooks?: Array<{ timeout: number }> }>;
+      SessionEnd: Array<{ hooks?: Array<{ timeout: number }> }>;
+    };
   };
+  const sessionStart = hooks.hooks.SessionStart.flatMap((entry) => entry.hooks ?? [])[0];
   const sessionEnd = hooks.hooks.SessionEnd.flatMap((entry) => entry.hooks ?? [])[0];
+  assert.ok(sessionStart);
   assert.ok(sessionEnd);
+  assert.equal(sessionStart.timeout, 5);
   assert.equal(typeof sessionEnd.timeout, 'number');
   assert.equal(SESSION_END_BUDGET_MS + 5000 <= sessionEnd.timeout * 1000, true);
 });

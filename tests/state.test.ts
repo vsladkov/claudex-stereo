@@ -8,12 +8,14 @@ import { makeTempDir } from './helpers.ts';
 import { loadBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import { buildSingleJobSnapshot } from '../plugins/stereo/src/jobs/job-control.ts';
 import {
+  clearPairPlanState,
   loadState,
   loadPairPlanState,
   resolveDurableStateDir,
   resolveJobFile,
   resolveJobLogFile,
   resolvePairPlanFile,
+  resolvePairPlanMarkdownFile,
   resolveStateDir,
   resolveStateFile,
   savePairPlanState,
@@ -342,9 +344,88 @@ test('missing legacy and durable state loads a fresh default', () => {
   withStateHomes(pluginDataDir, codexHome, () => {
     assert.deepEqual(loadState(workspace), {
       version: 1,
-      config: { stopReviewGate: false },
+      config: { stopReviewGate: false, roleDefaults: {}, lastJobAnnouncementAt: null },
       jobs: [],
     });
+  });
+});
+
+test('role defaults normalize on read and write while preserving valid selections', () => {
+  const workspace = makeTempDir();
+  const stateFile = resolveStateFile(workspace);
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(
+    stateFile,
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: {
+          stopReviewGate: true,
+          roleDefaults: {
+            planner: { model: '  codex:terra  ', effort: ' high ' },
+            planReviewer: { model: 42, effort: 'medium' },
+            implementer: { model: null, effort: null },
+            implementationReviewer: 'not an object',
+            constructor: { model: 'claude:opus' },
+          },
+          lastJobAnnouncementAt: 42,
+        },
+        jobs: [],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  const loaded = loadState(workspace);
+  assert.deepEqual(loaded.config, {
+    stopReviewGate: true,
+    roleDefaults: {
+      planner: { model: 'codex:terra', effort: 'high' },
+      planReviewer: { model: null, effort: 'medium' },
+    },
+    lastJobAnnouncementAt: null,
+  });
+
+  saveState(workspace, loaded);
+  assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')).config.roleDefaults, {
+    planner: { model: 'codex:terra', effort: 'high' },
+    planReviewer: { model: null, effort: 'medium' },
+  });
+});
+
+test('clearPairPlanState removes both artifacts and is idempotent', () => {
+  const workspace = makeTempDir();
+  const planPath = resolvePairPlanFile(workspace);
+  const markdownPath = resolvePairPlanMarkdownFile(workspace);
+  savePairPlanState(workspace, { plan: '# Stored plan\n' });
+  fs.writeFileSync(markdownPath, '# Exported plan\n', 'utf8');
+
+  assert.deepEqual(clearPairPlanState(workspace), [planPath, markdownPath]);
+  assert.equal(fs.existsSync(planPath), false);
+  assert.equal(fs.existsSync(markdownPath), false);
+  assert.deepEqual(clearPairPlanState(workspace), []);
+});
+
+test('clearPairPlanState creates no durable directory when nothing is stored', () => {
+  const workspace = makeTempDir();
+  const durableDir = resolveDurableStateDir(workspace);
+  assert.deepEqual(clearPairPlanState(workspace), []);
+  assert.equal(fs.existsSync(durableDir), false);
+});
+
+test('clearPairPlanState migrates then removes a legacy pair plan permanently', () => {
+  const workspace = makeTempDir();
+  const pluginDataDir = makeTempDir();
+  const codexHome = makeTempDir();
+
+  withStateHomes(pluginDataDir, codexHome, () => {
+    writeLegacyWorkspace(workspace);
+    const durablePlan = resolvePairPlanFile(workspace);
+    assert.deepEqual(clearPairPlanState(workspace), [durablePlan]);
+    assert.equal(loadPairPlanState(workspace), null);
+    assert.equal(fs.existsSync(durablePlan), false);
   });
 });
 

@@ -20,20 +20,21 @@ Raw slash-command arguments:
 
 After reading the routing skill, parse all arguments before repository work:
 
-- `--planner <model>` defaults to `claude:session`; the scope gate already grounds the task in
-  this session.
+- `--planner <model>` resolves as explicit flag > workspace `planner` default >
+  `claude:session`; the scope gate already grounds the task in this session.
 - `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed planner.
-- `--plan-reviewer <model>` defaults to `claude:fable`.
+- `--plan-reviewer <model>` resolves as explicit flag > workspace `planReviewer` default >
+  `claude:fable`.
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
-- `--implementer <model>` defaults to the model/effort resolved by the latest Codex plan-review
-  payload. If the plan reviewer is Claude-side, default to `codex:sol` with the matching role effort,
-  command-wide effort, or `max`.
+- `--implementer <model>` resolves as explicit flag > workspace `implementer` default > the
+  model/effort resolved by the latest Codex plan-review payload > `codex:sol`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer, including the effort from a Codex plan-review payload.
-- `--implementation-reviewer <model>` defaults to `claude:fable`; the contained reviewer is
-  independent of this orchestrating session.
+- `--implementation-reviewer <model>` resolves as explicit flag > workspace
+  `implementationReviewer` default > `claude:fable`; the contained reviewer is independent of
+  this orchestrating session.
 - `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
   for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
@@ -44,11 +45,12 @@ Reject missing values, duplicate role or role-effort flags, invalid effort, unkn
 `claude:*` values, and `claude:session` as implementer. Accept `claude:inherit` alongside
 `claude:session` and the four explicit Claude aliases. Accept a Codex selection with or without the
 `codex:` prefix and reject `codex:claude:*`. Reject a role effort flag when its selected role is
-Claude-routed. Resolve every Codex role through role effort > command-wide effort > the routing
-skill's pair default. When `--implementer` is omitted, use the plan-review payload's resolved model
-and effort at the last level; either `--implementer-effort` or `--effort` overrides that payload
-effort. An explicit implementer model instead uses that model's pair default when neither effort
-flag is present. The removed `--model` flag is unknown; report the role-named alternatives. The
+Claude-routed. Resolve every Codex role through role effort > command-wide effort > workspace role
+effort > the routing skill's pair default. For the implementer, use plan-review payload effort only
+when that payload also supplied the model. Either `--implementer-effort` or `--effort` overrides
+that payload effort. An explicit or workspace-supplied implementer model drops payload effort and
+uses workspace effort or that model's pair default. The removed `--model` flag is unknown; report
+the role-named alternatives. The
 renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
 `--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements. Quick
 has no configurable round-count flags.
@@ -74,6 +76,21 @@ Keep these ids distinct:
 - `implementationReviewThreadId`: fresh Codex implementation-review tasks only.
 
 Never cross-assign them.
+
+## Workspace role defaults
+
+Before any routed step, run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
+```
+
+Read `roleDefaults`. If the command fails, report the failure and continue with built-in defaults.
+Ignore an entry with a non-null `invalidReason`, report its warning, and use the built-in default
+for that role. Report a stored effort for a Claude-routed role as inert. Resolve stored `claude:*`
+selections as Claude routes and never pass them to the companion's `--model` flag. When a
+workspace implementer default supplies the model, say so and drop the latest plan-review payload's
+effort because it belongs to the payload model.
 
 ## Scope gate and draft
 
@@ -118,8 +135,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 ```
 
 If `available` is true, warn that Quick will replace the stored plan, naming its summary and
-`updatedAt`. Do not claim whether it was implemented. Do not read plan-state again during this
-run; carry current plan/review state in the conversation.
+`updatedAt`. Report `implementedAt` when present; otherwise say `not marked implemented`. Do not
+read plan-state again during this run; carry current plan/review state in the conversation.
 
 ## Plan-review loop
 
@@ -427,6 +444,15 @@ round, let Claude fix directly, or stop. Do not silently exceed the cap.
 
 For every original unapproved plan finding, track `resolved` only when delta/tests prove it;
 otherwise `unresolved`.
+
+After an accepted implementation review and before the final report, run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implemented --json
+```
+
+Report a marker failure but never fail Quick because of it. Do not mark the plan until the full
+implementation-review phase is accepted.
 
 ## Final report
 

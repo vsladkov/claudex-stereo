@@ -23,6 +23,7 @@ import {
   waitForBrokerEndpoint,
 } from '../plugins/stereo/src/broker/lifecycle.ts';
 import {
+  loadPairPlanState,
   resolveDurableStateDir,
   resolvePairPlanFile,
   resolvePairPlanMarkdownFile,
@@ -941,6 +942,78 @@ test('plain plan-state keeps its text and JSON output byte-identical', async () 
   assert.equal(Object.hasOwn(payload, 'exportedPath'), false);
   assert.equal(Object.hasOwn(payload, 'openedInEditor'), false);
   assert.equal(launchCount, 0);
+});
+
+test('plan-state --clear removes both artifacts and remains idempotent', async () => {
+  const workspace = makeTempDir();
+  const record = storedPlan();
+  const planPath = resolvePairPlanFile(workspace);
+  const markdownPath = resolvePairPlanMarkdownFile(workspace);
+  savePairPlanState(workspace, record);
+  fs.writeFileSync(markdownPath, renderStoredPlanState(record), 'utf8');
+
+  const textOutput = await captureStdout(() => handlePlanState(['--cwd', workspace, '--clear']));
+  assert.equal(
+    textOutput,
+    `Cleared the stored plan for this repository.\n- ${planPath}\n- ${markdownPath}\n`,
+  );
+  assert.equal(fs.existsSync(planPath), false);
+  assert.equal(fs.existsSync(markdownPath), false);
+
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--clear', '--json']),
+  );
+  assert.deepEqual(JSON.parse(jsonOutput), { cleared: false, removed: [] });
+
+  const openOutput = await captureStdout(() => handlePlanState(['--cwd', workspace, '--open']));
+  assert.equal(openOutput, 'No stored plan for this repository. Run /stereo:plan first.\n');
+});
+
+test('plan-state --mark-implemented preserves review time and renders the marker', async () => {
+  const workspace = makeTempDir();
+  const record = storedPlan();
+  savePairPlanState(workspace, record);
+
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--mark-implemented', '--json']),
+  );
+  const payload = JSON.parse(jsonOutput);
+  assert.equal(payload.available, true);
+  assert.equal(payload.updatedAt, record.updatedAt);
+  assert.equal(Number.isFinite(Date.parse(payload.implementedAt)), true);
+
+  const stored = loadPairPlanState(workspace) as StoredPairPlanState;
+  assert.equal(stored.updatedAt, record.updatedAt);
+  assert.equal(stored.implementedAt, payload.implementedAt);
+  assert.match(renderStoredPlanState(stored), new RegExp(`Implemented: ${payload.implementedAt}`));
+
+  const replaced = run(
+    process.execPath,
+    [SCRIPT, 'plan-store', '--cwd', workspace, '--verdict', 'approve', '--round', '1', '--json'],
+    { cwd: workspace, input: '# Revised plan\n' },
+  );
+  assert.equal(replaced.status, 0, replaced.stderr);
+  assert.equal(Object.hasOwn(JSON.parse(replaced.stdout), 'implementedAt'), false);
+  assert.equal(Object.hasOwn(loadPairPlanState(workspace) as object, 'implementedAt'), false);
+});
+
+test('plan-state mutations reject missing plans and conflicting actions', async () => {
+  const workspace = makeTempDir();
+  const missing = run(
+    process.execPath,
+    [SCRIPT, 'plan-state', '--cwd', workspace, '--mark-implemented', '--json'],
+    { cwd: workspace },
+  );
+  assert.notEqual(missing.status, 0);
+  assert.deepEqual(JSON.parse(missing.stdout), {
+    error: 'No stored plan to mark implemented. Run /stereo:plan first.',
+  });
+  assert.match(missing.stderr, /No stored plan to mark implemented/);
+
+  await assert.rejects(
+    () => handlePlanState(['--cwd', workspace, '--open', '--clear']),
+    /Choose one of --open, --clear, or --mark-implemented/,
+  );
 });
 
 test('plan-review works without a git repository and omits the repository map', () => {

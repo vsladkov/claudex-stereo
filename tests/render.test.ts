@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   formatTokenUsage,
+  renderConfigReport,
   renderJobStatusReport,
   renderPlanReviewResult,
   renderReviewResult,
@@ -447,6 +448,68 @@ test('renderStoredPlanState renders metadata, lists, and the stored plan verbati
       plan,
     }),
     'Stored plan (verdict: approve, round 3, updated 2026-07-25T17:00:00.000Z)\nModel: gpt-5.6-sol@max · Thread: thr_plan\nOpen questions:\n- Keep the compatibility alias?\nResidual risks:\n- Legacy records still lack schema validation.\n\n---\n\n# Plan\n\n```ts\nconst enabled = true;\n```\n',
+  );
+});
+
+test('renderStoredPlanState renders implementedAt after runtime metadata', () => {
+  assert.equal(
+    renderStoredPlanState({
+      verdict: 'approve',
+      round: 2,
+      model: 'gpt-5.6-sol',
+      threadId: 'thr_plan',
+      implementedAt: '2026-08-01T12:00:00.000Z',
+      plan: '# Implemented plan\n',
+    }),
+    'Stored plan (verdict: approve, round 2)\nModel: gpt-5.6-sol · Thread: thr_plan\nImplemented: 2026-08-01T12:00:00.000Z\nOpen questions: none\nResidual risks: none\n\n---\n\n# Implemented plan\n',
+  );
+});
+
+test('renderConfigReport renders mixed defaults, actions, and warnings byte-exactly', () => {
+  assert.equal(
+    renderConfigReport({
+      roleDefaults: [
+        {
+          role: 'planner',
+          flag: 'planner',
+          model: 'codex:terra',
+          effort: 'high',
+          route: 'codex',
+          resolvedModel: 'gpt-5.6-terra',
+          invalidReason: null,
+        },
+        {
+          role: 'planReviewer',
+          flag: 'plan-reviewer',
+          model: 'claude:opus',
+          effort: null,
+          route: 'claude',
+          resolvedModel: null,
+          invalidReason: null,
+        },
+        {
+          role: 'implementer',
+          flag: 'implementer',
+          model: 'claude:fabel',
+          effort: null,
+          route: null,
+          resolvedModel: null,
+          invalidReason: 'Unsupported model.',
+        },
+        {
+          role: 'implementationReviewer',
+          flag: 'implementation-reviewer',
+          model: null,
+          effort: null,
+          route: null,
+          resolvedModel: null,
+          invalidReason: null,
+        },
+      ],
+      actionsTaken: ['Set planner to codex:terra for /work/repo.'],
+      warnings: ['implementer stored model "claude:fabel" is invalid.'],
+    }),
+    '# Stereo Config\n\nRole defaults:\n- planner: codex:terra (effort high)\n- plan-reviewer: claude:opus\n- implementer: claude:fabel [invalid]\n- implementation-reviewer: not set\n\nActions taken:\n- Set planner to codex:terra for /work/repo.\n\nWarnings:\n- implementer stored model "claude:fabel" is invalid.\n\nUse `/stereo:config --clear roles` to clear all workspace role defaults.\n',
   );
 });
 

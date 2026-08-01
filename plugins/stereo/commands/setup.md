@@ -4,6 +4,19 @@ argument-hint: '[--enable-review-gate|--disable-review-gate]'
 allowed-tools: Bash(node:*), Bash(npm:*), AskUserQuestion
 ---
 
+Happy path:
+
+1. Install the Stereo plugin.
+2. When the report's `- auth:` line is not ready, run `!codex login`; use
+   `!codex login --device-auth` or `!codex login --with-api-key` when the report names those
+   fallbacks.
+3. Configure optional third-party provider keys only when the report lists unconfigured aliases
+   or missing provider environment variables.
+4. Optionally run `/stereo:setup --enable-review-gate` when `- review gate:` is disabled.
+5. Optionally run `/stereo:config` to set workspace role defaults when `- role defaults:` says
+   none are configured.
+6. Verify the workspace with `/stereo:status` after the `- codex:` and `- auth:` checks are ready.
+
 Run:
 
 ```bash

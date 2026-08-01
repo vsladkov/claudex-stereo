@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.29.0
+
+- Add durable per-workspace model and Codex effort defaults for the four pair roles, with the new
+  `/stereo:config` command, tolerant validation, JSON and rendered reports, and explicit precedence
+  across plan, implement, and quick workflows
+- Add external plan intake through `/stereo:plan --review-only --plan-file`, confirmed plan-state
+  clearing, and an `implementedAt` lifecycle marker set after a full accepted implementation phase
+- Announce active and newly finished durable background jobs at SessionStart using local state
+  only, while keeping fresh and jobless workspaces silent and making announcement failures harmless
+- Improve plugin directory presentation with the `Claudex Stereo` display name and expand setup
+  into a report-backed first-run happy path
+
 ## 1.28.0
 
 - Close the job-index write race: `saveState` now merges per job id with absorbing terminal

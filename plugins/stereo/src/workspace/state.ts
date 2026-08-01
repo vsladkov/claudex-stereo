@@ -18,8 +18,19 @@ const PAIR_PLAN_MARKDOWN_FILE_NAME = 'pair-plan.md';
 const MAX_JOBS = 50;
 const migrationChecked = new Set<string>();
 
+export type StereoRoleKey = 'planner' | 'planReviewer' | 'implementer' | 'implementationReviewer';
+
+export interface StereoRoleDefault {
+  model?: string | null;
+  effort?: string | null;
+}
+
+export type StereoRoleDefaults = Partial<Record<StereoRoleKey, StereoRoleDefault>>;
+
 export interface StereoConfig {
   stopReviewGate: boolean;
+  roleDefaults?: StereoRoleDefaults;
+  lastJobAnnouncementAt?: string | null;
 }
 
 export interface JobRecord {
@@ -82,9 +93,50 @@ function defaultState(): StereoState {
     version: STATE_VERSION,
     config: {
       stopReviewGate: false,
+      roleDefaults: {},
+      lastJobAnnouncementAt: null,
     },
     jobs: [],
   };
+}
+
+const STEREO_ROLE_KEYS: readonly StereoRoleKey[] = [
+  'planner',
+  'planReviewer',
+  'implementer',
+  'implementationReviewer',
+];
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function normalizedOptionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeRoleDefaults(value: unknown): StereoRoleDefaults {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+
+  const normalized: StereoRoleDefaults = {};
+  for (const key of STEREO_ROLE_KEYS) {
+    const rawEntry = value[key];
+    if (!isPlainObject(rawEntry)) {
+      continue;
+    }
+    const model = normalizedOptionalString(rawEntry.model);
+    const effort = normalizedOptionalString(rawEntry.effort);
+    if (model || effort) {
+      normalized[key] = { model, effort };
+    }
+  }
+  return normalized;
 }
 
 // The shared index stores lightweight metadata; full request payloads live only in per-job files.
@@ -303,12 +355,15 @@ export function loadState(cwd: string): StereoState {
 
   try {
     const parsed = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    const parsedConfig = isPlainObject(parsed.config) ? parsed.config : {};
     return {
       ...defaultState(),
       ...parsed,
       config: {
         ...defaultState().config,
-        ...(parsed.config ?? {}),
+        ...parsedConfig,
+        roleDefaults: normalizeRoleDefaults(parsedConfig.roleDefaults),
+        lastJobAnnouncementAt: normalizedOptionalString(parsedConfig.lastJobAnnouncementAt),
       },
       jobs: Array.isArray(parsed.jobs) ? parsed.jobs.map(stripIndexOnlyFields) : [],
     };
@@ -424,6 +479,8 @@ export function saveState(cwd: string, state: StereoStateInput): StereoState {
     config: {
       ...defaultState().config,
       ...(state.config ?? {}),
+      roleDefaults: normalizeRoleDefaults(state.config?.roleDefaults),
+      lastJobAnnouncementAt: normalizedOptionalString(state.config?.lastJobAnnouncementAt),
     },
     jobs: nextJobs,
   };
@@ -534,4 +591,22 @@ export function loadPairPlanState(cwd: string): unknown {
   } catch {
     return null;
   }
+}
+
+export function clearPairPlanState(cwd: string): string[] {
+  // Clear after the same legacy migration used by loadPairPlanState so a
+  // pre-v1.7 record cannot be copied into durable state on a later read.
+  migrateLegacyState(cwd);
+  const removed: string[] = [];
+  for (const filePath of [resolvePairPlanFile(cwd), resolvePairPlanMarkdownFile(cwd)]) {
+    try {
+      fs.unlinkSync(filePath);
+      removed.push(filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+  return removed;
 }

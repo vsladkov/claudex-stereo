@@ -1,6 +1,8 @@
 import { describeStrandedReservation } from '../runtime/reservations.ts';
 import type { StrandedReservationEntry } from '../runtime/reservations.ts';
 import { formatJobModel, resolveJobModel } from '../jobs/job-control.ts';
+import type { SessionJobAnnouncement } from '../jobs/job-announcements.ts';
+import type { RoleDefaultEntry } from '../models/role-defaults.ts';
 
 // Renderer inputs are typed from usage: jobs and stored payloads come from
 // state files written across plugin versions, so every field beyond the id is
@@ -54,6 +56,7 @@ export interface StoredPairPlanState {
   round?: unknown;
   verdict?: unknown;
   updatedAt?: unknown;
+  implementedAt?: unknown;
   findings?: unknown;
   openQuestions?: unknown;
   residualRisks?: unknown;
@@ -126,8 +129,15 @@ export interface SetupRenderReport {
   sessionRuntime: { label: string };
   strandedReservations?: StrandedReservationEntry[] | null;
   reviewGateEnabled?: boolean | null;
+  roleDefaults?: RoleDefaultEntry[] | null;
   actionsTaken: string[];
   nextSteps: string[];
+}
+
+export interface ConfigRenderReport {
+  roleDefaults: RoleDefaultEntry[];
+  actionsTaken: string[];
+  warnings: string[];
 }
 
 interface RateLimitWindowLike {
@@ -652,6 +662,10 @@ export function renderStoredPlanState(record: StoredPairPlanState | null): strin
   if (runtimeParts.length > 0) {
     lines.push(runtimeParts.join(' · '));
   }
+  const implementedAt = storedPlanMetadataValue(record.implementedAt);
+  if (implementedAt) {
+    lines.push(`Implemented: ${implementedAt}`);
+  }
 
   const findings = storedPlanFindings(record.findings);
   if (findings.length > 0) {
@@ -678,6 +692,55 @@ export function renderStoredPlanState(record: StoredPairPlanState | null): strin
   const plan = typeof record.plan === 'string' ? record.plan : '(plan text missing)';
   const output = `${lines.join('\n')}\n\n---\n\n${plan}`;
   return output.endsWith('\n') ? output : `${output}\n`;
+}
+
+export function renderConfigReport(report: ConfigRenderReport): string {
+  const lines = ['# Stereo Config', '', 'Role defaults:'];
+  for (const entry of report.roleDefaults) {
+    const effort = entry.effort ? ` (effort ${entry.effort})` : '';
+    const invalid = entry.invalidReason ? ' [invalid]' : '';
+    lines.push(`- ${entry.flag}: ${entry.model ?? 'not set'}${effort}${invalid}`);
+  }
+
+  if (report.actionsTaken.length > 0) {
+    lines.push('', 'Actions taken:', ...report.actionsTaken.map((action) => `- ${action}`));
+  }
+  if (report.warnings.length > 0) {
+    lines.push('', 'Warnings:', ...report.warnings.map((warning) => `- ${warning}`));
+  }
+  lines.push('', 'Use `/stereo:config --clear roles` to clear all workspace role defaults.');
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
+export function renderSessionJobAnnouncement(announcement: SessionJobAnnouncement): string {
+  const workspaceRoot = announcement.workspaceRoot ?? 'this workspace';
+  const lines = [`Stereo background jobs in ${workspaceRoot}:`];
+  if (announcement.active.length > 0) {
+    const activeCount = announcement.active.length + announcement.activeOverflow;
+    const activeJobs = announcement.active
+      .map((job) => `${job.id} ${job.kind} ${job.elapsed ?? 'elapsed unknown'}`)
+      .join('; ');
+    const overflow =
+      announcement.activeOverflow > 0 ? ` (+${announcement.activeOverflow} more)` : '';
+    lines.push(`- Active (${activeCount}): ${activeJobs}${overflow}`);
+  }
+  if (announcement.finished.length > 0) {
+    const finishedCount = announcement.finished.length + announcement.finishedOverflow;
+    const finishedJobs = announcement.finished
+      .map((job) =>
+        job.duration
+          ? `${job.id} ${job.kind} ${job.status} in ${job.duration}`
+          : `${job.id} ${job.kind} ${job.status} elapsed unknown`,
+      )
+      .join('; ');
+    const overflow =
+      announcement.finishedOverflow > 0 ? ` (+${announcement.finishedOverflow} more)` : '';
+    lines.push(`- Finished since your last session (${finishedCount}): ${finishedJobs}${overflow}`);
+  }
+  lines.push(
+    'Run /stereo:status for details, /stereo:result <id> for output, /stereo:cancel <id> to stop one.',
+  );
+  return `${lines.join('\n').trimEnd()}\n`;
 }
 
 function appendStrandedReservationWarnings(
@@ -815,6 +878,20 @@ export function renderSetupReport(report: SetupRenderReport): string {
       : 'no env_key declared';
     return `- Custom provider ${provider.id}${aliasSuffix}: ${keyStatus}`;
   });
+  const configuredRoleDefaults = (report.roleDefaults ?? []).filter(
+    (entry) => entry.model || entry.effort,
+  );
+  const roleDefaultsSummary =
+    configuredRoleDefaults.length === 0
+      ? 'none configured'
+      : `${configuredRoleDefaults.length} configured (${configuredRoleDefaults
+          .map(
+            (entry) =>
+              `${entry.flag}=${entry.model ?? 'model not set'}${
+                entry.effort ? ` (effort ${entry.effort})` : ''
+              }`,
+          )
+          .join(', ')})`;
   const lines = [
     '# Codex Setup',
     '',
@@ -846,6 +923,7 @@ export function renderSetupReport(report: SetupRenderReport): string {
         : 'none stranded'
     }`,
     `- review gate: ${report.reviewGateEnabled ? 'enabled' : 'disabled'}`,
+    `- role defaults: ${roleDefaultsSummary}`,
     '',
   ];
 

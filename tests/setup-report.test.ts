@@ -55,6 +55,13 @@ function setupDeps(
   };
 }
 
+test('fresh setup reports four unset workspace role defaults', async () => {
+  const report = await buildSetupReport(makeTempDir(), [], setupDeps(authStatus()));
+  assert.equal(report.roleDefaults.length, 4);
+  assert.ok(report.roleDefaults.every((entry) => entry.model === null && entry.effort === null));
+  assert.match(renderSetupReport(report), /- role defaults: none configured/);
+});
+
 test('setup includes available account rate limits and omits unavailable snapshots', async () => {
   const snapshot = {
     limitId: 'codex',

@@ -245,10 +245,120 @@ test('session start hook exports the Claude session id, transcript path, and plu
   });
 
   assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '');
   assert.equal(
     fs.readFileSync(envFile, 'utf8'),
     `export CODEX_COMPANION_SESSION_ID='sess-current'\nexport CODEX_COMPANION_TRANSCRIPT_PATH='${transcriptPath}'\nexport CLAUDE_PLUGIN_DATA='${pluginDataDir}'\n`,
   );
+});
+
+test('session start announces active and newly finished durable jobs once', () => {
+  const repo = makeTempDir();
+  const codexHome = makeTempDir();
+  const env = { ...process.env, CODEX_HOME: codexHome };
+  const stateDir = resolveDurableStateDir(repo, codexHome);
+  const stateFile = path.join(stateDir, 'state.json');
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    stateFile,
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: {
+          stopReviewGate: false,
+          roleDefaults: {},
+          lastJobAnnouncementAt: '2026-08-01T10:00:00.000Z',
+        },
+        jobs: [
+          {
+            id: 'task-running',
+            status: 'running',
+            jobClass: 'task',
+            createdAt: '2026-08-01T10:30:00.000Z',
+            updatedAt: '2026-08-01T10:40:00.000Z',
+          },
+          {
+            id: 'plan-finished',
+            status: 'completed',
+            kind: 'plan-review',
+            createdAt: '2026-08-01T10:15:00.000Z',
+            completedAt: '2026-08-01T10:45:00.000Z',
+            updatedAt: '2026-08-01T10:45:00.000Z',
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  const first = run(process.execPath, [SESSION_HOOK, 'SessionStart'], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: repo }),
+  });
+  assert.equal(first.status, 0, first.stderr);
+  const hookOutput = JSON.parse(first.stdout);
+  assert.equal(hookOutput.hookSpecificOutput.hookEventName, 'SessionStart');
+  assert.match(hookOutput.hookSpecificOutput.additionalContext, /task-running/);
+  assert.match(hookOutput.hookSpecificOutput.additionalContext, /plan-finished/);
+  assert.equal(
+    JSON.parse(fs.readFileSync(stateFile, 'utf8')).config.lastJobAnnouncementAt,
+    '2026-08-01T10:45:00.000Z',
+  );
+
+  const second = run(process.execPath, [SESSION_HOOK, 'SessionStart'], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: repo }),
+  });
+  assert.equal(second.status, 0, second.stderr);
+  const secondContext = JSON.parse(second.stdout).hookSpecificOutput.additionalContext;
+  assert.match(secondContext, /task-running/);
+  assert.doesNotMatch(secondContext, /plan-finished/);
+});
+
+test('session start initializes a watermark silently for jobless durable state', () => {
+  const repo = makeTempDir();
+  const codexHome = makeTempDir();
+  const env = { ...process.env, CODEX_HOME: codexHome };
+  const stateDir = resolveDurableStateDir(repo, codexHome);
+  const stateFile = path.join(stateDir, 'state.json');
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(
+    stateFile,
+    `${JSON.stringify({ version: 1, config: { stopReviewGate: false }, jobs: [] }, null, 2)}\n`,
+    'utf8',
+  );
+
+  const result = run(process.execPath, [SESSION_HOOK, 'SessionStart'], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: repo }),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '');
+  const watermark = JSON.parse(fs.readFileSync(stateFile, 'utf8')).config.lastJobAnnouncementAt;
+  assert.equal(Number.isFinite(Date.parse(watermark)), true);
+});
+
+test('session start suppresses corrupt durable state failures', () => {
+  const repo = makeTempDir();
+  const codexHome = makeTempDir();
+  const env = { ...process.env, CODEX_HOME: codexHome };
+  const stateDir = resolveDurableStateDir(repo, codexHome);
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, 'state.json'), '{', 'utf8');
+
+  const result = run(process.execPath, [SESSION_HOOK, 'SessionStart'], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: repo }),
+  });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
 });
 
 test('malformed session hook stdin degrades to empty input', async (t) => {

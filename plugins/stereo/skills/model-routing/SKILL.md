@@ -50,13 +50,15 @@ Resolve effort independently for each active Codex-routed role:
 
 1. Use that role's effort flag when present.
 2. Otherwise use the command-wide `--effort` when present.
-3. Otherwise preserve the command's stored-model/stored-effort rule, when it has one, or use
+3. Otherwise use that role's valid stored workspace effort default when present.
+4. Otherwise preserve the command's stored-plan model/effort rule, when it has one, or use
    `max` for every `gpt-*` model and omit `--effort` for non-OpenAI models.
 
 A role effort flag is valid only when that role runs in the selected mode and is Codex-routed;
 reject it for an inactive or Claude-routed role. A role or command-wide effort override replaces
-the stored implementer effort. An explicit implementer model with neither effort override clears
-the stored effort because it belongs to the old model, then uses the normal model-pair default.
+the stored-plan implementer effort. An explicit or workspace-supplied implementer model with
+neither effort override clears the stored-plan effort because it belongs to the old model, then
+uses the workspace effort default or normal model-pair default.
 
 Claude-side reasoning has three distinct controls. Stereo's agent definitions omit `effort`, so
 Claude-routed roles inherit the session's effort and extended-thinking configuration. Subagents
@@ -67,6 +69,37 @@ model-dependent), which overrides session effort. A modified copy under `.claude
 invoked manually, but it cannot shadow the plugin-scoped `stereo:*` agent types used by these
 commands. Model selection remains the per-invocation Claude strength control; dynamic
 per-invocation Claude effort is not available on the Agent invocation surface.
+
+## Workspace role defaults
+
+Before any routed step in `/stereo:plan`, `/stereo:implement`, or `/stereo:quick`, read this
+repository's defaults with:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
+```
+
+If that read fails, report the failure and continue with the command's built-in defaults. The
+four canonical entries and matching flags are `planner` / `--planner`, `planReviewer` /
+`--plan-reviewer`, `implementer` / `--implementer`, and `implementationReviewer` /
+`--implementation-reviewer`. For each role, resolve the model as explicit role flag > valid
+stored workspace default > command built-in default. Resolve a Codex role's effort with the
+ladder above. A stored effort attached to a Claude-routed selection is inert: report it and do not
+pass it anywhere.
+
+State is deliberately read tolerantly. When an entry has a non-null `invalidReason`, relay its
+warning with the exact role and stored value, ignore the whole entry, and use the built-in default
+for that role. A stored `claude:*` value is a routing selection resolved by the command; it is
+never passed to the companion's `--model` flag.
+
+The implementer has one additional fallback. Its model is explicit flag > workspace implementer
+default > stored-plan `model` > `codex:sol`. A workspace default is durable repository intent, so
+it outranks the incidental model recorded by the last Codex plan review. When either an explicit
+flag or workspace default supplies the implementer model, discard the stored-plan effort because
+it belongs to a different model. The effective effort is then role flag > command-wide effort >
+workspace implementer effort default > that model's pair default. Only when the stored-plan model
+itself supplies the model may its stored effort appear below the workspace effort default and
+above the model pair default. Stored review-thread resumption is independent of these choices.
 
 ## Foreground agents
 

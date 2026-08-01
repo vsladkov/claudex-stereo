@@ -68,6 +68,25 @@ test('marketing-site install commands match plugin manifests', () => {
   );
 });
 
+test('plugin manifests expose the display name without changing install identities', () => {
+  const marketplace = JSON.parse(read('.claude-plugin/marketplace.json')) as {
+    name: string;
+    description?: string;
+    plugins: Array<{ name: string; displayName?: string }>;
+  };
+  const plugin = JSON.parse(read('plugins/stereo/.claude-plugin/plugin.json')) as {
+    name: string;
+    displayName?: string;
+  };
+
+  assert.equal(plugin.name, 'stereo');
+  assert.equal(plugin.displayName, 'Claudex Stereo');
+  assert.equal(marketplace.name, 'claudex-stereo');
+  assert.equal(marketplace.plugins[0]?.name, 'stereo');
+  assert.equal(marketplace.plugins[0]?.displayName, 'Claudex Stereo');
+  assert.equal(typeof marketplace.description, 'string');
+});
+
 test('marketing site has no external subresources', () => {
   const html = read('docs/index.html');
 

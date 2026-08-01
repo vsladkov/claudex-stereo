@@ -1,0 +1,17 @@
+---
+description: Show or change this repository's default Claude/Codex model for each Stereo role
+argument-hint: '[--planner <model>] [--planner-effort <effort>] [--plan-reviewer <model>] [--plan-reviewer-effort <effort>] [--implementer <model>] [--implementer-effort <effort>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <effort>] [--clear <key>]'
+disable-model-invocation: true
+allowed-tools: Bash(node:*)
+---
+
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config "$ARGUMENTS"`
+
+Present the command output verbatim. Relay every warning with the exact role and stored value it
+names.
+
+Explicit role flags take precedence over stored workspace defaults, which take precedence over
+built-in defaults. The built-in defaults are `claude:opus` for the planner, `claude:fable` for the
+plan reviewer, `codex:sol` for the implementer, and `claude:fable` for the implementation
+reviewer in the two phase commands. `/stereo:quick` instead uses `claude:session` for its planner;
+its other three built-ins are the same. An unset role uses that command's built-in default.

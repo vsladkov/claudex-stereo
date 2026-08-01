@@ -23,9 +23,12 @@ import {
   resolveJobFile,
   resolveStateFile,
   saveState,
+  setConfig,
   writeJobFile,
 } from '../workspace/state.ts';
 import { SESSION_ID_ENV } from '../jobs/tracked-jobs.ts';
+import { buildSessionJobAnnouncement } from '../jobs/job-announcements.ts';
+import { renderSessionJobAnnouncement } from '../render/render.ts';
 
 export { SESSION_ID_ENV };
 import type { JobRecord } from '../workspace/state.ts';
@@ -164,10 +167,49 @@ async function cleanupSessionJobs(
   return removedJobs.length;
 }
 
+// SessionStart has a 5 s hook budget. Keep this path to one workspace-root
+// resolution, one bounded state-index read, and at most one atomic state
+// write. Adding log reads or a broker probe requires raising hooks.json's
+// timeout and re-justifying the budget.
+function announceWorkspaceJobs(input: SessionHookInput): void {
+  const cwd = input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  if (!fs.existsSync(resolveStateFile(workspaceRoot))) {
+    return;
+  }
+
+  const state = loadState(workspaceRoot);
+  const announcement = buildSessionJobAnnouncement(state.jobs, {
+    watermark: state.config.lastJobAnnouncementAt,
+  });
+  if (!announcement) {
+    return;
+  }
+  announcement.workspaceRoot = workspaceRoot;
+  if (announcement.active.length + announcement.finished.length > 0) {
+    process.stdout.write(
+      `${JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          additionalContext: renderSessionJobAnnouncement(announcement),
+        },
+      })}\n`,
+    );
+  }
+  if (announcement.nextWatermark) {
+    setConfig(workspaceRoot, 'lastJobAnnouncementAt', announcement.nextWatermark);
+  }
+}
+
 function handleSessionStart(input: SessionHookInput): void {
   appendEnvVar(SESSION_ID_ENV, input.session_id);
   appendEnvVar(TRANSCRIPT_PATH_ENV, input.transcript_path);
   appendEnvVar(PLUGIN_DATA_ENV, process.env[PLUGIN_DATA_ENV]);
+  try {
+    announceWorkspaceJobs(input);
+  } catch {
+    // SessionStart must never fail: malformed or unavailable state degrades to silence.
+  }
 }
 
 function sendBrokerShutdownBeforeDeadline(

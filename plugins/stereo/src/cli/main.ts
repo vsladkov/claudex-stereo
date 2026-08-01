@@ -9,6 +9,7 @@ import { handlePlanReview, handlePlanState, handlePlanStore } from './commands/p
 import { handleTransfer } from './commands/transfer.ts';
 import { handleResult, handleStatus } from './commands/status.ts';
 import { handleCancel } from './commands/cancel.ts';
+import { handleConfig } from './commands/config.ts';
 
 async function main(fullArgv: string[]): Promise<void> {
   const [subcommand, ...argv] = fullArgv;
@@ -18,6 +19,9 @@ async function main(fullArgv: string[]): Promise<void> {
   }
 
   switch (subcommand) {
+    case 'config':
+      await handleConfig(argv);
+      break;
     case 'setup':
       await handleSetup(argv);
       break;

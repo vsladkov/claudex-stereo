@@ -15,6 +15,7 @@ thread reservations, plus an optional stop-time review gate.
 - [What you get](#what-you-get) — the command surface, with per-command links
 - [Requirements](#requirements) · [Install](#install) · [Quick start](#quick-start)
 - [Usage](#usage) — every command in detail
+- [Workspace role defaults](#stereoconfig) — durable routing choices for this repository
 - [Typical flows](#typical-flows)
 - [Model routing reference](#model-routing-reference) — aliases, prefixes, effort, model choice
 - [Codex integration](#codex-integration)
@@ -28,6 +29,7 @@ thread reservations, plus an optional stop-time review gate.
 - [`/stereo:plan`](#stereoplan) and [`/stereo:implement`](#stereoimplement) for a checkpointed
   pair workflow with an independent Claude or Codex model choice at every step
 - [`/stereo:plan-state`](#stereoplan-state) to read the latest reviewed plan before implementation
+- [`/stereo:config`](#stereoconfig) to set durable per-workspace defaults for the four pair roles
 - [`/stereo:quick`](#stereoquick) for both phases of the same pair workflow in one command when
   the task is small
 - [`/stereo:rescue`](#stereorescue) and [`/stereo:transfer`](#stereotransfer) to delegate work and
@@ -241,6 +243,31 @@ Examples:
 
 This command is read-only. It does not fix code.
 
+### `/stereo:config`
+
+Shows or changes this repository's durable model and Codex effort defaults for the planner, plan
+reviewer, implementer, and implementation reviewer. The model flags are `--planner`,
+`--plan-reviewer`, `--implementer`, and `--implementation-reviewer`; append `-effort` to each role
+flag to set its Codex effort. Selections use the same `claude:*`, `codex:*`, alias, raw model, and
+qualified provider forms as the pair commands.
+
+An explicit command flag wins over the stored workspace default, which wins over that command's
+built-in default. For the implementer, the workspace default also wins over the model recorded by
+the last Codex plan review. Invalid hand-edited entries produce warnings and fall back to the
+built-in default.
+
+```bash
+/stereo:config
+/stereo:config --planner codex:terra --planner-effort high
+/stereo:config --implementation-reviewer claude:opus
+/stereo:config --clear planner-effort
+/stereo:config --clear roles
+```
+
+Defaults live in `~/.codex/companion-state/<workspace>/state.json`, outside the repository, and
+survive plugin reinstalls. A custom `CODEX_HOME` relocates that durable state. Reading config in a
+fresh workspace does not create state files.
+
 ### `/stereo:plan`
 
 Starts the planning half of the pair workflow. The current Claude session remains the orchestrator,
@@ -275,7 +302,11 @@ iterate forever.
 Use `--draft-only` to run and store just the draft step. The stored plan has verdict `draft` and
 review round 0, so implementation still presents the unapproved-plan gate. Use `--review-only` to
 load the stored plan, run one fresh review round, persist its actual verdict, and stop without
-revising it. The two modes conflict; each also rejects flags for a role or loop it does not run.
+revising it. Add `--plan-file <path>` to `--review-only` to intake an external plan using its exact
+bytes and an independent round 1; when a stored plan exists, Stereo names it and asks before
+replacing the repository's single plan slot. Missing canonical headings warn but do not reject an
+external document. The two modes conflict; each also rejects flags for a role or loop it does not
+run.
 
 Examples:
 
@@ -290,6 +321,7 @@ Examples:
 /stereo:plan --planner codex:spark --planner-effort high --plan-reviewer codex:sol --plan-reviewer-effort max migrate the config loader
 /stereo:plan --draft-only draft a migration plan
 /stereo:plan --review-only --plan-reviewer claude:opus
+/stereo:plan --review-only --plan-file ./approved-plan.md
 ```
 
 Planning is read-only: nothing is implemented until you run
@@ -377,18 +409,26 @@ user-owned command steps. Nothing is committed; you review and commit the result
 
 Shows the complete plan most recently stored by `/stereo:plan` or `/stereo:quick`, together with
 its verdict, review round, model and Codex thread, update time, review findings, open questions,
-and residual risks. Findings are rendered as a compact severity-and-title list;
+residual risks, and the `implementedAt` marker when present. That marker means a full implementation
+phase finished with an accepted review; it does not mean the work was committed or merged.
+Findings are rendered as a compact severity-and-title list;
 `/stereo:plan-state --json` returns their complete stored objects.
 
 ```bash
 /stereo:plan-state
 /stereo:plan-state --open
+/stereo:plan-state --clear
+/stereo:plan-state --mark-implemented
 ```
 
 Without flags, the command only renders the stored plan in the terminal. Use `--open` to refresh
 a `pair-plan.md` snapshot in the durable state directory and open it in VS Code through the
 `code` CLI. The command always prints the exported path, so you can open the file manually when
 `code` is unavailable.
+
+`--clear` asks for confirmation and removes both stored plan artifacts. `--mark-implemented` is
+normally invoked automatically after a successful full `/stereo:implement` or `/stereo:quick`
+phase; storing a new plan or review revision clears the marker.
 
 The durable state directory is normally `~/.codex/companion-state/<workspace>/`, outside the
 repository. A custom `CODEX_HOME` inside the repository places all durable companion state there
@@ -514,6 +554,12 @@ turn boundaries and can be checked from any later prompt. Background jobs are al
 Claude agent runs are session-bound and never appear in `/stereo:status`, which is why
 `/stereo:adversarial-review` rejects `--background` with a `claude:*` model.
 
+At SessionStart, Stereo reads only this durable local index and adds a short context note for
+active jobs plus terminal jobs completed since the previous session. It is silent for untouched
+or jobless workspaces, never reads job logs or contacts the broker, and cannot block session
+startup. Active jobs may be repeated after resume, clear, compact, or fork; finished jobs are
+watermarked and announced once in normal use.
+
 **`/stereo:status`** — the flagless listing shows running and recent Codex jobs for this
 repository, filtered to the current session when a session ID is known; an explicit job ID looks
 up any job in this repository regardless of session. `--all` keeps that scope but includes every
@@ -545,7 +591,8 @@ The setup report covers:
 - Node, npm, and Codex availability, Codex authentication, and the effective write sandbox
 - the active model provider, each configured provider's environment-key status, and per-alias
   readiness
-- the session runtime, stranded thread reservations, and review-gate state
+- the session runtime, stranded thread reservations, review-gate state, and configured role
+  defaults
 - account rate limits, actions taken, and next steps when present
 
 You can also use `/stereo:setup` to manage the optional review gate.
@@ -637,6 +684,11 @@ Then check in with:
 
 These are dogfooded defaults, not enforcement: every role flag remains free-form.
 
+Use `/stereo:config` to replace any of these defaults for one repository. Resolution is explicit
+role flag > stored workspace role default > the built-in listed below. The implementer's stored
+workspace model additionally outranks the model recorded by the latest plan review because it is
+durable repository intent.
+
 | Situation                            | Planner                     | Plan reviewer    | Implementation reviewer |
 | ------------------------------------ | --------------------------- | ---------------- | ----------------------- |
 | Default and most work                | `claude:opus`               | `claude:fable`   | `claude:fable`          |
@@ -705,9 +757,12 @@ under [Other model providers](#other-model-providers).
 `--effort` remains the command-wide Codex default. Multi-role commands also accept the matching
 role flags: `--planner-effort`, `--plan-reviewer-effort`, `--implementer-effort`, and
 `--implementation-reviewer-effort`. For each Codex-routed role, its role flag wins over
-`--effort`, which wins over stored effort or the model-pair default. Every pair-role `gpt-*`
-selection defaults to `max`, while non-OpenAI selections omit an effort override. A role effort
-flag is rejected when its selected role is Claude-routed.
+`--effort`, which wins over the stored workspace role effort, then any applicable stored-plan
+effort, then the model-pair default. Stored-plan effort applies to implementation only when the
+stored-plan model also supplied the implementer model; an explicit or workspace-supplied model
+drops it. Every pair-role `gpt-*` selection defaults to `max`, while non-OpenAI selections omit an
+effort override. A role effort flag is rejected when its selected role is Claude-routed, and a
+stored effort under a Claude-routed model is reported as inert.
 
 Stereo's Claude role agents intentionally omit the agent-definition `effort` field, so they
 inherit the session's effort and extended-thinking configuration. Subagents have no separate

@@ -1,6 +1,6 @@
 ---
 description: Draft or review a plan with independently selected Claude or Codex role models
-argument-hint: '[--draft-only|--review-only] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
+argument-hint: '[--draft-only|--review-only] [--plan-file <path>] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -33,6 +33,8 @@ a routed step:
 - `--max-plan-rounds <n>` defaults to 6.
 - `--draft-only` runs one draft step, stores it, and stops.
 - `--review-only` reviews the stored plan exactly once and stops.
+- `--plan-file <path>` reviews that external plan exactly once and is valid only with
+  `--review-only`.
 - Without a mode flag, run the complete draft-plus-review/revision phase.
 
 Reject missing values, duplicate role or role-effort flags, invalid effort or round values,
@@ -41,11 +43,12 @@ alongside `claude:session` and the four explicit Claude aliases. Accept a Codex 
 without the `codex:` prefix and reject `codex:claude:*`. The removed `--planner-model` and reviewer
 `--model` flags are unknown; report the role-named replacements.
 
-For `--review-only`, reject task text, `--planner`, and `--planner-effort`. For `--draft-only`,
+For `--review-only`, reject task text, `--planner`, and `--planner-effort`. Reject `--plan-file`
+with `--draft-only` or the full phase and say that it requires `--review-only`. For `--draft-only`,
 reject `--plan-reviewer`, `--plan-reviewer-effort`, and `--max-plan-rounds`. Reject a role effort
 flag when its selected role is Claude-routed. Resolve each active Codex role through the routing
-skill's role effort > command-wide effort > model default hierarchy. Full phase and
-`--draft-only` require task text; if it is empty, ask the user what to plan.
+skill's role effort > command-wide effort > workspace role effort > model default hierarchy. Full
+phase and `--draft-only` require task text; if it is empty, ask the user what to plan.
 
 Define these invocation placeholders before any routed step:
 
@@ -63,9 +66,53 @@ rather than correcting runtime behavior.
 The `codex-result-handling` stop-after-findings rule applies at explicit user-decision points and
 to `--review-only`. During the full phase's review loop, revise automatically.
 
+## Workspace role defaults
+
+Before any routed step, run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
+```
+
+Read `roleDefaults`. If the command fails, report that failure and continue with built-in
+defaults. If an entry has a non-null `invalidReason`, report it and use the built-in default for
+that role. Resolve the planner as `--planner` > stored `planner` > `claude:opus`, and the plan
+reviewer as `--plan-reviewer` > stored `planReviewer` > `claude:fable`. For each Codex-routed role,
+resolve effort as role effort flag > command-wide `--effort` > stored role effort > model pair
+default. Report a stored effort for a Claude-routed role as inert. Resolve stored `claude:*`
+selections as Claude routes and never pass them to the companion's `--model` flag.
+
 ## Stored-plan review step
 
-For `--review-only`, skip drafting:
+For `--review-only`, skip drafting. With `--plan-file`, perform external intake first:
+
+1. Run `plan-state --json` only to check for replacement. If `available` is true, warn that this
+   intake overwrites the repository's single stored plan. Name its summary, verdict, `updatedAt`,
+   and `implementedAt` when present, then ask once whether to replace it or stop.
+2. Read `<planFile>` from the exact user-provided path. Keep its exact bytes as the current plan.
+   Warn, but do not reject it, when any of the seven canonical headings are absent.
+3. Always start an independent round 1 with no stored review thread. Fill the normal
+   `planReviewBrief` with the external plan, round `1`, empty repo map, and empty revision context.
+4. Route exactly one review. For a Codex reviewer, pass the user's path through unchanged; do not
+   make a temporary copy:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> --plan-file "<planFile>"
+```
+
+For `claude:session` apply the brief inline; for a named Claude model use it verbatim as the
+`stereo:plan-reviewer` prompt. Validate and retry once under the routing skill. A successful Codex
+review persists automatically. For a Claude-side result, write the findings JSON to a distinct
+`<findingsPayloadFile>` and persist the user's exact file bytes with no thread:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 --no-thread --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<planFile>"
+```
+
+Report the verdict, findings, questions, risks, and reviewer usage/duration, then stop. The
+replacement confirmation is the only protection for the single stored-plan slot.
+
+Without `--plan-file`, review the stored plan:
 
 1. Load:
 

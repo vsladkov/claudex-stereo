@@ -8,6 +8,7 @@ import {
 } from '../../models/registry.ts';
 import { readStdinIfPiped } from '../../shared/fs.ts';
 import {
+  clearPairPlanState,
   ensureStateDir,
   loadPairPlanState,
   nowIso,
@@ -181,11 +182,43 @@ export async function handlePlanState(
 ): Promise<void> {
   const { options } = parseCommandInput(argv, {
     valueOptions: ['cwd'],
-    booleanOptions: ['json', 'open'],
+    booleanOptions: ['json', 'open', 'clear', 'mark-implemented'],
   });
 
+  const actions = ['open', 'clear', 'mark-implemented'].filter((key) => options[key]);
+  if (actions.length > 1) {
+    throw new Error('Choose one of --open, --clear, or --mark-implemented.');
+  }
+
   const workspaceRoot = resolveCommandWorkspace(options);
+  if (options.clear) {
+    const removed = clearPairPlanState(workspaceRoot);
+    const payload = { cleared: removed.length > 0, removed };
+    const rendered =
+      removed.length > 0
+        ? `Cleared the stored plan for this repository.\n${removed.map((filePath) => `- ${filePath}`).join('\n')}\n`
+        : 'No stored plan for this repository. Nothing to clear.\n';
+    outputCommandResult(payload, rendered, options.json);
+    return;
+  }
+
   const record = loadPairPlanState(workspaceRoot) as StoredPairPlanState | null;
+  if (options['mark-implemented']) {
+    if (!record) {
+      throw new Error('No stored plan to mark implemented. Run /stereo:plan first.');
+    }
+    const updated = savePairPlanState(workspaceRoot, {
+      ...record,
+      implementedAt: nowIso(),
+    });
+    outputCommandResult(
+      { available: true, ...updated },
+      renderStoredPlanState(updated),
+      options.json,
+    );
+    return;
+  }
+
   const payload = record ? { available: true, ...record } : { available: false };
   const rendered = renderStoredPlanState(record);
   if (!options.open || !record) {
@@ -244,6 +277,8 @@ export function handlePlanStore(argv: string[]): void {
     : (optionalString(options.thread) ?? optionalString(previous?.threadId));
   const model = optionalString(previous?.model);
   const effort = optionalString(previous?.effort);
+  // This fresh record intentionally does not preserve implementedAt: a newly
+  // stored plan or revision has not completed a full implementation phase.
   const record = savePairPlanState(workspaceRoot, {
     plan,
     threadId,

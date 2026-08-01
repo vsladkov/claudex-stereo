@@ -18,14 +18,14 @@ Raw slash-command arguments:
 
 After reading the routing skill, parse all arguments before loading state:
 
-- `--implementer <model>` selects the implementer. When absent, use the stored Codex model; if it
-  is null, use `codex:sol`.
+- `--implementer <model>` selects the implementer. Resolve it as explicit flag > workspace
+  `implementer` default > stored-plan Codex model > `codex:sol`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer.
-- `--implementation-reviewer <model>` selects the implementation reviewer and defaults to
-  `claude:fable`: the implementation review is the last gate before commit, and a contained
-  reviewer is independent of the orchestrator that produced and fixed the delta. `claude:session`
-  remains valid and is the cheaper inline choice.
+- `--implementation-reviewer <model>` selects the implementation reviewer. Resolve it as explicit
+  flag > workspace `implementationReviewer` default > `claude:fable`: the implementation review
+  is the last gate before commit, and a contained reviewer is independent of the orchestrator that
+  produced and fixed the delta. `claude:session` remains valid and is the cheaper inline choice.
 - `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
   for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
@@ -51,19 +51,33 @@ selected role is Claude-routed.
 
 Reject `claude:session` as the implementer; Claude writes must use the contained named agent.
 
-For Codex implementation, treat stored `model`/`effort` as the last Codex pair values recorded for
-the stored plan; they survive a Claude-side persist. A stored review thread survives only when the
-persisting command passed it through. Resolve effort as `--implementer-effort` > command-wide
-`--effort` > stored effort > the selected model's pair default. Either effort flag replaces the
-stored effort.
-If the user overrides the implementer model while supplying neither effort flag, clear the stored
-effort because it belonged to the old model, then use the new model's pair default. When both
-stored values are null, use `codex:sol` and the user's matching role/command effort or `max`. Omit a
-null effort. For a Codex implementation reviewer, resolve `--implementation-reviewer-effort` >
-command-wide `--effort` > the routing skill's pair default.
+For Codex implementation, treat stored-plan `model`/`effort` as the last Codex pair values recorded
+for the plan; they survive a Claude-side persist. Resolve the model as `--implementer` > workspace
+`implementer` default > stored-plan `model` > `codex:sol`. The durable workspace default outranks
+the incidental model recorded by whichever Codex model last reviewed the plan. Resolve effort as
+`--implementer-effort` > command-wide `--effort` > workspace implementer effort default >
+stored-plan `effort` only when the stored plan also supplied the model > selected model's pair
+default. An explicit or workspace-supplied model drops stored-plan effort because that effort
+belonged to another model. Omit a null effort. Thread resumption remains orthogonal. For a Codex
+implementation reviewer, resolve `--implementation-reviewer-effort` > command-wide `--effort` >
+workspace implementation-reviewer effort > the routing skill's pair default.
 
 Inside the full fix loop, act on findings automatically. The stop-after-review rule applies to
 `--review-only` and explicit safeguard decisions.
+
+## Workspace role defaults
+
+Before the stored-plan preflight, run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
+```
+
+Read `roleDefaults`. If the command fails, report the failure and continue with built-in defaults.
+Ignore any entry with a non-null `invalidReason`, report its warning, and use the built-in default
+for that role. Report a Claude-routed stored effort as inert. Resolve stored `claude:*` selections
+as Claude routes and never pass them to the companion's `--model` flag. When a workspace default
+supplies the implementer, say so in the final effective-role note.
 
 ## Common stored-plan preflight
 
@@ -81,15 +95,24 @@ passed it through explicitly.
 Retain the stored `findings` array as `storedPlanFindings`, treating a missing or non-array value
 as empty.
 
+If `implementedAt` is present, show it and ask exactly once before continuing:
+
+- `Re-implement the same plan anyway`
+- `Run /stereo:plan first (Recommended)`
+- `Stop here`
+
+The marker means a full implementation phase completed with an accepted review, not that the work
+was committed or merged.
+
 If the stored verdict is not `approve`, ask once:
 
 - `Run /stereo:plan first (Recommended)`
 - `Implement/review the unapproved plan anyway`
 - `Stop here`
 
-Show the summary, verdict, round (including round 0 for a draft), `updatedAt`, reviewer label when
-present, whether residual risks exist, and the stored finding count (treat missing or non-array
-`findings` as zero). Mention `/stereo:plan-state` for the complete plan.
+Show the summary, verdict, round (including round 0 for a draft), `updatedAt`, `implementedAt` when
+present, reviewer label when present, whether residual risks exist, and the stored finding count
+(treat missing or non-array `findings` as zero). Mention `/stereo:plan-state` for the complete plan.
 
 ## Standalone implementation-review step
 
@@ -429,6 +452,17 @@ next round's `{{REVIEW_CONTEXT}}`.
 At `--max-fix-rounds` (default 4), or when substantially the same issue survives three rounds,
 show remaining fixes and ask whether to send one more implementer round, let the orchestrator fix
 directly, or stop and report as-is.
+
+After the full phase receives an `acceptable` implementation review, and before the final report,
+run:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implemented --json
+```
+
+Report a failure to set the marker but never fail the implementation run because of it.
+`--implement-only` and `--review-only` stop before a full accepted phase completes and never mark
+the plan implemented.
 
 ## Final report
 
