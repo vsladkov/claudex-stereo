@@ -9,8 +9,9 @@ Codex-specific operating notes:
   cannot run there. Run targeted structural or in-process tests when possible and leave the full
   repository gates to the orchestrator.
 - Markdown tables and formatting are Prettier's (printWidth 100, proseWrap preserve); the
-  ~100-column prose wrap is a hand-maintained convention no gate enforces. Pair-turn sandboxes
-  cannot run Prettier, so preserve both shapes and leave `npm run format` to the orchestrator.
+  ~100-column prose wrap is a hand-maintained convention no gate enforces — preserve it when
+  editing markdown. Run `npm run format:check` before finishing; the orchestrator runs the full
+  gates either way.
 - Never commit or push repository changes.
 - Make release version changes with `npm run bump-version <version>` so every manifest stays in
   sync.

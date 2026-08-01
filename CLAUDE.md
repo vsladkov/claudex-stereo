@@ -47,7 +47,7 @@ runtime/jobs/models → render/workflows → cli/hooks`.
   this; `tests/module-graph.test.ts` does, by importing every `src` module.
 - `shared/is-main.ts`'s realpath entry guard is correct only because there is
   no emit (the executed file IS the source file). Keep it that way.
-- Formatting is Prettier's (config in package.json, maestro baseline: single
+- Formatting is Prettier's (config in package.json: single
   quotes, width 100); lint is ESLint 9 flat config at the non-type-checked
   recommended tier (tsc strict owns type-level enforcement). `npm run format`
   / `format:check` / `lint`; a husky pre-commit runs prettier on staged files;
@@ -66,17 +66,33 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   release — `claude plugin update` no-ops on an unchanged version. CI runs
   `npm run check-version` to keep the four manifests (six version fields) in
   sync.
+- Release ceremony: one commit per release (`type: summary - vX.Y.Z` subject
+  plus a descriptive body paragraph, self-explanatory to external readers — no
+  internal task labels), carrying the bump and the new `CHANGELOG.md` entry;
+  then refresh the install, tag `vX.Y.Z`, `gh release create` with the
+  changelog entry as notes, and push main plus the tag. `CHANGELOG.md` is
+  append-only history — never retro-edit shipped entries.
 - CI also runs `npm test` and `npm run build` (an alias for typecheck, still
-  with no emit); its `continue-on-error` Windows lane is advisory. CI installs
-  a pinned Codex CLI for the codegen prestep — bump the pin in
+  with no emit); its `continue-on-error` Windows lane is advisory and fails at
+  `format:check` on CRLF checkouts — add a `.gitattributes` with
+  `* text=auto eol=lf` if the lane is ever promoted. CI installs a pinned
+  Codex CLI for the codegen prestep — bump the pin in
   `.github/workflows/ci.yml` when upgrading Codex locally.
 - Codex write runs need `sysctl kernel.apparmor_restrict_unprivileged_userns=0`
-  (Ubuntu 24.04; not persisted across reboots).
+  (Ubuntu 24.04; not persisted across reboots — the symptom after a reboot is
+  bubblewrap failing with `bwrap: loopback: Failed RTM_NEWADDR`).
+- The Codex CLI sandbox cannot spawn subprocesses or listen on sockets, so
+  Codex can never run the full suite in-sandbox; the orchestrating Claude
+  session runs every host gate (`npm test` / `typecheck` / `lint` /
+  `format:check` / `check-version`).
+- The plugin cache under `~/.claude/plugins/cache/` keeps every previously
+  installed version directory; verify installed content only via the latest
+  version dir or the recorded sha, never via `find` across the cache.
 
 ## Tests
 
-- `npm test` — node:test over 34 `tests/*.test.ts` files, one process per
-  file, parallel; ~50s. Support modules (`env-bootstrap.cjs`, `helpers.ts`,
+- `npm test` — node:test over every `tests/*.test.ts` file, one process per
+  file, parallel; ~50–60s. Support modules (`env-bootstrap.cjs`, `helpers.ts`,
   `runtime-helpers.ts`, `fake-codex-fixture.ts`, `broker-reaper.ts`,
   `global-setup.ts`) are not matched by the glob. The test script preloads
   `env-bootstrap.cjs` with `--require`; it scrubs leaked `CLAUDE_PLUGIN_DATA`,
@@ -96,8 +112,24 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   longer existed) and tax every legitimate edit.
 - Broker/runtime-sessions tests are timing-sensitive; rerun once before
   treating a failure as a regression.
+- A test that reads a file which a live process rewrites (state.json, fake
+  fixture state) must go through `readJsonIfReadable` plus a retrying waitFor
+  predicate — raw `JSON.parse(readFileSync(...))` on such files is the
+  torn-read flake class.
 - Set `STEREO_KEEP_TEST_TMP=1` to retain test temp directories for debugging;
   otherwise each test process removes the directories it created at exit.
+
+## Plugin surface authoring
+
+- Installed plugins ship only `plugins/stereo/` — in-plugin instructions must
+  never point at repo-root files (README, CLAUDE.md); they do not exist in an
+  install.
+- A command that invokes the `Agent` tool needs `Agent` in its `allowed-tools`
+  frontmatter, and every Agent call in command markdown must state
+  `run_in_background: false` explicitly.
+- Never `cd` before a companion invocation: the CLI resolves its workspace
+  from the process cwd, so a stray `cd` runs the job against the wrong
+  workspace and strands a broker there.
 
 ## Runtime invariants worth knowing before editing
 
