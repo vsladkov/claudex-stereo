@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.31.0
+
+- Add worktree-isolated implementation via `/stereo:implement --isolated`: the implementer works in
+  a throwaway detached git worktree under the OS temp directory, a new `--workspace` flag with a
+  broker-cwd split keeps durable state, job records, and the single shared workspace broker in the
+  main repository, review and host gates target the worktree, and the delta is handed back as a
+  user-confirmed `git apply --3way` patch — never a commit
+- Bound every CLI stdin read: piped input gets an idle deadline (`CODEX_STDIN_TIMEOUT_MS`, default
+  10s), a 32 MiB cap, and pinned actionable errors instead of hanging forever on a never-closing
+  pipe or crashing with raw `EAGAIN` on a non-blocking one; hook stdin stays synchronous and
+  degrades to empty
+- Confine user-supplied file flags (`--prompt-file`, `--plan-file`, `--findings-file`,
+  `--output-schema`) to the workspace, OS temp directory, and plugin roots with a 16 MiB size cap
+- Make the advisory Windows CI lane real: `.gitattributes` pins LF endings, `npm run test:windows`
+  runs the portable test subset plus a win32 named-pipe round trip and a lane drift guard, and a
+  written promotion criterion replaces the known-red lane
+- Harden runtime edges: git-collection and stop-gate output buffers with friendly `ENOBUFS`
+  errors, guarded plugin-manifest, session-ledger, and legacy-migration reads with one-shot
+  diagnostics, a fixed post-spawn pid write race, and `plan-state --clear` now also clearing the
+  implementation record
+- Prescribe the rendered foreground status poll and a model-carrying malformed-output retry in the
+  routing skill, with matching command-doc fixes (`setup` gains `disable-model-invocation`;
+  `cancel`, `status`, and `plan` wording corrected)
+
 ## 1.30.0
 
 - Add durable workspace-scoped implementation-phase records and `/stereo:implement --resume`,
