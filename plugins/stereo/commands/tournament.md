@@ -47,6 +47,8 @@ After reading the routing skill, parse all arguments before loading state:
   for a Codex-routed reviewer and is illegal for a Claude-routed reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for Codex roles
   without a role effort flag.
+  When no active role is Codex-routed, a command-wide `--effort` is inert: accept it, report it as
+  inert, and never translate it into a Claude-side control.
 - `--slot <name>` selects the stored plan slot and defaults to `default`. Define `<slotArg>` as
   `--slot <slot>` for a non-default slot and omit it entirely for `default`.
 

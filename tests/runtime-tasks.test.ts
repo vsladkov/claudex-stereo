@@ -705,6 +705,33 @@ test('task --output-schema rejects unreadable or invalid schemas before starting
   assert.equal(readCompanionState(repo, env), null);
 });
 
+test('task rejects a Claude route before starting a turn or creating a job record', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+  run('git', ['add', 'README.md'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  const env = buildEnv(binDir);
+
+  const result = run(
+    process.execPath,
+    [SCRIPT, 'task', '--json', '--model', 'claude:opus', 'do not start this task'],
+    { cwd: repo, env },
+  );
+
+  assert.equal(result.status, 1);
+  const payload = JSON.parse(result.stdout);
+  assert.deepEqual(Object.keys(payload), ['error']);
+  assert.equal(
+    payload.error,
+    'Unsupported model "claude:opus". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
+  );
+  assert.equal(readFakeState(binDir).lastTurnStart, undefined);
+  assert.equal(readCompanionState(repo, env), null);
+});
+
 test('task forwards model selection and reasoning effort to app-server turn/start', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();

@@ -1,6 +1,6 @@
 ---
 description: Run a Codex code review against local git state
-argument-hint: '[--wait|--background] [--base <ref>] [--pr <n>] [--scope auto|working-tree|branch] [--model <model-or-alias>]'
+argument-hint: '[--wait|--background] [--base <ref>] [--pr <n>] [--scope auto|working-tree|branch] [--model <codex-model-or-alias>]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), Bash(gh:*), AskUserQuestion
 ---
@@ -14,6 +14,9 @@ Before any repository inspection or execution, inspect the raw arguments for `--
 value starts with `claude:`, stop with:
 "`/stereo:review` is Codex-native and does not accept Claude models. Use
 `/stereo:adversarial-review --model <claude selection>` for a Claude review."
+This boundary is deliberate: the command maps to Codex's built-in `review/start` reviewer API,
+which has no Claude equivalent, while `/stereo:adversarial-review` is the Claude-routed review
+with the same `schemas/review-output.schema.json` contract.
 A Codex `--model` value may carry an optional `codex:` prefix, which the companion strips.
 If the raw arguments contain `--effort`, stop: Codex's built-in reviewer exposes no reasoning-
 effort control. Direct the user to `/stereo:adversarial-review --effort <effort>` instead.

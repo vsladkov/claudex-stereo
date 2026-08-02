@@ -33,6 +33,22 @@ providers, and effort defaults. The prefix never changes routing, effort, or per
 Present Codex-side selections with the `codex:` prefix in user-facing reports; state and job
 fields store the resolved model id, which is never prefixed.
 
+### One-runtime surfaces
+
+The remaining one-runtime surfaces are deliberate:
+
+- `/stereo:review` is Codex's built-in reviewer (`review/start`), which has no Claude analogue and
+  no effort control. The Claude-routed structured review is `/stereo:adversarial-review`.
+- `/stereo:rescue` and `/stereo:transfer` are Codex bridges. A `claude:*` `--model` is rejected on
+  rescue, and transfer is Claude → Codex only.
+- `--background` creates durable Codex jobs. Claude agent runs are session-bound and never appear
+  in `/stereo:status`.
+- `--effort` and `--*-effort` are Codex runtime controls. Model selection is the Claude strength
+  control; the detailed Claude-side controls are described below.
+- Stored-plan `model`/`effort` record the last Codex pair values only. The Claude analogue is the
+  durable workspace default (`/stereo:config --implementer claude:<alias>`), which outranks the
+  stored-plan model.
+
 `claude:inherit` requests the platform's model inheritance. With the Agent `model` parameter
 omitted, `CLAUDE_CODE_SUBAGENT_MODEL` wins when that environment variable is set; otherwise the
 agent frontmatter's `model: inherit` resolves to the main conversation's model. Record the
@@ -59,6 +75,8 @@ reject it for an inactive or Claude-routed role. A role or command-wide effort o
 the stored-plan implementer effort. An explicit or workspace-supplied implementer model with
 neither effort override clears the stored-plan effort because it belongs to the old model, then
 uses the workspace effort default or normal model-pair default.
+When no active role is Codex-routed, a command-wide `--effort` is inert: accept it, report it as
+inert, and never translate it into a Claude-side control.
 
 Claude-side reasoning has three distinct controls. Stereo's agent definitions omit `effort`, so
 Claude-routed roles inherit the session's effort and extended-thinking configuration. Subagents

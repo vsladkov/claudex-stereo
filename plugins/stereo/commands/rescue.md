@@ -1,6 +1,6 @@
 ---
 description: Delegate investigation, an explicit fix request, or follow-up rescue work to the Codex rescue subagent
-argument-hint: '[--background|--wait] [--resume|--fresh] [--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [what Codex should investigate, solve, or continue]'
+argument-hint: '[--background|--wait] [--resume|--fresh] [--model <codex-model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [what Codex should investigate, solve, or continue]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
@@ -22,7 +22,13 @@ Execution mode:
 - If neither flag is present, let the subagent choose whether to add `task --background` from the
   request's size and complexity.
 - Do not treat `--background` or `--wait` as part of the natural-language task text.
-- `--model` and `--effort` are runtime-selection flags. Preserve them for the forwarded `task` call, but do not treat them as part of the natural-language task text.
+- `--model` and `--effort` are runtime-selection flags. Preserve them for the forwarded `task`
+  call, but do not treat them as part of the natural-language task text. If `--model` starts with
+  `claude:`, stop before invoking the subagent and explain that `/stereo:rescue` is a Codex bridge:
+  `stereo:codex-rescue` only forwards to the companion `task` runtime. For Claude-routed work, ask
+  this session directly; use `/stereo:quick --implementer claude:<alias>` or
+  `/stereo:implement --implementer claude:<alias>` for a contained Claude implementer; or use
+  `/stereo:adversarial-review --model claude:<alias>` for a Claude review.
 - If the request includes `--resume`, do not ask whether to continue. The user already chose.
 - If the request includes `--fresh`, do not ask whether to continue. The user already chose.
 - Otherwise, before starting Codex, check for a resumable rescue thread from this Claude session by running:
@@ -48,7 +54,13 @@ Operating rules:
 - Do not paraphrase, summarize, rewrite, or add commentary before or after it.
 - Do not ask the subagent to inspect files, monitor progress, poll `/stereo:status`, fetch `/stereo:result`, call `/stereo:cancel`, summarize output, or do follow-up work of its own.
 - Leave `--effort` unset unless the user explicitly asks for a specific reasoning effort. Task runs never inject an effort default; the pair workflow applies defaults only to OpenAI `gpt-*` models. An explicit `--effort` is forwarded verbatim, including for provider models that may ignore or reject it. Never invent an effort the user did not ask for.
-- Leave the model unset unless the user explicitly asks for one. Otherwise pass the user's `--model` value through verbatim — a model id or one of the plugin aliases (`codex:spark`, `codex:sol`, `codex:terra`, `codex:luna`, `codex:kimi`, `codex:qwen`, `codex:deepseek`, `codex:glm`); the runtime resolves aliases itself, and `/stereo:setup` shows each provider alias's readiness. The bare form without the `codex:` prefix is also accepted; forward either verbatim because the runtime strips the prefix.
+- Leave the model unset unless the user explicitly asks for one. Otherwise pass the user's
+  `--model` value through verbatim — a model id or one of the plugin aliases (`codex:spark`,
+  `codex:sol`, `codex:terra`, `codex:luna`, `codex:kimi`, `codex:qwen`, `codex:deepseek`,
+  `codex:glm`); the runtime resolves aliases itself, and `/stereo:setup` shows each provider
+  alias's readiness. The bare form without the `codex:` prefix is also accepted; forward either
+  verbatim because the runtime strips the prefix. The runtime rejects `claude:*` values, so a
+  Claude selection must never be forwarded.
 - Leave `--resume` and `--fresh` in the forwarded request. The subagent handles that routing when it builds the `task` command.
 - If the helper reports that Codex is missing or unauthenticated, stop and tell the user to run `/stereo:setup`.
 - If the user did not supply a request, ask what Codex should investigate or fix.

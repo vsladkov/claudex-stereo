@@ -39,6 +39,8 @@ After reading the routing skill, parse all arguments before repository work:
   for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
+  When no active role is Codex-routed, a command-wide `--effort` is inert: accept it, report it as
+  inert, and never translate it into a Claude-side control.
 - Remaining text is the task. Ask for it if empty.
 
 Reject missing values, duplicate role or role-effort flags, invalid effort, unknown flags, unknown

@@ -647,6 +647,10 @@ Ask Codex to redesign the database connection to be more resilient.
 **Notes:**
 
 - if you do not pass `--model` or `--effort`, Codex chooses its own defaults.
+- `claude:*` models are rejected because rescue is a Codex bridge. For Claude-routed work, use
+  `/stereo:quick` with `--implementer claude:<alias>`,
+  `/stereo:implement --implementer claude:<alias>`, or
+  `/stereo:adversarial-review --model claude:<alias>`.
 - built-in aliases such as `codex:spark` are listed in the [Codex alias table](#codex-model-aliases);
   third-party aliases are listed under [Other model providers](#other-model-providers)
 - follow-up rescue requests can continue this session's latest Codex task
@@ -658,6 +662,12 @@ Creates a persistent Codex thread from the current Claude Code session and print
 
 Use it when you started a debugging or implementation conversation in Claude Code and want to
 continue that same context directly in Codex.
+
+The direction is deliberate: `/stereo:transfer` moves a Claude Code session into a resumable Codex
+thread and takes no `--model` because the destination runtime is fixed; Codex threads resume in
+Codex rather than transferring back into Claude, so use
+`/stereo:adversarial-review --model claude:<alias>` or a Claude role route in `/stereo:plan`,
+`/stereo:implement`, or `/stereo:quick` when Codex work needs Claude-side review or continuation.
 
 Examples:
 
@@ -901,6 +911,9 @@ stored-plan model also supplied the implementer model; an explicit or workspace-
 drops it. Every pair-role `gpt-*` selection defaults to `max`, while non-OpenAI selections omit an
 effort override. A role effort flag is rejected when its selected role is Claude-routed, and a
 stored effort under a Claude-routed model is reported as inert.
+Stored plans record Codex `model`/`effort` only. The durable Claude-side equivalent is
+`/stereo:config --implementer claude:<alias>`, whose workspace default outranks the stored-plan
+model.
 
 Stereo's Claude role agents intentionally omit the agent-definition `effort` field, so they
 inherit the session's effort and extended-thinking configuration. Subagents have no separate
@@ -952,6 +965,20 @@ There are three deliberate boundaries. `/stereo:review` remains Codex-native; us
 `/stereo:adversarial-review` for a Claude-routed review. `/stereo:rescue` and `/stereo:transfer`
 remain Codex bridges. `claude:session` is rejected for implementation so Claude writes stay
 contained in the file-edit-only implementer agent.
+
+| Surface                                                                | Codex route              | Claude route                                          | Why                                                                     |
+| ---------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------- |
+| Pair role flags (`/stereo:plan`, `/stereo:implement`, `/stereo:quick`) | All four roles           | All four; the implementer excludes `claude:session`   | Claude writes stay in the contained implementer agent                   |
+| `/stereo:tournament` contestants                                       | Two or three contestants | Named agents only; no `claude:session`                | Every contestant writes in an isolated worktree                         |
+| Tournament/implement implementation reviewer                           | Yes                      | Yes, including `claude:session`                       | Review routing stays independent of implementation routing              |
+| `/stereo:config` role defaults                                         | All four roles           | All four, with the same implementer containment       | Durable workspace intent is available for either route                  |
+| `/stereo:adversarial-review --model`                                   | Foreground or background | Foreground only                                       | `--background` creates durable Codex jobs                               |
+| `/stereo:review --model`                                               | Built-in `review/start`  | No; use `/stereo:adversarial-review`                  | Codex's tuned reviewer API has no Claude analogue                       |
+| `/stereo:rescue --model`                                               | Companion `task` runtime | Rejected; use Quick, Implement, or adversarial review | Rescue is a thin Codex bridge                                           |
+| `/stereo:transfer`                                                     | Fixed destination        | Source session only; no Claude destination            | Transfer is deliberately Claude → Codex                                 |
+| `--effort` and `--*-effort`                                            | Runtime controls         | No control; choose a Claude model instead             | An all-Claude command-wide `--effort` is accepted and reported as inert |
+| `--background` and `/stereo:status`                                    | Durable jobs and status  | Session-bound agents; use foreground role routes      | There is no session-independent Claude execution surface                |
+| Stored-plan `model`/`effort`                                           | Last Codex pair values   | Not recorded; use `/stereo:config` workspace defaults | The Claude workspace default outranks the stored-plan model             |
 
 Implementation review defaults to a contained `claude:fable`, independent of the orchestrating
 session that produced and fixed the work. The cheaper `claude:session` route remains available as

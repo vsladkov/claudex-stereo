@@ -83,6 +83,66 @@ test('flagless config is a pure read in a fresh workspace', () => {
   assert.equal(fs.existsSync(stateDir), false);
 });
 
+test('config round-trips Claude routes for all four role defaults', () => {
+  const workspace = makeTempDir();
+  const expected = [
+    {
+      role: 'planner',
+      flag: 'planner',
+      model: 'claude:session',
+      effort: null,
+      route: 'claude',
+      resolvedModel: null,
+      invalidReason: null,
+    },
+    {
+      role: 'planReviewer',
+      flag: 'plan-reviewer',
+      model: 'claude:inherit',
+      effort: null,
+      route: 'claude',
+      resolvedModel: null,
+      invalidReason: null,
+    },
+    {
+      role: 'implementer',
+      flag: 'implementer',
+      model: 'claude:sonnet',
+      effort: null,
+      route: 'claude',
+      resolvedModel: null,
+      invalidReason: null,
+    },
+    {
+      role: 'implementationReviewer',
+      flag: 'implementation-reviewer',
+      model: 'claude:fable',
+      effort: null,
+      route: 'claude',
+      resolvedModel: null,
+      invalidReason: null,
+    },
+  ];
+
+  const set = runConfig(workspace, [
+    '--planner',
+    'claude:session',
+    '--plan-reviewer',
+    'claude:inherit',
+    '--implementer',
+    'claude:sonnet',
+    '--implementation-reviewer',
+    'claude:fable',
+    '--json',
+  ]);
+  assert.equal(set.status, 0, set.stderr);
+  assert.deepEqual(JSON.parse(set.stdout).roleDefaults, expected);
+
+  const read = runConfig(workspace, ['--json']);
+  assert.equal(read.status, 0, read.stderr);
+  assert.deepEqual(JSON.parse(read.stdout).roleDefaults, expected);
+});
+
 test('config validation fails closed with the JSON error contract', () => {
   const cases: Array<[string[], RegExp]> = [
     [['--planner', 'claude:fabel'], /Unsupported model/],

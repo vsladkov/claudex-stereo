@@ -54,6 +54,39 @@ test('normalizeRequestedModel rejects empty and Claude selections under codex:',
   );
 });
 
+test('normalizeRequestedModel rejects bare Claude routes before Codex model resolution', () => {
+  assert.throws(
+    () => normalizeRequestedModel('claude:opus'),
+    new Error(
+      'Unsupported model "claude:opus". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
+    ),
+  );
+  assert.throws(
+    () => normalizeRequestedModel('claude:session'),
+    new Error(
+      'Unsupported model "claude:session". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
+    ),
+  );
+  assert.throws(
+    () => normalizeRequestedModel('CLAUDE:Sonnet'),
+    new Error(
+      'Unsupported model "CLAUDE:Sonnet". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
+    ),
+  );
+  assert.throws(
+    () => normalizeRequestedModel('claude:opus@anthropic'),
+    new Error(
+      'Unsupported model "claude:opus@anthropic". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
+    ),
+  );
+  assert.throws(
+    () => normalizeRequestedModel('codex:claude:opus'),
+    new Error(
+      'Unsupported model "codex:claude:opus". The codex: prefix addresses Codex runtime models; claude: selections are not Codex models.',
+    ),
+  );
+});
+
 test('normalizeRequestedModel matches aliases case-insensitively and trims whitespace', () => {
   assert.equal(normalizeRequestedModel('  SOL  '), 'gpt-5.6-sol');
   assert.equal(normalizeRequestedModel('Terra'), 'gpt-5.6-terra');
@@ -73,6 +106,7 @@ test('normalizeRequestedModel resolves only the model side of qualified selectio
   assert.equal(normalizeRequestedModel('kimi@custom'), 'kimi-k3@custom');
   assert.equal(normalizeRequestedModel(' SOL@azure '), 'gpt-5.6-sol@azure');
   assert.equal(normalizeRequestedModel('Unregistered-X@my-provider'), 'Unregistered-X@my-provider');
+  assert.equal(normalizeRequestedModel('claude-sonnet-4@anthropic'), 'claude-sonnet-4@anthropic');
 });
 
 test('normalizeRequestedModel returns null for null and empty input', () => {

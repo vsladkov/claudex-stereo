@@ -111,6 +111,15 @@ export function normalizeRequestedModel(model: unknown): string | null {
   if (!normalized) {
     return null;
   }
+  // The routing skill's invariant ("never pass a claude:* selection to the
+  // companion") enforced at the boundary, symmetric with the codex:claude:*
+  // rejection below. Without it, `--model claude:opus` reaches Codex as a
+  // literal model id and fails late, after a job record already exists.
+  if (normalized.toLowerCase().startsWith('claude:')) {
+    throw new Error(
+      `Unsupported model "${normalized}". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.`,
+    );
+  }
   const qualified = parseQualifiedModel(stripCodexPrefix(normalized));
   const resolvedModel = MODEL_ALIASES.get(qualified.model.toLowerCase()) ?? qualified.model;
   return qualified.modelProvider ? `${resolvedModel}@${qualified.modelProvider}` : resolvedModel;
