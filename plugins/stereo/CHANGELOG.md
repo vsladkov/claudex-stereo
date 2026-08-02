@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.34.2
+
+- Reject bare `claude:*` selections at the companion model boundary: `normalizeRequestedModel`
+  now fails fast with a pinned error naming Codex selections as the only accepted `--model`
+  values, so `task`, `plan-review`, `review`, and `adversarial-review` reject a Claude route
+  before creating any job record instead of forwarding it to Codex as a literal model id that
+  fails late; `codex:claude:*` keeps its existing distinct error, and role-default parsing is
+  unaffected because it resolves `claude:*` before this guard
+- Document the deliberate one-runtime surfaces so every asymmetry is stated rather than
+  accidental: the model-routing skill carries one canonical sentence for the inert command-wide
+  `--effort` (repeated verbatim by `implement`, `quick`, and `tournament`), `/stereo:rescue`
+  rejects `claude:*` with named alternatives, `/stereo:review` and `/stereo:transfer` state
+  their single-runtime boundaries, and the README gains a route-parity table under Deliberate
+  boundaries
+- Pin the new behavior in tests: the exact rejection message across prefix variants (with
+  provider-qualified ids still passing), CLI fail-fast with a `{"error"}` envelope and no job
+  record leaked, and a `claude:*` round-trip through all four `/stereo:config` roles
+
 ## 1.34.1
 
 - Allow Claude Code models as tournament contestants: the four named `claude:*` aliases and
