@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.35.0
+
+- Add a `version` subcommand to the companion CLI: `codex-companion.ts version` prints the running
+  plugin copy's version from its shipped manifest as plain text, `--json` emits
+  `{"version": "<semver>"}`, and failures (an unreadable or malformed manifest, stray positionals)
+  flow through the established compact `{"error"}` contract with exit code 1
+- Read the plugin manifest in one place: a new strict shared reader backs the subcommand, and the
+  transport's `readPluginVersion` now delegates to it while keeping its soft `0.0.0` fallback so
+  app-server initialization can never hard-fail
+- Pin the new surface with spawn-based tests covering the output shapes, the help listing, the
+  error contract, and the reader's fail-closed messages, with the new test file classified in the
+  Windows-lane bookkeeping
+
 ## 1.34.2
 
 - Reject bare `claude:*` selections at the companion model boundary: `normalizeRequestedModel`
