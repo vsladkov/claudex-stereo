@@ -117,33 +117,43 @@ function buildReadPayload(workspaceRoot: string, record: JsonRecord | null): Jso
   };
 }
 
-function roundNumber(value: unknown): number | null {
+function roundEntryNumber(value: unknown): number | null {
   const entry = recordLike(value);
-  return Number.isInteger(entry?.round) && (entry?.round as number) >= 0
-    ? (entry?.round as number)
-    : null;
+  for (const key of ['review', 'round'] as const) {
+    const candidate = entry?.[key];
+    if (Number.isInteger(candidate) && (candidate as number) >= 0) {
+      return candidate as number;
+    }
+  }
+  return null;
 }
 
 function mergeRounds(existing: unknown, patch: unknown): unknown[] {
-  const merged = Array.isArray(existing) ? [...existing] : [];
-  if (!Array.isArray(patch)) {
-    return merged;
-  }
-
-  for (const entry of patch) {
-    const number = roundNumber(entry);
-    const existingIndex =
-      number === null ? -1 : merged.findIndex((item) => roundNumber(item) === number);
-    if (existingIndex === -1) {
-      merged.push(entry);
-    } else {
-      merged[existingIndex] = entry;
+  const merged: unknown[] = [];
+  const numberedIndexes = new Map<number, number>();
+  const absorb = (entries: unknown[]): void => {
+    for (const entry of entries) {
+      const number = roundEntryNumber(entry);
+      if (number === null) {
+        merged.push(entry);
+        continue;
+      }
+      const existingIndex = numberedIndexes.get(number);
+      if (existingIndex === undefined) {
+        numberedIndexes.set(number, merged.length);
+        merged.push(entry);
+      } else {
+        merged[existingIndex] = entry;
+      }
     }
-  }
+  };
+
+  absorb(Array.isArray(existing) ? existing : []);
+  absorb(Array.isArray(patch) ? patch : []);
 
   return merged.sort((left, right) => {
-    const leftRound = roundNumber(left);
-    const rightRound = roundNumber(right);
+    const leftRound = roundEntryNumber(left);
+    const rightRound = roundEntryNumber(right);
     if (leftRound === null) {
       return rightRound === null ? 0 : 1;
     }

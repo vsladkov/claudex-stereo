@@ -1466,6 +1466,16 @@ test('result falls back to index data when the stored job file is unreadable', (
   assert.match(payload.storedJobWarning, /^Stored result file is unreadable:/);
   assert.match(payload.storedJobWarning, /Showing index data only\.$/);
 
+  const reportResult = run('node', [SCRIPT, 'result', jobId, '--report', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(reportResult.status, 0, reportResult.stderr);
+  const reportPayload = JSON.parse(reportResult.stdout);
+  assert.equal(reportPayload.report, null);
+  assert.equal(reportPayload.storedJobWarning, payload.storedJobWarning);
+  assert.equal(Object.hasOwn(reportPayload, 'storedJob'), false);
+
   const renderedResult = run('node', [SCRIPT, 'result', jobId], {
     cwd: repo,
     env,
@@ -1543,6 +1553,141 @@ test('result returns the stored output for the latest finished job by default', 
     result.stdout,
     '# Codex Review\n\nReviewed uncommitted changes.\nNo material issues found.\n\nModel: -\nCodex session ID: thr_review_finished\nResume in Codex: codex resume thr_review_finished\n',
   );
+});
+
+test('result --report returns report-only text and a compact JSON envelope', () => {
+  const workspace = makeTempDir();
+  const stateDir = resolveDurableStateDir(workspace);
+  const jobsDir = path.join(stateDir, 'jobs');
+  const report = 'Implemented the requested change.\nAll focused checks pass.\n\n';
+  const usage = {
+    job: { inputTokens: 1200, outputTokens: 300, totalTokens: 1500 },
+    thread: { inputTokens: 4200, outputTokens: 800, totalTokens: 5000 },
+  };
+  fs.mkdirSync(jobsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(jobsDir, 'task-report.json'),
+    `${JSON.stringify(
+      {
+        id: 'task-report',
+        status: 'completed',
+        title: 'Codex Task',
+        jobClass: 'task',
+        threadId: 'thr_report',
+        tokenUsage: usage,
+        result: { rawOutput: report },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(stateDir, 'state.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: 'task-report',
+            status: 'completed',
+            title: 'Codex Task',
+            jobClass: 'task',
+            threadId: 'thr_report',
+            createdAt: '2026-08-01T12:00:00.000Z',
+            updatedAt: '2026-08-01T12:01:00.000Z',
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  const textResult = run('node', [SCRIPT, 'result', 'task-report', '--report'], {
+    cwd: workspace,
+  });
+  assert.equal(textResult.status, 0, textResult.stderr);
+  assert.equal(textResult.stdout, 'Implemented the requested change.\nAll focused checks pass.\n');
+  assert.doesNotMatch(textResult.stdout, /Model:|Codex session ID:|Resume in Codex:/);
+
+  const jsonResult = run('node', [SCRIPT, 'result', 'task-report', '--report', '--json'], {
+    cwd: workspace,
+  });
+  assert.equal(jsonResult.status, 0, jsonResult.stderr);
+  const payload = JSON.parse(jsonResult.stdout);
+  assert.deepEqual(payload, {
+    jobId: 'task-report',
+    status: 'completed',
+    report,
+    threadId: 'thr_report',
+    tokenUsage: usage,
+  });
+  assert.equal(Object.hasOwn(payload, 'storedJob'), false);
+});
+
+test('result --report explains when a finished job has no stored report', () => {
+  const workspace = makeTempDir();
+  const stateDir = resolveDurableStateDir(workspace);
+  const jobsDir = path.join(stateDir, 'jobs');
+  fs.mkdirSync(jobsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(jobsDir, 'task-no-report.json'),
+    `${JSON.stringify(
+      {
+        id: 'task-no-report',
+        status: 'completed',
+        title: 'Codex Task',
+        jobClass: 'task',
+        result: {},
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(stateDir, 'state.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        config: { stopReviewGate: false },
+        jobs: [
+          {
+            id: 'task-no-report',
+            status: 'completed',
+            title: 'Codex Task',
+            jobClass: 'task',
+            createdAt: '2026-08-01T12:00:00.000Z',
+            updatedAt: '2026-08-01T12:01:00.000Z',
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  const jsonResult = run('node', [SCRIPT, 'result', 'task-no-report', '--report', '--json'], {
+    cwd: workspace,
+  });
+  assert.equal(jsonResult.status, 0, jsonResult.stderr);
+  assert.deepEqual(JSON.parse(jsonResult.stdout), {
+    jobId: 'task-no-report',
+    status: 'completed',
+    report: null,
+    threadId: null,
+    tokenUsage: null,
+  });
+
+  const textResult = run('node', [SCRIPT, 'result', 'task-no-report', '--report'], {
+    cwd: workspace,
+  });
+  assert.equal(textResult.status, 0, textResult.stderr);
+  assert.equal(textResult.stdout, 'No stored report for task-no-report (status: completed).\n');
 });
 
 test('result without a job id prefers the latest finished job from the current Claude session', () => {

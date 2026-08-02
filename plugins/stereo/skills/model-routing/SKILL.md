@@ -271,6 +271,12 @@ full error, then apply the failure rule below. At terminal status, fetch:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" result <jobId> --json
 ```
 
+A prose-report job (an implementation or fix `task` launched without `--output-schema`) may instead
+be fetched with `result <jobId> --report --json`. That payload contains `jobId`, `status`, `report`,
+`threadId`, and `tokenUsage`; save the thread id and apply the `tokenUsage.job` recording rule to
+its top-level `tokenUsage`. A schema-validated job must keep the full fetch because it needs
+`storedJob.result` and `parseError`. A `null` report means re-fetch with the full `--json` form.
+
 Treat a top-level `{"error": ...}` from launch or result, or an error from the rendered status
 poll, as a command failure: surface it and stop or follow the command's explicit retry rule. Do
 not confuse an empty terminal `progressPreview` with missing progress.
@@ -279,7 +285,7 @@ A malformed-output retry relaunches on the same thread carrying the original `--
 selection arguments plus a `--prompt-file` retry instruction that names the exact validation
 error. A bare `--thread` retry is prohibited because it silently runs the Codex CLI default model.
 
-From every successful `result <jobId> --json` fetch, record `storedJob.tokenUsage.job` as that
+From every successful full `result <jobId> --json` fetch, record `storedJob.tokenUsage.job` as that
 invocation's usage. `storedJob.tokenUsage.thread` is cumulative for the whole Codex thread: it may
 be reported separately only when labeled cumulative, and must never be compared with a single
 Claude invocation. If `tokenUsage` or the relevant counter is absent, record `usage unavailable`
@@ -299,27 +305,31 @@ replace a requested model after an availability or provider error.
 
 ## Quoting
 
-Write every Codex task, plan, diff, and finding payload to a file in a temporary directory outside
-the user's repository, using the Write tool. Prefer the session scratch directory when the
-harness provides one; otherwise use a unique `mktemp -d`-style location under the operating
-system's temporary directory. Never write payload files into the user's repository. Deliver plan
-documents with `plan-review --plan-file "<payloadFile>"`, task and brief payloads with
+Write every Codex task, plan, diff, and model-generated metadata payload to a file in a temporary
+directory outside the user's repository, using the Write tool. Prefer the session scratch
+directory when the harness provides one; otherwise use a unique `mktemp -d`-style location under
+the operating system's temporary directory. Never write payload files into the user's repository.
+Deliver plan documents with `plan-review --plan-file "<payloadFile>"`, task and brief payloads with
 `task --prompt-file "<payloadFile>"`, and stored plans through stdin. Store a Claude review's
-findings array as JSON in a distinct `<findingsPayloadFile>`; never overwrite the plan payload with
-the findings payload. Payload file contents must never pass through the shell.
-Shell-quote each short metadata argument independently with single quotes, replacing an embedded
-`'` with `'"'"'`. Never interpolate reviewer or task text unquoted into a shell command.
+summary, findings, open questions, and residual risks in distinct `<summaryPayloadFile>`,
+`<findingsPayloadFile>`, `<openQuestionsPayloadFile>`, and `<residualRisksPayloadFile>` files. None
+of those metadata files is the plan payload file. Payload file contents must never pass through the
+shell. Shell-quote only short controlled metadata tokens (`--verdict`, `--round`, `--reviewed-by`,
+`--thread`, and `--slot`) independently with single quotes, replacing an embedded `'` with
+`'"'"'`; model-generated prose never travels through a shell argument.
 
 ## Plan persistence
 
 Codex `plan-review` stores every successfully parsed round automatically. Claude-side review
 results do not. Whenever a command reaches a terminal Claude-side plan verdict, persist the full
 current plan with `plan-store`, the actual verdict and round, the reviewer label, summary,
-findings, and each open question and residual risk. Write the full plan to `<payloadFile>` and the
-findings array as JSON to the distinct `<findingsPayloadFile>`, then run:
+findings, and each open question and residual risk. Write the full plan to `<payloadFile>`, the
+summary as plain text to `<summaryPayloadFile>`, and the findings, open questions, and residual
+risks as JSON arrays to their distinct metadata files. Questions and risks are JSON string arrays;
+write `[]` when either is empty. Always write and pass all four metadata files, then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round <reviewRound> <--thread <planReviewThreadId>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round <reviewRound> <--thread <planReviewThreadId>|--no-thread> --reviewed-by '<reviewer label>' --summary-file "<summaryPayloadFile>" --findings-file "<findingsPayloadFile>" --open-questions-file "<openQuestionsPayloadFile>" --residual-risks-file "<residualRisksPayloadFile>" < "<payloadFile>"
 ```
 
 `<slotArg>` is `--slot <slot>` when the invoking command targets a non-default slot and is omitted

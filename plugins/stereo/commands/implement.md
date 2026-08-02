@@ -248,11 +248,14 @@ The record carries `baselineCommit`, the baseline-dirty paths, `implementationTh
 selection/model/effort/route, implementation-reviewer selection, `mode`, `maxFixRounds`, `round`,
 and `rounds[]`. An isolated record additionally carries `isolated: true` and
 `worktree: { "path": "<worktreePath>", "baselineCommit": "<baselineCommit>" }`. Every round entry
-contains its review number, numbered fixes with the latest `resolved`/`unresolved` judgment, and
-bounded implementer-report and host-result summaries. It also carries `latestVerdict`, `status`,
-timestamps, and the plan fingerprint snapshot added by the CLI. Store bounded summaries rather
-than verbatim reports and keep the complete payload below 512 KiB; the companion rejects larger
-files instead of truncating them silently.
+stores its review number in `review` and contains numbered fixes with the latest
+`resolved`/`unresolved` judgment plus bounded implementer-report and host-result summaries.
+`implement-state --update` and `--complete` merge supplied `rounds[]` entries by that review number,
+replacing the recorded entry instead of appending, so resending a round is idempotent; `round` is
+accepted as a legacy alias. The record also carries `latestVerdict`, `status`, timestamps, and the
+plan fingerprint snapshot added by the CLI. Store bounded summaries rather than verbatim reports
+and keep the complete payload below 512 KiB; the companion rejects larger files instead of
+truncating them silently.
 
 Read the current record with:
 
@@ -729,8 +732,8 @@ checks:
      wait or stop and leave it running. Waiting uses the routing skill's bounded
      `status <jobId> --wait --timeout-ms 90000` windows; once terminal, fetch its result and
      continue.
-   - For `completed`, run `result <jobId> --json` and use the real report as the round-1 implementer
-     report in `{{REVIEW_CONTEXT}}`, rather than a stored summary.
+   - For `completed`, run `result <jobId> --report --json` and use the payload's `report` field as
+     the real round-1 implementer report in `{{REVIEW_CONTEXT}}`, rather than a stored summary.
    - For `failed`, `cancelled`, or an unknown id, report the condition and continue with the
      recorded state.
 5. Compare `git rev-parse HEAD` with recorded `baselineCommit` for a non-isolated record. For an

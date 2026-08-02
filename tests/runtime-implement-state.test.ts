@@ -283,6 +283,100 @@ test('implement-state --update merges rounds and preserves creation and plan sna
   );
 });
 
+test('implement-state --update replaces rounds keyed by review number', async () => {
+  const { repo, env } = setupRepo();
+  const initialFile = writePayload(repo, {
+    baselineCommit: 'abc123',
+    rounds: [{ review: 1, verdict: 'changes-requested' }],
+  });
+  assert.equal(
+    (await runImplementState(repo, env, ['--record', '--state-file', initialFile, '--json']))
+      .status,
+    0,
+  );
+  const patchFile = writePayload(repo, {
+    rounds: [{ review: 1, verdict: 'fixed' }],
+  });
+
+  const updated = await runImplementState(repo, env, [
+    '--update',
+    '--state-file',
+    patchFile,
+    '--json',
+  ]);
+  assert.equal(updated.status, 0, updated.stderr);
+  assert.deepEqual(JSON.parse(updated.stdout).record.rounds, [{ review: 1, verdict: 'fixed' }]);
+});
+
+test('implement-state --update collapses stored duplicate review rounds to the newest entry', async () => {
+  const { repo, env } = setupRepo();
+  const initialFile = writePayload(repo, {
+    baselineCommit: 'abc123',
+    rounds: [
+      { review: 1, attempt: 'first' },
+      { review: 1, attempt: 'second' },
+      { review: 1, attempt: 'newest' },
+    ],
+  });
+  const recorded = await runImplementState(repo, env, [
+    '--record',
+    '--state-file',
+    initialFile,
+    '--json',
+  ]);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  assert.equal(JSON.parse(recorded.stdout).record.rounds.length, 3);
+  const patchFile = writePayload(repo, { rounds: [] });
+
+  const updated = await runImplementState(repo, env, [
+    '--update',
+    '--state-file',
+    patchFile,
+    '--json',
+  ]);
+  assert.equal(updated.status, 0, updated.stderr);
+  assert.deepEqual(JSON.parse(updated.stdout).record.rounds, [{ review: 1, attempt: 'newest' }]);
+});
+
+test('implement-state merges and sorts mixed review and legacy round keys', async () => {
+  const { repo, env } = setupRepo();
+  const initialFile = writePayload(repo, {
+    baselineCommit: 'abc123',
+    rounds: [
+      { review: 2, verdict: 'old-two' },
+      { round: 1, verdict: 'legacy-one' },
+      { note: 'numberless entry' },
+    ],
+  });
+  assert.equal(
+    (await runImplementState(repo, env, ['--record', '--state-file', initialFile, '--json']))
+      .status,
+    0,
+  );
+  const patchFile = writePayload(repo, {
+    rounds: [
+      { round: 2, verdict: 'legacy-replaces-review' },
+      { review: 0, verdict: 'approved' },
+      { review: 3, round: 1, verdict: 'review-key-wins' },
+    ],
+  });
+
+  const updated = await runImplementState(repo, env, [
+    '--update',
+    '--state-file',
+    patchFile,
+    '--json',
+  ]);
+  assert.equal(updated.status, 0, updated.stderr);
+  assert.deepEqual(JSON.parse(updated.stdout).record.rounds, [
+    { review: 0, verdict: 'approved' },
+    { round: 1, verdict: 'legacy-one' },
+    { round: 2, verdict: 'legacy-replaces-review' },
+    { review: 3, round: 1, verdict: 'review-key-wins' },
+    { note: 'numberless entry' },
+  ]);
+});
+
 test('implement-state detects a re-stored plan without changing the recorded snapshot', async () => {
   const { repo, env } = setupRepo();
   storePlan(repo, env, '# First plan', 1);

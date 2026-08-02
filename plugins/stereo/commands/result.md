@@ -1,6 +1,6 @@
 ---
 description: Show the stored final output for a finished Codex job in this repository
-argument-hint: '[job-id]'
+argument-hint: '[job-id] [--report]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---

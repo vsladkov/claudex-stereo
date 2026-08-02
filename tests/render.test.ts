@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  extractStoredJobReport,
   formatTokenUsage,
   renderConfigReport,
   renderImplementState,
@@ -11,6 +12,7 @@ import {
   renderReviewResult,
   renderSetupReport,
   renderStatusReport,
+  renderStoredJobReport,
   renderStoredJobResult,
   renderStoredPlanState,
   renderTaskResult,
@@ -339,6 +341,59 @@ test('renderStoredJobResult appends warnings before the footer without changing 
       warning,
     ),
     '# Codex Task\n\nJob: task-warning-fallback\nStatus: completed\nSummary: Index-only summary\n\nNo captured result payload was stored for this job.\n\nWarnings:\n- Stored result file is unreadable: /tmp/task-warning.json (Unexpected end of JSON input). Showing index data only.\n\nModel: kimi-k3@moonshot\nCodex session ID: thr_fallback\nResume in Codex: codex resume thr_fallback\n',
+  );
+});
+
+test('extractStoredJobReport uses raw output, Codex stdout, rendered output, then null', () => {
+  assert.equal(
+    extractStoredJobReport({
+      result: { rawOutput: 'Raw final message.', codex: { stdout: 'Codex stdout.' } },
+      rendered: 'Stored rendering.',
+    }),
+    'Raw final message.',
+  );
+  assert.equal(
+    extractStoredJobReport({
+      result: { rawOutput: '', codex: { stdout: 'Codex stdout.' } },
+      rendered: 'Stored rendering.',
+    }),
+    'Codex stdout.',
+  );
+  assert.equal(
+    extractStoredJobReport({
+      result: { rawOutput: '', codex: { stdout: '' } },
+      rendered: 'Stored rendering.',
+    }),
+    'Stored rendering.',
+  );
+  assert.equal(extractStoredJobReport({ result: { rawOutput: '' }, rendered: '' }), null);
+  assert.equal(extractStoredJobReport(null), null);
+});
+
+test('renderStoredJobReport returns only the normalized report or missing-report line', () => {
+  const job = {
+    id: 'task-report',
+    status: 'completed',
+    title: 'Codex Task',
+    threadId: 'thr_report',
+    model: 'gpt-5.6-sol',
+  };
+
+  assert.equal(
+    renderStoredJobReport(job, { result: { rawOutput: 'Implementation report.\n\n' } }),
+    'Implementation report.\n',
+  );
+  assert.equal(
+    renderStoredJobReport(job, null),
+    'No stored report for task-report (status: completed).\n',
+  );
+  assert.equal(
+    renderStoredJobReport(
+      job,
+      { result: { rawOutput: 'Implementation report.' } },
+      'Stored result metadata was incomplete.',
+    ),
+    'Implementation report.\n\nWarnings:\n- Stored result metadata was incomplete.\n',
   );
 });
 

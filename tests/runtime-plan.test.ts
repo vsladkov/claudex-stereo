@@ -80,6 +80,30 @@ function storedPlan(overrides: Partial<StoredPairPlanState> = {}): StoredPairPla
   };
 }
 
+const planStoreFindings = [
+  {
+    severity: 'medium',
+    title: 'Retain the compatibility test',
+    body: 'The existing test protects the legacy behavior.',
+    section: 'Testing and verification',
+    confidence: 0.8,
+    recommendation: 'Keep the compatibility assertion.',
+  },
+  {
+    severity: 'low',
+    title: 'Document the fallback',
+    body: 'The fallback remains useful during rollout.',
+    section: 'Risks and edge cases',
+    confidence: 0.65,
+    recommendation: 'Mention the fallback in the release notes.',
+  },
+] as const;
+const planStoreOpenQuestions = [
+  `Should "quotes" survive?`,
+  'Can this span\nmultiple lines?',
+] as const;
+const planStoreResidualRisks = ['-leading dash', 'Literal $(command); `ticks` & symbols'] as const;
+
 async function runWithOpenStdin(
   args: string[],
   options: { cwd: string; env?: NodeJS.ProcessEnv },
@@ -576,28 +600,8 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   const workspace = makeTempDir();
   const payloadDir = makeTempDir();
   const plan = '# Approved mixed plan\n\nImplement the selected changes.\n';
-  const findings = [
-    {
-      severity: 'medium',
-      title: 'Retain the compatibility test',
-      body: 'The existing test protects the legacy behavior.',
-      section: 'Testing and verification',
-      confidence: 0.8,
-      recommendation: 'Keep the compatibility assertion.',
-    },
-    {
-      severity: 'low',
-      title: 'Document the fallback',
-      body: 'The fallback remains useful during rollout.',
-      section: 'Risks and edge cases',
-      confidence: 0.65,
-      recommendation: 'Mention the fallback in the release notes.',
-    },
-  ] as const;
   const findingsPath = path.join(payloadDir, 'findings.json');
-  fs.writeFileSync(findingsPath, `${JSON.stringify(findings, null, 2)}\n`, 'utf8');
-  const openQuestions = [`Should "quotes" survive?`, 'Can this span\nmultiple lines?'] as const;
-  const residualRisks = ['-leading dash', 'Literal $(command); `ticks` & symbols'] as const;
+  fs.writeFileSync(findingsPath, `${JSON.stringify(planStoreFindings, null, 2)}\n`, 'utf8');
 
   const stored = run(
     'node',
@@ -616,13 +620,13 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
       '--findings-file',
       findingsPath,
       '--open-question',
-      openQuestions[0],
+      planStoreOpenQuestions[0],
       '--open-question',
-      openQuestions[1],
+      planStoreOpenQuestions[1],
       '--residual-risk',
-      residualRisks[0],
+      planStoreResidualRisks[0],
       '--residual-risk',
-      residualRisks[1],
+      planStoreResidualRisks[1],
     ],
     {
       cwd: workspace,
@@ -641,9 +645,9 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.equal(storedPayload.slot, 'default');
   assert.equal(storedPayload.reviewedBy, 'claude:opus');
   assert.equal(storedPayload.summary, 'Claude approved the mixed plan.');
-  assert.deepEqual(storedPayload.findings, findings);
-  assert.deepEqual(storedPayload.openQuestions, [...openQuestions]);
-  assert.deepEqual(storedPayload.residualRisks, [...residualRisks]);
+  assert.deepEqual(storedPayload.findings, planStoreFindings);
+  assert.deepEqual(storedPayload.openQuestions, [...planStoreOpenQuestions]);
+  assert.deepEqual(storedPayload.residualRisks, [...planStoreResidualRisks]);
   assert.match(storedPayload.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 
   const state = run('node', [SCRIPT, 'plan-state', '--json'], { cwd: workspace });
@@ -666,6 +670,98 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.match(rendered.stdout, /Open questions:\n- Should "quotes" survive\?/);
   assert.match(rendered.stdout, /Residual risks:\n- -leading dash/);
   assert.match(rendered.stdout, /# Approved mixed plan/);
+});
+
+test('plan-store persists file-based metadata and round-trips it through plan-state', () => {
+  const workspace = makeTempDir();
+  const payloadDir = makeTempDir();
+  const plan = '# Approved file metadata plan\n\nKeep prose out of shell arguments.\n';
+  const summaryPath = path.join(payloadDir, 'summary.txt');
+  const findingsPath = path.join(payloadDir, 'findings.json');
+  const openQuestionsPath = path.join(payloadDir, 'open-questions.json');
+  const residualRisksPath = path.join(payloadDir, 'residual-risks.json');
+  fs.writeFileSync(summaryPath, '  Claude approved the mixed plan.  \n', 'utf8');
+  fs.writeFileSync(findingsPath, `${JSON.stringify(planStoreFindings, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(
+    openQuestionsPath,
+    `${JSON.stringify(planStoreOpenQuestions, null, 2)}\n`,
+    'utf8',
+  );
+  fs.writeFileSync(
+    residualRisksPath,
+    `${JSON.stringify(planStoreResidualRisks, null, 2)}\n`,
+    'utf8',
+  );
+
+  const stored = run(
+    'node',
+    [
+      SCRIPT,
+      'plan-store',
+      '--json',
+      '--verdict',
+      'approve',
+      '--round',
+      '4',
+      '--reviewed-by',
+      'claude:opus',
+      '--summary-file',
+      summaryPath,
+      '--findings-file',
+      findingsPath,
+      '--open-questions-file',
+      openQuestionsPath,
+      '--residual-risks-file',
+      residualRisksPath,
+    ],
+    { cwd: workspace, input: plan },
+  );
+
+  assert.equal(stored.status, 0, stored.stderr);
+  const storedPayload = JSON.parse(stored.stdout);
+  assert.equal(storedPayload.summary, 'Claude approved the mixed plan.');
+  assert.deepEqual(storedPayload.findings, planStoreFindings);
+  assert.deepEqual(storedPayload.openQuestions, [...planStoreOpenQuestions]);
+  assert.deepEqual(storedPayload.residualRisks, [...planStoreResidualRisks]);
+
+  const state = run('node', [SCRIPT, 'plan-state', '--json'], { cwd: workspace });
+  assert.equal(state.status, 0, state.stderr);
+  assert.deepEqual(JSON.parse(state.stdout), { available: true, ...storedPayload });
+});
+
+test('plan-store treats blank file metadata as absent lists and summary', () => {
+  const workspace = makeTempDir();
+  const payloadDir = makeTempDir();
+  const summaryPath = path.join(payloadDir, 'summary.txt');
+  const openQuestionsPath = path.join(payloadDir, 'open-questions.json');
+  const residualRisksPath = path.join(payloadDir, 'residual-risks.json');
+  fs.writeFileSync(summaryPath, ' \n\t\n', 'utf8');
+  fs.writeFileSync(openQuestionsPath, '[]\n', 'utf8');
+  fs.writeFileSync(residualRisksPath, '[]\n', 'utf8');
+
+  const stored = run(
+    'node',
+    [
+      SCRIPT,
+      'plan-store',
+      '--json',
+      '--verdict',
+      'approve',
+      '--summary-file',
+      summaryPath,
+      '--open-questions-file',
+      openQuestionsPath,
+      '--residual-risks-file',
+      residualRisksPath,
+    ],
+    { cwd: workspace, input: '# Empty metadata plan\n' },
+  );
+
+  assert.equal(stored.status, 0, stored.stderr);
+  const payload = JSON.parse(stored.stdout);
+  assert.equal(payload.summary, null);
+  assert.deepEqual(payload.openQuestions, []);
+  assert.deepEqual(payload.residualRisks, []);
 });
 
 test('plan-store --slot writes and round-trips only the named plan file', () => {
@@ -985,6 +1081,94 @@ test('plan-store rejects invalid findings files before writing plan state', () =
     assert.match(
       result.stderr,
       new RegExp(invalidCase.error.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+    assert.equal(fs.existsSync(resolvePairPlanFile(workspace)), false);
+  }
+});
+
+test('plan-store rejects invalid file metadata and inline/file conflicts before writing', () => {
+  const invalidCases = [
+    {
+      flag: '--open-questions-file',
+      contents: 'Question one\nQuestion two\n',
+      error: 'Could not parse --open-questions-file as JSON.',
+    },
+    {
+      flag: '--residual-risks-file',
+      contents: '{"risk":"not an array"}\n',
+      error: 'Provide --residual-risks-file containing a JSON array.',
+    },
+    {
+      flag: '--open-questions-file',
+      contents: '["valid", 42]\n',
+      error: 'Provide --open-questions-file containing a JSON array of strings.',
+    },
+  ] as const;
+
+  for (const [index, invalidCase] of invalidCases.entries()) {
+    const workspace = makeTempDir();
+    const payloadDir = makeTempDir();
+    const metadataPath = path.join(payloadDir, `invalid-metadata-${index}.json`);
+    fs.writeFileSync(metadataPath, invalidCase.contents, 'utf8');
+
+    const result = run(
+      'node',
+      [
+        SCRIPT,
+        'plan-store',
+        '--json',
+        '--verdict',
+        'needs-revision',
+        invalidCase.flag,
+        metadataPath,
+      ],
+      { cwd: workspace, input: '# Plan that must not be stored\n' },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(JSON.parse(result.stdout), { error: invalidCase.error });
+    assert.match(
+      result.stderr,
+      new RegExp(invalidCase.error.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+    assert.equal(fs.existsSync(resolvePairPlanFile(workspace)), false);
+  }
+
+  const payloadDir = makeTempDir();
+  const summaryPath = path.join(payloadDir, 'summary.txt');
+  const openQuestionsPath = path.join(payloadDir, 'open-questions.json');
+  const residualRisksPath = path.join(payloadDir, 'residual-risks.json');
+  fs.writeFileSync(summaryPath, 'Summary from a file.\n', 'utf8');
+  fs.writeFileSync(openQuestionsPath, '[]\n', 'utf8');
+  fs.writeFileSync(residualRisksPath, '[]\n', 'utf8');
+  const conflictCases = [
+    {
+      args: ['--summary', 'Inline summary.', '--summary-file', summaryPath],
+      error: 'Choose either --summary <text> or --summary-file <path>.',
+    },
+    {
+      args: ['--open-question', 'Inline question?', '--open-questions-file', openQuestionsPath],
+      error: 'Choose either --open-question <text> or --open-questions-file <path>.',
+    },
+    {
+      args: ['--residual-risk', 'Inline risk.', '--residual-risks-file', residualRisksPath],
+      error: 'Choose either --residual-risk <text> or --residual-risks-file <path>.',
+    },
+  ] as const;
+
+  for (const conflictCase of conflictCases) {
+    const workspace = makeTempDir();
+    const result = run(
+      'node',
+      [SCRIPT, 'plan-store', '--json', '--verdict', 'approve', ...conflictCase.args],
+      { cwd: workspace, input: '# Conflicting metadata plan\n' },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(JSON.parse(result.stdout), { error: conflictCase.error });
+    assert.match(
+      result.stderr,
+      new RegExp(conflictCase.error.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
     );
     assert.equal(fs.existsSync(resolvePairPlanFile(workspace)), false);
   }

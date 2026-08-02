@@ -1480,6 +1480,32 @@ function appendStoredJobWarning(text: string, warning: string | null | undefined
   return `${output}\nWarnings:\n- ${warning}\n`;
 }
 
+function rawStoredJobOutput(storedJob: StoredJobLike | null | undefined): string {
+  if (typeof storedJob?.result?.rawOutput === 'string' && storedJob.result.rawOutput) {
+    return storedJob.result.rawOutput;
+  }
+  if (typeof storedJob?.result?.codex?.stdout === 'string' && storedJob.result.codex.stdout) {
+    return storedJob.result.codex.stdout;
+  }
+  return '';
+}
+
+export function extractStoredJobReport(storedJob: StoredJobLike | null | undefined): string | null {
+  return rawStoredJobOutput(storedJob) || storedJob?.rendered || null;
+}
+
+export function renderStoredJobReport(
+  job: RenderableJob,
+  storedJob: StoredJobLike | null | undefined,
+  warning?: string | null,
+): string {
+  const report = extractStoredJobReport(storedJob);
+  const text = report
+    ? `${report.replace(/(?:\r?\n)+$/u, '')}\n`
+    : `No stored report for ${job.id} (status: ${job.status}).\n`;
+  return appendStoredJobWarning(text, warning);
+}
+
 export function renderStoredJobResult(
   job: RenderableJob,
   storedJob: StoredJobLike | null | undefined,
@@ -1508,10 +1534,7 @@ export function renderStoredJobResult(
     return renderWithFooter(storedJob.rendered);
   }
 
-  const rawOutput =
-    (typeof storedJob?.result?.rawOutput === 'string' && storedJob.result.rawOutput) ||
-    (typeof storedJob?.result?.codex?.stdout === 'string' && storedJob.result.codex.stdout) ||
-    '';
+  const rawOutput = rawStoredJobOutput(storedJob);
   if (rawOutput) {
     return renderWithFooter(rawOutput);
   }

@@ -644,7 +644,7 @@ usage, billing, or Claude-side agent usage.
 
 **`/stereo:result`** — shows the final stored Codex output for a finished job. When available, it
 also includes the Codex session ID so you can reopen that run directly in Codex with
-`codex resume <session-id>`.
+`codex resume <session-id>`. Add `--report` to print only the stored report text.
 
 **`/stereo:cancel`** — cancels an active background Codex job.
 
@@ -655,6 +655,7 @@ also includes the Codex session ID so you can reopen that run directly in Codex 
 /stereo:status task-abc123 --wait --timeout-ms 60000 --poll-interval-ms 1000
 /stereo:status --all
 /stereo:result task-abc123
+/stereo:result task-abc123 --report
 /stereo:cancel task-abc123
 ```
 

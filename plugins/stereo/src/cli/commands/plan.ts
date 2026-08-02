@@ -94,21 +94,41 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
-function readFindingsFile(cwd: string, value: unknown): unknown[] {
+function readJsonArrayFile(cwd: string, flagName: string, value: unknown): unknown[] {
   if (typeof value !== 'string' || !value.trim()) {
     return [];
   }
-  const contents = readUserFile(cwd, '--findings-file', value);
+  const contents = readUserFile(cwd, flagName, value);
   let parsed: unknown;
   try {
     parsed = JSON.parse(contents);
   } catch {
-    throw new Error('Could not parse --findings-file as JSON.');
+    throw new Error(`Could not parse ${flagName} as JSON.`);
   }
   if (!Array.isArray(parsed)) {
-    throw new Error('Provide --findings-file containing a JSON array.');
+    throw new Error(`Provide ${flagName} containing a JSON array.`);
   }
   return parsed;
+}
+
+function readFindingsFile(cwd: string, value: unknown): unknown[] {
+  return readJsonArrayFile(cwd, '--findings-file', value);
+}
+
+function readStringListFile(cwd: string, flagName: string, value: unknown): string[] {
+  const entries = readJsonArrayFile(cwd, flagName, value);
+  if (entries.some((entry) => typeof entry !== 'string')) {
+    throw new Error(`Provide ${flagName} containing a JSON array of strings.`);
+  }
+  return stringArray(entries);
+}
+
+function readSummaryFile(cwd: string, value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  const summary = readUserFile(cwd, '--summary-file', String(value)).trim();
+  return summary || null;
 }
 
 function normalizeStoredPlanRound(round: unknown): number {
@@ -350,7 +370,10 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
       'round',
       'reviewed-by',
       'summary',
+      'summary-file',
       'findings-file',
+      'open-questions-file',
+      'residual-risks-file',
       'thread',
       'slot',
     ],
@@ -364,6 +387,18 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
   if (options.thread && options['no-thread']) {
     throw new Error('Choose either --thread <id> or --no-thread.');
   }
+  const hasSummaryFile = Object.hasOwn(options, 'summary-file');
+  if (Object.hasOwn(options, 'summary') && hasSummaryFile) {
+    throw new Error('Choose either --summary <text> or --summary-file <path>.');
+  }
+  const hasOpenQuestionsFile = Object.hasOwn(options, 'open-questions-file');
+  if (Object.hasOwn(options, 'open-question') && hasOpenQuestionsFile) {
+    throw new Error('Choose either --open-question <text> or --open-questions-file <path>.');
+  }
+  const hasResidualRisksFile = Object.hasOwn(options, 'residual-risks-file');
+  if (Object.hasOwn(options, 'residual-risk') && hasResidualRisksFile) {
+    throw new Error('Choose either --residual-risk <text> or --residual-risks-file <path>.');
+  }
 
   const verdict = optionalString(options.verdict);
   if (!verdict) {
@@ -376,7 +411,18 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
   }
 
   const cwd = resolveCommandCwd(options);
+  const summaryFromFile = readSummaryFile(cwd, options['summary-file']);
   const findings = readFindingsFile(cwd, options['findings-file']);
+  const questionsFromFile = readStringListFile(
+    cwd,
+    '--open-questions-file',
+    options['open-questions-file'],
+  );
+  const risksFromFile = readStringListFile(
+    cwd,
+    '--residual-risks-file',
+    options['residual-risks-file'],
+  );
   const workspaceRoot = resolveCommandWorkspace(options);
   const slot = resolvePlanSlotOption(options);
   const previous = loadPairPlanState(workspaceRoot, slot) as StoredPairPlanState | null;
@@ -400,10 +446,12 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
       effort,
       round: normalizeStoredPlanRound(options.round),
       verdict,
-      summary: optionalString(options.summary),
+      summary: hasSummaryFile ? summaryFromFile : optionalString(options.summary),
       findings,
-      openQuestions: stringArray(options['open-question']),
-      residualRisks: stringArray(options['residual-risk']),
+      openQuestions: hasOpenQuestionsFile
+        ? questionsFromFile
+        : stringArray(options['open-question']),
+      residualRisks: hasResidualRisksFile ? risksFromFile : stringArray(options['residual-risk']),
       reviewedBy: optionalString(options['reviewed-by']),
       updatedAt: nowIso(),
     },

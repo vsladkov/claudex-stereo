@@ -196,13 +196,15 @@ On `needs-revision`, address every finding by changing the plan, rebutting with 
 evidence, or explicitly descoping scope-expanding/pre-existing hazards. Carry complete residual
 risks.
 
-On approval, continue without a user gate. Before leaving a terminal Claude-side review, write
-the full current plan verbatim to `<payloadFile>` under the routing skill's temporary-directory
-rule. Write the reviewer's findings array as JSON to a distinct `<findingsPayloadFile>` under the
-same rule, then persist:
+On approval, continue without a user gate. Before leaving a terminal Claude-side review, write the
+full current plan verbatim to `<payloadFile>` under the routing skill's temporary-directory rule.
+Under the same rule, write the summary as plain text and the findings, open questions, and residual
+risks as JSON arrays (`[]` for empty lists) to distinct `<summaryPayloadFile>`,
+`<findingsPayloadFile>`, `<openQuestionsPayloadFile>`, and `<residualRisksPayloadFile>` files, then
+persist:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> <--thread <planReviewThreadId>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> <--thread <planReviewThreadId>|--no-thread> --reviewed-by '<reviewer label>' --summary-file "<summaryPayloadFile>" --findings-file "<findingsPayloadFile>" --open-questions-file "<openQuestionsPayloadFile>" --residual-risks-file "<residualRisksPayloadFile>" < "<payloadFile>"
 ```
 
 Pass `--thread <planReviewThreadId>` when this run has one; otherwise pass `--no-thread`.

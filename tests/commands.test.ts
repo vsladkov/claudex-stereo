@@ -133,6 +133,18 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     1,
     'the canonical Claude persistence rule must deliver findings separately',
   );
+  for (const [flag, placeholder] of [
+    ['--summary-file', 'summaryPayloadFile'],
+    ['--open-questions-file', 'openQuestionsPayloadFile'],
+    ['--residual-risks-file', 'residualRisksPayloadFile'],
+  ] as const) {
+    assert.equal(
+      (routing.match(new RegExp(`${flag} "<${placeholder}>"`, 'g')) ?? []).length,
+      1,
+      `the canonical Claude persistence rule must wire ${flag} once`,
+    );
+  }
+  assert.doesNotMatch(routing, /--summary '/);
   assert.match(routing, /`<slotArg>` is `--slot <slot>`/);
 
   const plan = read('commands/plan.md');
@@ -184,6 +196,22 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     2,
     'Plan review-only and external intake must deliver findings separately while draft-only stays findings-free',
   );
+  assert.equal(
+    (plan.match(/--summary-file "<summaryPayloadFile>"/g) ?? []).length,
+    3,
+    'all Plan persistence paths must deliver summaries by file',
+  );
+  assert.equal(
+    (plan.match(/--open-questions-file "<openQuestionsPayloadFile>"/g) ?? []).length,
+    2,
+    'both reviewed Plan persistence paths must deliver questions by file',
+  );
+  assert.equal(
+    (plan.match(/--residual-risks-file "<residualRisksPayloadFile>"/g) ?? []).length,
+    2,
+    'both reviewed Plan persistence paths must deliver risks by file',
+  );
+  assert.doesNotMatch(plan, /--summary '/);
   assert.doesNotMatch(plan, /<<'CODEX_PAIR_/);
   const planHint = plan.match(/^argument-hint:.*$/m)?.[0] ?? '';
   for (const flag of [
@@ -320,6 +348,22 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     1,
     'Quick must deliver terminal Claude review findings separately',
   );
+  assert.equal(
+    (quick.match(/--summary-file "<summaryPayloadFile>"/g) ?? []).length,
+    1,
+    'Quick must deliver its terminal Claude review summary by file',
+  );
+  assert.equal(
+    (quick.match(/--open-questions-file "<openQuestionsPayloadFile>"/g) ?? []).length,
+    1,
+    'Quick must deliver terminal Claude review questions by file',
+  );
+  assert.equal(
+    (quick.match(/--residual-risks-file "<residualRisksPayloadFile>"/g) ?? []).length,
+    1,
+    'Quick must deliver terminal Claude review risks by file',
+  );
+  assert.doesNotMatch(quick, /--summary '/);
   assert.doesNotMatch(quick, /<<'CODEX_PAIR_/);
   assert.match(quick, /plannerThreadId/);
   assert.match(quick, /planReviewThreadId/);
@@ -395,6 +439,8 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
 
   const status = read('commands/status.md');
   assert.match(status.match(/^argument-hint:.*$/m)?.[0] ?? '', /--usage/);
+  const resultCommand = read('commands/result.md');
+  assert.match(resultCommand.match(/^argument-hint:.*$/m)?.[0] ?? '', /--report/);
 });
 
 test('pair commands fill the canonical role briefs', () => {

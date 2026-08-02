@@ -9,11 +9,11 @@ export function printUsage(): void {
       '  node scripts/codex-companion.ts task [--background] [--write] [--resume-last|--resume|--fresh|--thread <id>] [--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--output-schema <path>] [--prompt-file <path>] [prompt]',
       '  node scripts/codex-companion.ts plan-review [--background] [--thread <id>] [--round <n>] [--slot <name>] [--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--plan-file <path>] [plan text]',
       '  node scripts/codex-companion.ts plan-state [--list|--open|--clear|--mark-implemented] [--slot <name>] [--json]',
-      '  node scripts/codex-companion.ts plan-store --verdict <value> [--round <n>] [--slot <name>] [--thread <id>|--no-thread] [--reviewed-by <label>] [--summary <text>] [--findings-file <path>] [--open-question <text>]... [--residual-risk <text>]... [--json] < plan.md',
+      '  node scripts/codex-companion.ts plan-store --verdict <value> [--round <n>] [--slot <name>] [--thread <id>|--no-thread] [--reviewed-by <label>] [--summary <text>|--summary-file <path>] [--findings-file <path>] [--open-question <text>]...|[--open-questions-file <path>] [--residual-risk <text>]...|[--residual-risks-file <path>] [--json] < plan.md',
       '  node scripts/codex-companion.ts implement-state [--record|--update|--complete|--clear] [--state-file <path>] [--slot <name>] [--json]',
       '  node scripts/codex-companion.ts transfer [--source <claude-jsonl>] [--json]',
       '  node scripts/codex-companion.ts status [job-id] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--usage] [--verbose] [--json]',
-      '  node scripts/codex-companion.ts result [job-id] [--json]',
+      '  node scripts/codex-companion.ts result [job-id] [--report] [--json]',
       '  node scripts/codex-companion.ts cancel [job-id] [--json]',
     ].join('\n'),
   );

@@ -9,8 +9,10 @@ import {
 import type { StatusSnapshot } from '../../jobs/job-control.ts';
 import type { JobRecord } from '../../workspace/state.ts';
 import {
+  extractStoredJobReport,
   renderJobStatusReport,
   renderStatusReport,
+  renderStoredJobReport,
   renderStoredJobResult,
   renderUsageReport,
 } from '../../render/render.ts';
@@ -84,7 +86,7 @@ export async function handleStatus(argv: string[]): Promise<void> {
 export function handleResult(argv: string[]): void {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ['cwd'],
-    booleanOptions: ['json'],
+    booleanOptions: ['json', 'report'],
   });
 
   const cwd = resolveCommandCwd(options);
@@ -99,6 +101,22 @@ export function handleResult(argv: string[]): void {
     storedJob = null;
     const message = error instanceof Error ? error.message : String(error);
     storedJobWarning = `Stored result file is unreadable: ${jobFile} (${message}). Showing index data only.`;
+  }
+  if (options.report) {
+    const report = extractStoredJobReport(storedJob);
+    outputCommandResult(
+      {
+        jobId: job.id,
+        status: job.status,
+        report,
+        threadId: storedJob?.threadId ?? job.threadId ?? null,
+        tokenUsage: storedJob?.tokenUsage ?? job.tokenUsage ?? null,
+        ...(storedJobWarning ? { storedJobWarning } : {}),
+      },
+      renderStoredJobReport(job, storedJob, storedJobWarning),
+      options.json,
+    );
+    return;
   }
   const payload = {
     job,

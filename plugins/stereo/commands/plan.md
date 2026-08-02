@@ -131,11 +131,13 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background
 
 For `claude:session` apply the brief inline; for a named Claude model use it verbatim as the
 `stereo:plan-reviewer` prompt. Validate and retry once under the routing skill. A successful Codex
-review persists automatically. For a Claude-side result, write the findings JSON to a distinct
-`<findingsPayloadFile>` and persist the user's exact file bytes with no thread:
+review persists automatically. For a Claude-side result, write the summary as plain text and the
+findings, open questions, and residual risks as JSON arrays (`[]` for empty lists) to distinct
+`<summaryPayloadFile>`, `<findingsPayloadFile>`, `<openQuestionsPayloadFile>`, and
+`<residualRisksPayloadFile>` files. Persist the user's exact file bytes with no thread:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round 1 --no-thread --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<planFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round 1 --no-thread --reviewed-by '<reviewer label>' --summary-file "<summaryPayloadFile>" --findings-file "<findingsPayloadFile>" --open-questions-file "<openQuestionsPayloadFile>" --residual-risks-file "<residualRisksPayloadFile>" < "<planFile>"
 ```
 
 Report the verdict, findings, questions, risks, and reviewer usage/duration. Name the stored slot
@@ -176,13 +178,15 @@ Use the routing skill's validation and one-retry recovery. Read Codex results fr
 the invocation usage using the routing skill's `storedJob.tokenUsage` rule.
 
 Codex plan review stores a successfully parsed result automatically. For a Claude-side result,
-persist the actual verdict, even `needs-revision`, with the full plan and one option per question
-and risk. Write the full stored plan verbatim to `<payloadFile>` under the routing skill's
-temporary-directory rule. Write the reviewer's findings array as JSON to a distinct
-`<findingsPayloadFile>` under the same rule, then run:
+persist the actual verdict, even `needs-revision`, with the full plan and complete question and risk
+arrays. Write the full stored plan verbatim to `<payloadFile>` under the routing skill's
+temporary-directory rule. Under the same rule, write the summary as plain text and the findings,
+open questions, and residual risks as JSON arrays (`[]` for empty lists) to distinct
+`<summaryPayloadFile>`, `<findingsPayloadFile>`, `<openQuestionsPayloadFile>`, and
+`<residualRisksPayloadFile>` files, then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round 1 <--thread <threadId reported by plan-state>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round 1 <--thread <threadId reported by plan-state>|--no-thread> --reviewed-by '<reviewer label>' --summary-file "<summaryPayloadFile>" --findings-file "<findingsPayloadFile>" --open-questions-file "<openQuestionsPayloadFile>" --residual-risks-file "<residualRisksPayloadFile>" < "<payloadFile>"
 ```
 
 Pass the `threadId` reported by `plan-state` with `--thread` when present; otherwise pass
@@ -247,11 +251,11 @@ If the second result is malformed, ask whether to draft inline or stop. Correct 
 output once; if it still violates the heading contract, ask whether to retry inline or stop.
 
 For `--draft-only`, derive a one-line summary. Write the full draft plan verbatim to
-`<payloadFile>` under the routing skill's temporary-directory rule, then store the draft with no
-reviewer label:
+`<payloadFile>` and the summary as plain text to `<summaryPayloadFile>` under the routing skill's
+temporary-directory rule, then store the draft with no reviewer label:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict 'draft' --round 0 --no-thread --summary '<one-line summary>' < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict 'draft' --round 0 --no-thread --summary-file "<summaryPayloadFile>" < "<payloadFile>"
 ```
 
 Present the stored draft, identify the selected planner and its per-invocation usage/duration (or
