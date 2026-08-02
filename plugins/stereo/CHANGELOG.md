@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.32.0
+
+- Add named plan slots: stored plans live in per-slot durable files selected with `--slot <name>`
+  on `plan-review`, `plan-store`, `plan-state`, and `implement-state --record`, while the default
+  slot keeps today's `pair-plan.json`/`pair-plan.md` byte-for-byte so existing invocations,
+  payloads, and rendered output are unchanged and no migration runs
+- Add `plan-state --list` to inventory every slot (marking the one the implementation record
+  belongs to), scope `--open`, `--clear`, and `--mark-implemented` by slot, and remove the
+  implementation record on clear only when it was made from the cleared slot
+- Snapshot the slot in the implementation record so `/stereo:implement --resume` re-reads the
+  right plan, and let `/stereo:implement --slot <name>` pick the stored plan to implement
+- Guard `/stereo:plan` with a single overwrite question when a content-storing run targets a slot
+  whose plan was never implemented, replacing the old `--plan-file` intake confirmation; plain
+  `--review-only` never asks
+
 ## 1.31.1
 
 - Fix the two Windows CI lane test failures from the v1.31.0 run: `createBrokerEndpoint` now
