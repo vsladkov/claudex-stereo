@@ -63,6 +63,7 @@ test('every command wires the companion entry point it documents', () => {
       /task --background --json --write --model <contestantModel>/,
       /plan-state --json <slotArg>/,
       /worktree add --detach/,
+      /subagent_type: "stereo:implementer"/,
     ],
     'transfer.md': /codex-companion\.ts" transfer "\$ARGUMENTS"/,
   };
@@ -332,7 +333,20 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(tournament, /schemas\/implementation-review-output\.schema\.json/);
   assert.match(tournament, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
   assert.match(tournament, /^allowed-tools:.*Bash\(npm:\*\)/m);
-  assert.match(tournament, /run_in_background: false/);
+  assert.equal(
+    (tournament.match(/run_in_background: false/g) ?? []).length,
+    2,
+    'both foreground Agent templates must stay explicit',
+  );
+  assert.match(tournament, /subagent_type: "stereo:implementer"/);
+  assert.match(tournament, /subagent_type: "stereo:implementation-reviewer"/);
+  assert.equal(
+    (tournament.match(/^\s*model: "<sonnet\|opus\|haiku\|fable>"$/gm) ?? []).length,
+    2,
+    'both foreground Agent templates must pass an invocation-level model',
+  );
+  assert.match(tournament, /`c1` = `codex:sol`/);
+  assert.match(tournament, /`c2` = `claude:opus`/);
   assert.equal(
     (tournament.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
     2,

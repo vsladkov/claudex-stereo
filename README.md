@@ -32,8 +32,8 @@ thread reservations, plus an optional stop-time review gate.
 - [`/stereo:config`](#stereoconfig) to set durable per-workspace defaults for the four pair roles
 - [`/stereo:quick`](#stereoquick) for both phases of the same pair workflow in one command when
   the task is small
-- [`/stereo:tournament`](#stereotournament) to race 2–3 Codex implementers on the same approved
-  plan in isolated worktrees and hand back the winner
+- [`/stereo:tournament`](#stereotournament) to race 2–3 Claude or Codex implementers on the same
+  approved plan in isolated worktrees and hand back the winner
 - [`/stereo:rescue`](#stereorescue) and [`/stereo:transfer`](#stereotransfer) to delegate work and
   hand off sessions, with [`/stereo:status`, `/stereo:result`, and
   `/stereo:cancel`](#background-jobs) to manage background jobs
@@ -553,20 +553,31 @@ The latest reviewed plan is stored normally, so an interrupted approved run can 
 
 ### `/stereo:tournament`
 
-Runs one already-approved stored plan through 2 or 3 independent Codex implementers concurrently. Each
-contestant starts a fresh write thread in its own detached temporary worktree at the same `HEAD`,
-so the main working tree stays untouched until you choose a winner and confirm patch hand-back.
-Two contestants are the minimum for a comparison; three is the cap because every extra contestant
-adds a concurrent write turn and an independent review, increasing cost, rate-limit pressure, and
-cleanup work. Use `/stereo:implement` when you want one implementer.
+Runs one already-approved stored plan through 2 or 3 independent implementers. With no
+`--implementer` flags, the built-in default lineup races `codex:sol` at its `max` model-pair default
+unless `--effort` or the workspace implementer effort default overrides it, against `claude:opus`
+at full session strength (Claude has no effort dial). Each contestant starts in its own detached
+temporary worktree at the same `HEAD`, so the main working tree stays untouched until you choose a
+winner and confirm patch hand-back. Two contestants are the minimum for a comparison; three is the
+cap because every extra contestant adds an implementation run and an independent review,
+increasing cost, rate-limit pressure, and cleanup work. Use `/stereo:implement` when you want one
+implementer.
 
-Contestants must be Codex-routed. Claude implementers run in the foreground, cannot execute
-concurrently, and may be unable to write outside the main workspace. The one selected
-implementation reviewer may be Claude or Codex, but it receives each contestant independently in
-declaration order: every verdict is a fresh single-round review with no contestant or reviewer
-history carried into the next one. Stereo then shows the models, diffstats, implementer reports,
-review verdicts, and usage side by side and asks you which delta to hand back. It never chooses the
-winner automatically.
+Contestants may be Codex selections or `claude:sonnet`, `claude:opus`, `claude:haiku`,
+`claude:fable`, and `claude:inherit`. `claude:session` is rejected because Claude writes stay in the
+contained file-edit agent. Codex contestants launch first as concurrent detached jobs; Claude
+contestants then run one at a time in the foreground before Codex polling resumes.
+`--implementer-effort` is Codex-only and requires an all-Codex lineup, while `--effort` covers every
+Codex contestant in a mixed lineup. The one selected implementation reviewer may be Claude or
+Codex, but it receives each contestant independently in declaration order: every verdict is a fresh
+single-round review with no contestant or reviewer history carried into the next one. Stereo then
+shows the models, diffstats, implementer reports, review verdicts, and usage side by side and asks
+you which delta to hand back. It never chooses the winner automatically.
+
+A Claude contestant is file-edits-only with no shell, so shell-requiring plan steps appear as
+deviations in its report and comparison row. A denied or failed Claude contestant is withdrawn with
+its worktree retained. It has no job id, so it does not appear in `/stereo:status` or
+`/stereo:cancel`.
 
 Tournament worktrees are fresh checkouts and often lack gitignored dependencies or generated
 artifacts, so Stereo does not run the host gate suite per contestant and reviewers are told that
@@ -582,12 +593,15 @@ destroyed. A crash or closed session can also strand worktrees; find them with
 `git worktree list --porcelain` and remove an unwanted path with `git worktree remove --force`.
 
 The tournament deliberately writes no implementation or tournament record, has no `--resume`, and
-never marks the stored plan implemented. Jobs and results remain visible through
+never marks the stored plan implemented. Codex jobs and results remain visible through
 `/stereo:status` and `/stereo:result`, while worktrees remain discoverable through Git. A complete
-run costs 2–3 concurrent Codex write turns plus one reviewer invocation per non-empty contestant,
-so check both providers' usage limits before racing expensive models.
+run costs one concurrent Codex write turn per Codex contestant plus one sequential foreground
+Claude implementer run per Claude contestant, and one reviewer invocation per non-empty completed
+contestant, so check both providers' usage limits before racing expensive models.
 
 ```bash
+/stereo:tournament
+/stereo:tournament --implementer codex:sol --implementer claude:opus
 /stereo:tournament --implementer codex:sol --implementer codex:spark
 /stereo:tournament --implementer codex:sol --implementer codex:sol --implementer-effort high --implementer-effort max
 /stereo:tournament --slot api-rate-limit --implementer codex:sol --implementer codex:terra --implementation-reviewer claude:opus

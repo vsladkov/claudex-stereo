@@ -1,5 +1,5 @@
 ---
-description: Run one approved plan through parallel Codex implementers in isolated worktrees and hand back the winning delta
+description: Race Claude and Codex implementers on an approved plan; hand back the winning delta
 argument-hint: '[--implementer <model>]... [--implementer-effort <none|minimal|low|medium|high|xhigh|max>]... [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--slot <name>]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(npm:*), Bash(git:*), AskUserQuestion, Agent
@@ -8,9 +8,10 @@ allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(npm:*), Bash(git:*), 
 First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
 agent, validation, quoting, and background-job rules. The rules below are step-specific.
 
-Run one stored plan through independent Codex implementers in parallel isolated worktrees. The main
-Claude session owns preflight, containment, evidence collection, independent reviews, user
-selection, hand-back, cleanup, and final verification.
+Run one stored plan through independent Codex-routed or Claude-routed contestants in isolated
+worktrees. Codex contestants run as concurrent detached jobs, while Claude contestants run one at a
+time in the foreground. The main Claude session owns preflight, containment, evidence collection,
+independent reviews, user selection, hand-back, cleanup, and final verification.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
@@ -19,19 +20,26 @@ Raw slash-command arguments:
 
 After reading the routing skill, parse all arguments before loading state:
 
-- `--implementer <model>` is repeatable. Declaration order defines contestant labels `c1`, `c2`,
-  and `c3`; duplicate models are legal and produce independent samples of the same model. Require
-  exactly 2 or 3 occurrences. With one, stop and name `/stereo:implement` as the
-  single-implementer command. With four or more, stop and state that tournaments are capped at 3
-  contestants.
-- Every contestant must be Codex-routed. Reject every `claude:*` value, including
-  `claude:session` and `claude:inherit`: Claude implementers are foreground-only, cannot run
-  concurrently, and their worktree writes may be denied outside the main workspace. Accept a
-  Codex selection with or without the `codex:` prefix and reject `codex:claude:*`.
-- `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` is repeatable. It is legal only
-  when absent entirely or supplied exactly as many times as `--implementer`; the k-th effort pairs
-  with the k-th contestant. Reject a partial list and name the exact implementer and effort counts
-  seen.
+- `--implementer <model>` is repeatable and optional. Declaration order defines contestant labels
+  `c1`, `c2`, and `c3`; duplicate models are legal and produce independent samples of the same
+  model. Zero occurrences select the built-in default lineup below. With one, stop, explain that a
+  single contestant is not a tournament, and name `/stereo:implement` as the single-implementer
+  command. Two or three occurrences define the lineup explicitly. With four or more, stop and
+  state that tournaments are capped at 3 contestants.
+- Accept `claude:sonnet`, `claude:opus`, `claude:haiku`, `claude:fable`, and `claude:inherit` as
+  Claude contestants. Accept a Codex selection with or without the `codex:` prefix. Reject
+  `claude:session` because Claude writes must stay inside the contained `stereo:implementer` agent;
+  reject unknown `claude:*` values and `codex:claude:*`. A Claude contestant runs as one foreground
+  `stereo:implementer` invocation in its own worktree, so multiple Claude contestants run
+  sequentially.
+- `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` is repeatable with positional
+  pairing. It is legal only when `--implementer` is present, every contestant is Codex-routed, and
+  its occurrence count equals the `--implementer` count exactly; the k-th effort pairs with the
+  k-th contestant. Reject a partial list and name the exact implementer and effort counts seen.
+  Reject the flag entirely when `--implementer` is absent, name the built-in default lineup, and
+  point to `--effort`. When any contestant is Claude-routed, reject the flag, name every such label
+  and selection, say that Claude has no effort dial, and point to `--effort` as the shared Codex
+  effort.
 - `--implementation-reviewer <model>` selects one shared implementation reviewer. Accept it once
   and resolve it as explicit flag > workspace `implementationReviewer` default > `claude:fable`.
   `claude:session` is legal for this role.
@@ -42,13 +50,26 @@ After reading the routing skill, parse all arguments before loading state:
 - `--slot <name>` selects the stored plan slot and defaults to `default`. Define `<slotArg>` as
   `--slot <slot>` for a non-default slot and omit it entirely for `default`.
 
+When `--implementer` is absent entirely, use the built-in default lineup: `c1` = `codex:sol`,
+`c2` = `claude:opus`. It is hardcoded here; `/stereo:config` has no contestant role default.
+Report the lineup as the default lineup before launch.
+
+Only the models are hardcoded. The Codex effort ladder below gives `c1` its `max` model-pair
+default unless `--effort` or the valid workspace implementer effort default overrides it.
+
+Claude contestants have no effort dial: model selection is the per-invocation Claude strength
+control, and Stereo's agent definitions omit `effort`, so a Claude contestant runs at the session's
+configured effort. Report its effort as `not applicable` and never state that an effort was applied.
+For `claude:inherit`, report the effective model returned by the Agent result, or `unavailable`.
+
 Reject missing values, duplicate single-occurrence flags, invalid efforts, positionals, unknown
-flags, unknown `claude:*` reviewer values, and `codex:claude:*` before repository work. Resolve each
-contestant's effective effort as its paired `--implementer-effort`, then command-wide `--effort`,
-then the valid workspace implementer effort, then the routing skill's model-pair default. Resolve a
-Codex reviewer's effort as `--implementation-reviewer-effort`, then command-wide `--effort`, then
-the valid workspace implementation-reviewer effort, then the model-pair default. Omit a null
-effort argument.
+flags, unknown `claude:*` values, and `codex:claude:*` before repository work. For Codex contestants
+only, resolve effective effort as paired `--implementer-effort`, then command-wide `--effort`, then
+the valid workspace implementer effort, then the routing skill's model-pair default. A Claude
+contestant takes no effort argument; any stored workspace implementer effort is inert for it.
+Resolve a Codex reviewer's effort as `--implementation-reviewer-effort`, then command-wide
+`--effort`, then the valid workspace implementation-reviewer effort, then the model-pair default.
+Omit a null effort argument.
 
 Reject these `/stereo:implement` mode flags here:
 
@@ -72,10 +93,17 @@ Ignore any entry with a non-null `invalidReason`, report its warning, and use th
 for that role. Report a Claude-routed stored effort as inert. Resolve stored `claude:*` selections
 as Claude routes and never pass them to the companion's `--model` flag.
 
-The workspace `implementer` model supplies no contestant: every contestant is explicit. Its valid
-effort may still participate in the effort ladder above. The workspace `implementationReviewer`
-entry participates normally in reviewer model and effort resolution. State the final effective
-model and effort for every contestant and the reviewer before launching anything.
+The workspace `implementer` model never supplies a contestant, in either the explicit or the
+default lineup: contestant models come only from `--implementer` or the built-in default lineup.
+Its valid effort still participates in the effort ladder for Codex contestants and is inert for
+Claude contestants. The workspace `implementationReviewer` entry participates normally in
+reviewer model and effort resolution.
+
+Before launching anything, state whether the lineup is default or explicit and state each
+contestant's label, route, selection, and effective effort (`not applicable` for Claude), plus the
+reviewer's final effective model and effort. State that Claude contestants are file-edits-only with
+no shell, name any obviously shell-requiring plan steps that will appear as deviations, and say that
+multiple Claude contestants run sequentially.
 
 ## Preflight
 
@@ -144,8 +172,13 @@ For each contestant define `<isolationArgs>` as:
 
 `--cwd` sets that Codex thread's cwd and confines its writes to the detached worktree. `--workspace`
 keeps the job record, log, durable job state, and shared broker keyed to the main workspace. Thus
-`/stereo:status`, `/stereo:result`, and `/stereo:cancel` see every contestant from the main
-repository and no worktree-keyed broker is started.
+`/stereo:status`, `/stereo:result`, and `/stereo:cancel` see every Codex contestant's implementation
+job from the main repository and no worktree-keyed broker is started.
+
+`<isolationArgs>` applies to the implementation launch only for Codex contestants. A Claude
+contestant has no companion implementation invocation: pass its `<worktreePath>` as absolute paths
+inside the Agent prompt. It therefore has no implementation job id, no log, and no visibility in
+`/stereo:status`, `/stereo:result`, or `/stereo:cancel`.
 
 ## Launching contestants
 
@@ -206,38 +239,133 @@ modify any other directory.
 </task>
 ```
 
-Include the latest-findings block only when `storedPlanFindings` is non-empty. Launch each
-contestant with this canonical line, parsing and saving its `jobId`:
+Include the latest-findings block only when `storedPlanFindings` is non-empty. This task text is
+shared by both routes so the comparison measures the model, not the prompt.
+
+### Launch order
+
+Launch every Codex contestant first in label order, then run every Claude contestant in label
+order, then poll the Codex jobs to terminal. Never interleave the passes: a foreground Agent
+invocation blocks the orchestrator for that contestant's whole run, so launching a Codex contestant
+afterwards would idle it for that entire time and break the busy-fallback stagger. With no Codex
+contestant, go straight to the sequential Claude runs. With no Claude contestant, the flow is
+exactly the Codex-only flow below.
+
+### Codex contestants
+
+Launch each Codex contestant with this canonical line, parsing and saving its `jobId`:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --model <contestantModel> <contestantEffortArg> <isolationArgs> --prompt-file "<payloadFile>"
 ```
 
-Launch contestants strictly in label order. Immediately after each launch, run exactly one
+Launch Codex contestants strictly in label order. Immediately after each launch, run exactly one
 flagless instant status call, never `--wait` and never a loop, report its phase, and only then
-launch the next contestant:
+launch the next Codex contestant:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId>
 ```
 
-The shared workspace broker serializes turns, so the first contestant holds its turn slot and
-later contestants deterministically fall back to a private Codex runtime, while interleaved setup
-requests can still produce a transient busy rejection.
+The shared workspace broker serializes turns, so the first Codex contestant holds its turn slot and
+later Codex contestants deterministically fall back to a private Codex runtime, while interleaved
+setup requests can still produce a transient busy rejection.
 
-If a contestant reaches `failed` with an error saying the shared Codex broker is busy, relaunch it
-exactly once with the identical payload file, worktree, model, and effort flags; run the same one
-instant status call, and replace its old job id with the new one. Never retry that condition again.
-Any other failed job, a second busy failure, or a cancelled job withdraws the contestant with its
-exact status and error. A withdrawn contestant is any terminal non-completed job after this rule.
-It is excluded from evidence review and selection, but its worktree is retained and reported with
-the exact removal command so partial work is never destroyed. Continue with the remaining jobs and
-stop after containment only if no contestant completes successfully.
+If a Codex contestant reaches `failed` with an error saying the shared Codex broker is busy,
+relaunch it exactly once with the identical payload file, worktree, model, and effort flags; run the
+same one instant status call, and replace its old job id with the new one. Never retry that
+condition again. Any other failed job, a second busy failure, or a cancelled job withdraws the
+contestant with its exact status and error.
+
+### Claude contestants
+
+For each Claude contestant, in label order:
+
+1. Invoke the routing skill's foreground template:
+
+   ```text
+   subagent_type: "stereo:implementer"
+   model: "<sonnet|opus|haiku|fable>"
+   run_in_background: false
+   prompt: |
+     [complete contestant prompt]
+   ```
+
+   For `claude:inherit`, omit the `model` parameter entirely.
+
+2. Compose the complete contestant prompt in this order:
+
+   - Begin with the routing skill's fixed lead line:
+
+     ```text
+     Apply only the requested file edits. Never request command execution.
+     ```
+
+   - Include the same `<task>` block written for the Codex contestants above, verbatim: use the
+     approved or unapproved variant, the same advisory or latest-findings inclusion rule, and the
+     same `The working root for this task is <worktreePath>...` sentence.
+   - Include `<action_safety>` and `<completeness_contract>` verbatim from the shared payload.
+   - In place of `<verification_loop>`, include:
+
+     ```text
+     <verification_loop>
+     You have no shell and cannot run tests, builds, or any other gate. Never claim verification.
+     List every shell-requiring plan step under `Deviations`.
+     </verification_loop>
+     ```
+
+   - Include this worktree-paths block, reusing `/stereo:implement`'s isolated-mode containment:
+
+     ```text
+     <worktree_paths>
+     Use absolute paths under <worktreePath> for every Read, Glob, Grep, Edit, and Write operation.
+     Never read or write anything under <mainRoot>. The worktree is a clean checkout at
+     <baselineCommit>, so every change in it is this contestant's delta.
+     </worktree_paths>
+     ```
+
+   - In place of `<compact_output_contract>`, require a compact plain-text agent report with the
+     exact labels `Files touched`, `Plan steps completed`, and `Deviations`.
+
+3. Validate those three labels through the routing skill. Record the Agent result's per-invocation
+   usage and duration, or `usage unavailable`. For `claude:inherit`, record the effective model
+   reported by the Agent result, or `unavailable`. Never continue one implementer agent across
+   contestants: every contestant is a fresh invocation.
+
+4. If the report is malformed or missing, do not retry the agent. Re-invoking a write agent against
+   a worktree that already holds partial edits is a fix round, not a fresh sample. Record
+   `report unavailable or malformed`, keep the contestant reviewable, and let its worktree diff and
+   review speak; an empty delta then follows the existing empty-patch rule. This deliberately
+   overrides the routing skill's generic retry-then-inline rule. There is no inline fallback because
+   Claude writes must stay in the contained agent.
+
+5. A harness denial of reads or writes under `<worktreePath>`, or any other agent-run failure,
+   withdraws that contestant with the exact denial or error text. Never fall back to the main tree
+   and never retry there. In `/stereo:implement`, such a denial ends the only implementation path,
+   so stopping is that command's result; here it ends one contestant, and `withdrawn` already
+   expresses that outcome. An Agent-tool or selected-model availability error instead follows the
+   routing skill's immediate-stop rule: report it verbatim, never substitute a model, stop the
+   tournament, and keep every worktree and patch. Apply the mid-flight stop reporting rule below.
+
+6. When the tournament stops while Codex contestants are still running, list their job ids and say
+   they keep running until they finish or are cancelled with `/stereo:cancel`. State that their
+   results remain readable with `/stereo:status` and `/stereo:result`.
+
+### Withdrawal and completion
+
+A contestant is completed when its Codex job reaches `completed` or its Claude agent invocation
+returns, including the recorded `report unavailable or malformed` case under the no-retry rule. It
+is withdrawn in every other terminal case: a terminal non-completed Codex job after the
+relaunch-once rule, or a denied, errored, or otherwise failed Claude agent run. It is excluded from
+evidence review and selection, but its worktree is retained and reported with the exact removal
+command so partial work is never destroyed. Continue with the remaining contestants and stop after
+containment only if no contestant completes successfully.
 
 ## Waiting and containment
 
-Rotate through all non-terminal contestants and poll each through the routing skill's bounded
-window command until every job is terminal:
+Rotate through all non-terminal Codex contestants and poll each through the routing skill's bounded
+window command until every Codex job is terminal. Claude contestants are already terminal before
+polling starts; when there is no Codex contestant, skip directly to the containment guard:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status <jobId> --wait --timeout-ms 90000 | grep -E 'Phase|Elapsed|^ {4}'
@@ -255,7 +383,8 @@ Save `report`, `threadId`, and `tokenUsage`; record `storedJob.tokenUsage.job` a
 usage and use `usage unavailable` when omitted. Apply the relaunch-once rule above if a terminal
 result reveals the qualifying busy failure.
 
-After every contestant is terminal, run the containment guard exactly once:
+Run the containment guard immediately after each Claude contestant invocation returns, before
+starting another Claude contestant, and once more after every contestant is terminal:
 
 ```bash
 git -C "<mainRoot>" status --porcelain=v1 --untracked-files=all
@@ -265,7 +394,11 @@ Compare its exact path set with `baselineDirty`. Any new main-tree path means an
 outside its worktree. Concurrent execution makes attribution impossible: stop the whole tournament,
 report the paths verbatim, hand back nothing, remove no worktree, and list every worktree path plus
 its exact removal command. Codex-reported `touchedFiles` are absolute to a worktree and are not
-main-tree writes.
+main-tree writes. Report each Claude contestant's reported `Files touched` alongside the offending
+paths as evidence, but state that this is not attribution. While Codex contestants run concurrently,
+the guard cannot attribute the paths; when none are running, it still does not accept a
+self-reported file list as attribution. The stop remains unconditional. If the guard fires while
+Codex contestants are still running, apply the mid-flight stop reporting rule above.
 
 ## Evidence
 
@@ -313,8 +446,14 @@ without changing any other text:
   unapproved findings otherwise.
 - `{{HOST_RESULTS}}` = the not-run statement in **Evidence**.
 
+The review path is identical for both contestant routes because the delta is always the worktree
+diff computed above, so all four placeholder fills remain unchanged. The verbatim implementer
+report in `{{REVIEW_CONTEXT}}` is the Codex job report, the Claude agent report, or the recorded
+`report unavailable or malformed` note.
+
 The filled result is that contestant's `implementationReviewBrief`. Route it through the one
-selected reviewer:
+selected reviewer. It may share a route or even a model with a contestant; that is legal because
+every review is a fresh independent invocation:
 
 - For `claude:session`, apply the complete brief inline.
 - For a named Claude selection, use the routing skill's foreground template:
@@ -360,15 +499,20 @@ that limitation for the contestant.
 
 Present one comparison-table row per non-empty completed contestant. Include:
 
-- label; `codex:`-prefixed model and effective effort; implementation job id and thread id
+- label and route; `codex:`- or `claude:`-prefixed selection and effective effort, using
+  `not applicable` for a Claude contestant; implementation job id and thread id, also using
+  `not applicable` for a Claude contestant; for `claude:inherit`, the Agent-reported effective
+  model or `unavailable`
 - files changed and total insertions/deletions
 - review `acceptable`, fix count, and summary
 - reported deviations
 - per-invocation usage and duration for both implementer and reviewer turns
 
-For Codex use `storedJob.tokenUsage.job`; for named Claude use the Agent result. Print
-`usage unavailable` rather than omitting an unavailable metric. State beside the table that no
-candidate has passed host gates. Also flag byte-identical deltas.
+For Codex use `storedJob.tokenUsage.job`; for named Claude use the Agent result. This applies to
+both contestants and reviewers. Print `usage unavailable` rather than omitting an unavailable
+metric. State beside the table that no candidate has passed host gates. A Claude contestant could
+not run any command at all, so its shell-requiring plan steps appear as deviations. Also flag
+byte-identical deltas.
 
 Use `AskUserQuestion` exactly once with one option per selectable contestant plus
 `Discard all and stop`. Suffix `(Recommended)` on the acceptable contestant with the fewest fixes,
@@ -468,8 +612,9 @@ hide it or claim the applied delta was verified.
 
 The final report includes:
 
-- the plan slot and every contestant's label, model, effort, job id, thread id, status, and review
-  verdict
+- whether the lineup was default or explicit, the plan slot, and every contestant's label, route,
+  model, effort, job id, thread id, status, and review verdict; use `not applicable` for a Claude
+  contestant's effort, job id, and thread id
 - the winner and the evidence behind the user's choice, including identical-delta notes and
   reported deviations
 - the hand-back result, including `staged, not committed` on success and every conflicted path on
@@ -479,10 +624,13 @@ The final report includes:
 - every implementer and reviewer invocation's usage and duration, using `usage unavailable` when
   omitted
 
-State the cost plainly: the tournament launches 2–3 concurrent Codex write turns plus one review
-per non-empty completed contestant, so rate limits and usage can be materially higher than
+State the cost plainly: the tournament launches one concurrent Codex write turn per Codex
+contestant plus one sequential foreground Claude implementer run per Claude contestant, then one
+review per non-empty completed contestant, so both providers' usage can be materially higher than
 `/stereo:implement`. Repeat that the plan was not marked implemented, no implementation or
 tournament record was written, and the tournament has no `--resume`. Point to
 `/stereo:implement --review-only` for a fresh gate on the applied delta and to
 `git -C "<mainRoot>" worktree list --porcelain` plus `git worktree remove --force` to find and
-remove a worktree stranded by a crash. Never commit or push.
+remove a worktree stranded by a crash. A Claude contestant has no job and cannot be cancelled with
+`/stereo:cancel`; interrupting the session ends it and leaves its worktree discoverable with
+`git -C "<mainRoot>" worktree list --porcelain`. Never commit or push.

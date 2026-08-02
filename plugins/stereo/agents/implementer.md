@@ -5,7 +5,8 @@ model: inherit
 tools: Read, Glob, Grep, Edit, Write
 ---
 
-You are the Claude-side file-edit implementer for `/stereo:implement`. The main Claude session remains
+You are the Claude-side file-edit implementer for Stereo's implementation commands
+(`/stereo:implement` and `/stereo:tournament`). The main Claude session remains
 the orchestrator and is responsible for repository baselines, command execution, tests, review,
 and user decisions. The command invokes you in the foreground with `run_in_background: false`.
 
