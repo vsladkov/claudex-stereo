@@ -10,10 +10,14 @@ import { buildSingleJobSnapshot } from '../plugins/stereo/src/jobs/job-control.t
 import {
   clearImplementState,
   clearPairPlanState,
+  DEFAULT_PLAN_SLOT,
   fingerprintPlanText,
+  listPairPlanSlots,
   loadImplementState,
   loadState,
   loadPairPlanState,
+  normalizePlanSlot,
+  planSlotOrDefault,
   resolveDurableStateDir,
   resolveJobFile,
   resolveJobLogFile,
@@ -401,6 +405,82 @@ test('role defaults normalize on read and write while preserving valid selection
     planner: { model: 'codex:terra', effort: 'high' },
     planReviewer: { model: null, effort: 'medium' },
   });
+});
+
+test('plan slot names normalize case and reject unsafe filename components', () => {
+  assert.equal(normalizePlanSlot(null), DEFAULT_PLAN_SLOT);
+  assert.equal(normalizePlanSlot(undefined), DEFAULT_PLAN_SLOT);
+  assert.equal(normalizePlanSlot(''), DEFAULT_PLAN_SLOT);
+  assert.equal(normalizePlanSlot('   '), DEFAULT_PLAN_SLOT);
+  assert.equal(normalizePlanSlot(' Windows_Lane-2 '), 'windows_lane-2');
+  assert.equal(planSlotOrDefault(' WINDOWS-LANE '), 'windows-lane');
+  assert.equal(planSlotOrDefault('../invalid'), DEFAULT_PLAN_SLOT);
+
+  const invalidMessage = (value: string) =>
+    `Unsupported plan slot "${value}". Plan slots may contain only letters, digits, hyphens, and underscores, must start with a letter or digit, and may be at most 64 characters.`;
+  for (const value of ['..', 'a/b', '-lead', '.hidden', 'a'.repeat(65)]) {
+    assert.throws(() => normalizePlanSlot(value), new Error(invalidMessage(value)));
+  }
+});
+
+test('plan slot paths preserve the default filenames and suffix named slots', () => {
+  const workspace = makeTempDir();
+  const durableDir = resolveDurableStateDir(workspace);
+
+  assert.equal(resolvePairPlanFile(workspace), path.join(durableDir, 'pair-plan.json'));
+  assert.equal(resolvePairPlanMarkdownFile(workspace), path.join(durableDir, 'pair-plan.md'));
+  assert.equal(
+    resolvePairPlanFile(workspace, 'windows-lane'),
+    path.join(durableDir, 'pair-plan-windows-lane.json'),
+  );
+  assert.equal(
+    resolvePairPlanMarkdownFile(workspace, 'windows-lane'),
+    path.join(durableDir, 'pair-plan-windows-lane.md'),
+  );
+});
+
+test('pair plan save, load, and clear operations are independent per slot', () => {
+  const workspace = makeTempDir();
+  const defaultPlan = { plan: '# Default plan\n' };
+  const windowsPlan = { plan: '# Windows plan\n' };
+
+  savePairPlanState(workspace, defaultPlan);
+  savePairPlanState(workspace, windowsPlan, 'windows-lane');
+  fs.writeFileSync(resolvePairPlanMarkdownFile(workspace), '# Default export\n', 'utf8');
+  fs.writeFileSync(
+    resolvePairPlanMarkdownFile(workspace, 'windows-lane'),
+    '# Windows export\n',
+    'utf8',
+  );
+
+  assert.deepEqual(loadPairPlanState(workspace), defaultPlan);
+  assert.deepEqual(loadPairPlanState(workspace, 'windows-lane'), windowsPlan);
+  assert.deepEqual(clearPairPlanState(workspace, 'windows-lane'), [
+    resolvePairPlanFile(workspace, 'windows-lane'),
+    resolvePairPlanMarkdownFile(workspace, 'windows-lane'),
+  ]);
+  assert.deepEqual(loadPairPlanState(workspace), defaultPlan);
+  assert.equal(fs.existsSync(resolvePairPlanFile(workspace)), true);
+  assert.equal(fs.existsSync(resolvePairPlanMarkdownFile(workspace)), true);
+  assert.equal(fs.existsSync(resolvePairPlanFile(workspace, 'windows-lane')), false);
+});
+
+test('listPairPlanSlots inventories only reachable JSON plan slots in stable order', () => {
+  const emptyWorkspace = makeTempDir();
+  assert.deepEqual(listPairPlanSlots(emptyWorkspace), []);
+  assert.equal(fs.existsSync(resolveDurableStateDir(emptyWorkspace)), false);
+
+  const workspace = makeTempDir();
+  savePairPlanState(workspace, { plan: '# Zulu\n' }, 'zulu');
+  savePairPlanState(workspace, { plan: '# Default\n' });
+  savePairPlanState(workspace, { plan: '# Alpha\n' }, 'alpha');
+  const durableDir = resolveDurableStateDir(workspace);
+  fs.writeFileSync(path.join(durableDir, 'pair-plan-export.md'), '# Ignore\n', 'utf8');
+  fs.writeFileSync(path.join(durableDir, 'implement-state.json'), '{}\n', 'utf8');
+  fs.writeFileSync(path.join(durableDir, 'pair-plan-bad.name.json'), '{}\n', 'utf8');
+  fs.writeFileSync(path.join(durableDir, 'pair-plan-default.json'), '{}\n', 'utf8');
+
+  assert.deepEqual(listPairPlanSlots(workspace), ['default', 'alpha', 'zulu']);
 });
 
 test('clearPairPlanState removes both artifacts and is idempotent', () => {

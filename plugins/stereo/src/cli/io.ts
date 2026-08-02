@@ -11,6 +11,7 @@ import {
   resolveContainedUserFile,
 } from '../shared/fs.ts';
 import { PLUGIN_ROOT } from '../shared/paths.ts';
+import { DEFAULT_PLAN_SLOT, normalizePlanSlot } from '../workspace/state.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 
 // Parsed option bags as the command handlers receive them.
@@ -95,6 +96,17 @@ export function resolveCommandWorkspace(options: CommandOptions = {}): string {
     return resolveWorkspaceRoot(resolved);
   }
   return resolveWorkspaceRoot(resolveCommandCwd(options));
+}
+
+export function resolvePlanSlotOption(options: CommandOptions = {}): string {
+  if (!Object.hasOwn(options, 'slot')) {
+    return DEFAULT_PLAN_SLOT;
+  }
+  const raw = String(options.slot ?? '').trim();
+  if (!raw) {
+    throw new Error('Provide a name for --slot.');
+  }
+  return normalizePlanSlot(raw);
 }
 
 const MAX_USER_FILE_BYTES = 16 * 1024 * 1024;

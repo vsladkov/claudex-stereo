@@ -319,8 +319,11 @@ findings, and each open question and residual risk. Write the full plan to `<pay
 findings array as JSON to the distinct `<findingsPayloadFile>`, then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round <reviewRound> <--thread <planReviewThreadId>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round <reviewRound> <--thread <planReviewThreadId>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
 ```
+
+`<slotArg>` is `--slot <slot>` when the invoking command targets a non-default slot and is omitted
+otherwise.
 
 Pass `--thread <planReviewThreadId>` when this run holds a Codex plan-review thread for the
 persisted plan, and `--no-thread` otherwise; a persist never silently inherits a stored thread.

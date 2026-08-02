@@ -1,6 +1,6 @@
 ---
 description: Implement or review the stored plan with independently selected Claude or Codex role models
-argument-hint: '[--implement-only|--review-only] [--resume] [--isolated] [--base <ref>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
+argument-hint: '[--implement-only|--review-only] [--resume] [--isolated] [--base <ref>] [--slot <name>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -31,6 +31,7 @@ After reading the routing skill, parse all arguments before loading state:
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
 - `--max-fix-rounds <n>` defaults to 4.
+- `--slot <name>` selects the stored plan to implement and defaults to `default`.
 - `--fresh` skips a reusable stored Codex plan-review thread.
 - `--implement-only` implements and verifies once, then stops before review.
 - `--review-only` reviews the current dirty/untracked implementation delta once without fixing.
@@ -42,6 +43,9 @@ After reading the routing skill, parse all arguments before loading state:
 - `--base <ref>` reviews the committed `<ref>...HEAD` range and is valid only with
   `--review-only`.
 - Without a mode flag, run the complete implement-plus-review/fix phase.
+
+Define `<slotArg>` as `--slot <slot>` for a non-default target slot and omit it entirely for the
+`default` slot. On `--resume`, replace it with the slot owned by the durable implementation record.
 
 Reject missing values, duplicates, positionals, invalid effort/round values, unknown flags,
 unknown `claude:*` values, and both mode flags together. Accept `claude:inherit` alongside
@@ -58,7 +62,8 @@ selected role is Claude-routed.
 
 Reject `--resume` with `--implement-only`, `--review-only`, or `--fresh`. Reject `--resume` with
 `--implementer` or `--implementer-effort`: the durable record owns the implementer; tell the user
-to run without `--resume` to start over. `--implementation-reviewer`,
+to run without `--resume` to start over. Reject `--resume` with `--slot`: the durable record owns
+the plan slot; tell the user to run without `--resume` to start over. `--implementation-reviewer`,
 `--implementation-reviewer-effort`, `--effort`, and `--max-fix-rounds` remain legal with
 `--resume`. Reject `--base` without `--review-only`. Reject `--scope` in every mode and name
 `--base <ref>` as the supported standalone range control: auto-detecting a default base could
@@ -115,11 +120,13 @@ implementation record.
 Load:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json <slotArg>
 ```
 
-If `available` is false, stop and tell the user to run `/stereo:plan`. Save a non-null stored
-thread only as `storedPlanReviewThreadId`, never as an implementation thread.
+If `available` is false, run `plan-state --list --json`. If other slots hold plans, name them and
+tell the user to rerun `/stereo:implement --slot <name>`; otherwise stop and tell the user to run
+`/stereo:plan`. Include the selected slot in the stored-plan summary. Save a non-null stored thread
+only as `storedPlanReviewThreadId`, never as an implementation thread.
 The stored `model` and `effort` are the last Codex pair values recorded for this stored plan and
 survive a Claude-side persist. A stored review thread survives only when the persisting command
 passed it through explicitly.
@@ -230,7 +237,7 @@ under the routing skill's temporary-directory and quoting rules; never deliver r
 the shell:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --record --state-file "<statePayloadFile>" --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --record --state-file "<statePayloadFile>" --json <slotArg>
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --update --state-file "<statePayloadFile>" --json
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --complete --state-file "<statePayloadFile>" --json
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --clear --json
@@ -269,11 +276,11 @@ mention that completion triggers an additional Codex review and how to disable i
 pair runs.
 
 After recording the baseline and resolving the implementer, write the initial launch record with
-`implement-state --record --state-file "<statePayloadFile>"`. Include all fields defined above,
-with `round: 0`, `rounds: []`, `status: in-progress`, and no implementation thread or job yet. In
-isolated mode, create the worktree first and include its fields as specified below. This applies to
-the full phase and `--implement-only`, so an interrupted implement-only launch can later resume at
-review round 1. Report a write failure and continue.
+`implement-state --record --state-file "<statePayloadFile>" <slotArg>`. Include all fields defined
+above, with `round: 0`, `rounds: []`, `status: in-progress`, and no implementation thread or job
+yet. In isolated mode, create the worktree first and include its fields as specified below. This
+applies to the full phase and `--implement-only`, so an interrupted implement-only launch can later
+resume at review round 1. Report a write failure and continue.
 
 If the selected implementer is Claude, scan the stored plan's `## Step-by-step changes` before any
 edit for commands beyond the fixed host verification gates: version bumps, package installation,
@@ -682,7 +689,7 @@ After the full phase receives an `acceptable` implementation review, and before 
 run both lifecycle writes immediately:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implemented --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implemented --json <slotArg>
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" implement-state --complete --state-file "<statePayloadFile>" --json
 ```
 
@@ -711,9 +718,11 @@ checks:
    worker. When it is present, reuse it as `<worktreePath>` for `<isolationArgs>`, every diff and
    gate, and patch hand-back. For a non-isolated record, reject an explicit `--isolated --resume`
    and tell the user to run without `--resume` to start an isolated phase.
-3. Run `plan-state --json`. If unavailable, stop. When `planMatches` is false, show both recorded
-   and current plan fingerprints and timestamps, warn that `{{PLAN_INPUT}}` will use the current
-   stored plan, and ask exactly once whether to continue against that current plan or stop.
+3. Take the recorded slot from the `implement-state --json` payload's top-level `plan.slot`,
+   announce it, and set `<slotArg>` from it. Run `plan-state --json --slot <recorded slot>`. If
+   unavailable, stop. When the implementation-state payload's `planMatches` is false, show both
+   recorded and current plan fingerprints and timestamps, warn that `{{PLAN_INPUT}}` will use the
+   current stored plan, and ask exactly once whether to continue against that current plan or stop.
 4. Check the recorded worker before inspecting a possibly partial delta. When `jobId` exists, run
    `status <jobId> --json` first:
    - For `queued` or `running`, report its phase and elapsed time and ask exactly once whether to
@@ -759,8 +768,9 @@ recorded host results as proof and never assumes conversation history survived.
 
 ## Final report
 
-Report selected roles, fix rounds, attributed files, host results, deviations, user-owned steps,
-all stored open questions and residual risks, and per-invocation usage/duration for every
+Name the implemented plan slot. Report selected roles, fix rounds, attributed files, host results,
+deviations, user-owned steps, all stored open questions and residual risks, and
+per-invocation usage/duration for every
 implementer, fix, and reviewer turn. Use `usage unavailable` when metrics were omitted. For Codex
 turns use `storedJob.tokenUsage.job`; for named Claude turns use the Agent result's usage and
 duration. For Codex implementation, include `implementationThreadId` and

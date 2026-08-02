@@ -409,6 +409,8 @@ function removeFileIfExists(filePath: string | null | undefined): void {
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const SAFE_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+export const DEFAULT_PLAN_SLOT = 'default';
+const SAFE_PLAN_SLOT = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 export function isSafeJobId(id: unknown): id is string {
   return typeof id === 'string' && SAFE_JOB_ID.test(id);
@@ -421,6 +423,28 @@ export function assertSafeJobId(id: string): string {
     );
   }
   return id;
+}
+
+export function normalizePlanSlot(value: unknown): string {
+  const raw = value == null ? '' : String(value).trim();
+  if (!raw) {
+    return DEFAULT_PLAN_SLOT;
+  }
+  const normalized = raw.toLowerCase();
+  if (!SAFE_PLAN_SLOT.test(normalized)) {
+    throw new Error(
+      `Unsupported plan slot "${raw}". Plan slots may contain only letters, digits, hyphens, and underscores, must start with a letter or digit, and may be at most 64 characters.`,
+    );
+  }
+  return normalized;
+}
+
+export function planSlotOrDefault(value: unknown): string {
+  try {
+    return normalizePlanSlot(value);
+  } catch {
+    return DEFAULT_PLAN_SLOT;
+  }
 }
 
 function jobUpdatedAtMs(job: JobRecord): number {
@@ -587,12 +611,20 @@ export function resolveJobFile(cwd: string, jobId: string): string {
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
 }
 
-export function resolvePairPlanFile(cwd: string): string {
-  return path.join(resolveDurableStateDir(cwd), PAIR_PLAN_FILE_NAME);
+export function resolvePairPlanFile(cwd: string, slot = DEFAULT_PLAN_SLOT): string {
+  const normalizedSlot = normalizePlanSlot(slot);
+  const fileName =
+    normalizedSlot === DEFAULT_PLAN_SLOT ? PAIR_PLAN_FILE_NAME : `pair-plan-${normalizedSlot}.json`;
+  return path.join(resolveDurableStateDir(cwd), fileName);
 }
 
-export function resolvePairPlanMarkdownFile(cwd: string): string {
-  return path.join(resolveDurableStateDir(cwd), PAIR_PLAN_MARKDOWN_FILE_NAME);
+export function resolvePairPlanMarkdownFile(cwd: string, slot = DEFAULT_PLAN_SLOT): string {
+  const normalizedSlot = normalizePlanSlot(slot);
+  const fileName =
+    normalizedSlot === DEFAULT_PLAN_SLOT
+      ? PAIR_PLAN_MARKDOWN_FILE_NAME
+      : `pair-plan-${normalizedSlot}.md`;
+  return path.join(resolveDurableStateDir(cwd), fileName);
 }
 
 export function resolveImplementStateFile(cwd: string): string {
@@ -653,15 +685,15 @@ export function fingerprintPlanText(plan: unknown): string | null {
   return createHash('sha256').update(String(plan)).digest('hex').slice(0, 32);
 }
 
-export function savePairPlanState<T>(cwd: string, record: T): T {
+export function savePairPlanState<T>(cwd: string, record: T, slot = DEFAULT_PLAN_SLOT): T {
   ensureStateDir(cwd);
-  writeJsonAtomic(resolvePairPlanFile(cwd), record);
+  writeJsonAtomic(resolvePairPlanFile(cwd, slot), record);
   return record;
 }
 
-export function loadPairPlanState(cwd: string): unknown {
+export function loadPairPlanState(cwd: string, slot = DEFAULT_PLAN_SLOT): unknown {
   migrateLegacyState(cwd);
-  const pairPlanFile = resolvePairPlanFile(cwd);
+  const pairPlanFile = resolvePairPlanFile(cwd, slot);
   if (!fs.existsSync(pairPlanFile)) {
     return null;
   }
@@ -672,12 +704,12 @@ export function loadPairPlanState(cwd: string): unknown {
   }
 }
 
-export function clearPairPlanState(cwd: string): string[] {
+export function clearPairPlanState(cwd: string, slot = DEFAULT_PLAN_SLOT): string[] {
   // Clear after the same legacy migration used by loadPairPlanState so a
   // pre-v1.7 record cannot be copied into durable state on a later read.
   migrateLegacyState(cwd);
   const removed: string[] = [];
-  for (const filePath of [resolvePairPlanFile(cwd), resolvePairPlanMarkdownFile(cwd)]) {
+  for (const filePath of [resolvePairPlanFile(cwd, slot), resolvePairPlanMarkdownFile(cwd, slot)]) {
     try {
       fs.unlinkSync(filePath);
       removed.push(filePath);
@@ -688,4 +720,41 @@ export function clearPairPlanState(cwd: string): string[] {
     }
   }
   return removed;
+}
+
+export function listPairPlanSlots(cwd: string): string[] {
+  migrateLegacyState(cwd);
+  let fileNames: string[];
+  try {
+    fileNames = fs.readdirSync(resolveDurableStateDir(cwd));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+
+  const slots = new Set<string>();
+  for (const fileName of fileNames) {
+    if (fileName === PAIR_PLAN_FILE_NAME) {
+      slots.add(DEFAULT_PLAN_SLOT);
+      continue;
+    }
+    const match = /^pair-plan-(.+)\.json$/.exec(fileName);
+    const slot = match?.[1];
+    if (!slot || slot === DEFAULT_PLAN_SLOT || !SAFE_PLAN_SLOT.test(slot)) {
+      continue;
+    }
+    slots.add(slot);
+  }
+
+  return [...slots].sort((left, right) => {
+    if (left === DEFAULT_PLAN_SLOT) {
+      return right === DEFAULT_PLAN_SLOT ? 0 : -1;
+    }
+    if (right === DEFAULT_PLAN_SLOT) {
+      return 1;
+    }
+    return left.localeCompare(right);
+  });
 }

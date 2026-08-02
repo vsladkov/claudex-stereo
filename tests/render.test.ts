@@ -6,6 +6,7 @@ import {
   renderConfigReport,
   renderImplementState,
   renderJobStatusReport,
+  renderPlanSlotList,
   renderPlanReviewResult,
   renderReviewResult,
   renderSetupReport,
@@ -545,6 +546,60 @@ test('renderStoredPlanState preserves the unavailable message byte-for-byte', ()
   );
 });
 
+test('renderStoredPlanState labels named slots without changing default rendering', () => {
+  assert.equal(
+    renderStoredPlanState(
+      {
+        verdict: 'approve',
+        round: 3,
+        updatedAt: '2026-08-02T09:00:00.000Z',
+        openQuestions: [],
+        residualRisks: [],
+        plan: '# Windows plan\n',
+      },
+      'windows-lane',
+    ),
+    'Stored plan (slot windows-lane, verdict: approve, round 3, updated 2026-08-02T09:00:00.000Z)\nOpen questions: none\nResidual risks: none\n\n---\n\n# Windows plan\n',
+  );
+  assert.equal(
+    renderStoredPlanState(null, 'windows-lane'),
+    'No stored plan in slot "windows-lane" for this repository. Run /stereo:plan --slot windows-lane first.\n',
+  );
+});
+
+test('renderPlanSlotList renders empty and populated inventories byte-exactly', () => {
+  assert.equal(
+    renderPlanSlotList([], null),
+    'No stored plans for this repository. Run /stereo:plan first.\n',
+  );
+  assert.equal(
+    renderPlanSlotList(
+      [
+        {
+          slot: 'default',
+          available: true,
+          verdict: 'approve',
+          round: 2,
+          summary: 'Default implementation plan',
+          updatedAt: '2026-08-02T08:00:00.000Z',
+          implementedAt: '2026-08-02T08:30:00.000Z',
+        },
+        {
+          slot: 'windows-lane',
+          available: true,
+          verdict: 'needs-revision',
+          round: '3',
+          summary: 'Port the runtime state path behavior to Windows.',
+          updatedAt: '2026-08-02T09:00:00.000Z',
+        },
+        { slot: 'broken', available: false, unreadable: true },
+      ],
+      'windows-lane',
+    ),
+    'Stored plans (3):\n- default | verdict: approve | round 2 | updated 2026-08-02T08:00:00.000Z | implemented 2026-08-02T08:30:00.000Z\n  Summary: Default implementation plan\n- windows-lane | verdict: needs-revision | round 3 | updated 2026-08-02T09:00:00.000Z | implementation record\n  Summary: Port the runtime state path behavior to Windows.\n- broken | unreadable\nShow one with /stereo:plan-state --slot <name>.\n',
+  );
+});
+
 test('renderImplementState shows the durable phase metadata and recorded job id', () => {
   const output = renderImplementState({
     baselineCommit: '8b995ad',
@@ -561,6 +616,7 @@ test('renderImplementState shows the durable phase metadata and recorded job id'
     status: 'in-progress',
     updatedAt: '2026-08-01T10:00:00.000Z',
     plan: {
+      slot: 'windows-lane',
       fingerprint: '0123456789abcdef0123456789abcdef',
       updatedAt: '2026-08-01T09:00:00.000Z',
     },
@@ -573,6 +629,7 @@ test('renderImplementState shows the durable phase metadata and recorded job id'
   assert.match(output, /Implementation thread ID: thr_implementation/);
   assert.match(output, /Background job ID: task-background-7/);
   assert.match(output, /Completed review rounds: 2/);
+  assert.match(output, /Recorded plan slot: windows-lane/);
   assert.match(output, /Recorded plan fingerprint: 0123456789abcdef0123456789abcdef/);
   assert.doesNotMatch(output, /Isolated worktree:/);
   assert.doesNotMatch(output, /Worktree baseline:/);

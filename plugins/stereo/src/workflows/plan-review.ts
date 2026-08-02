@@ -12,7 +12,7 @@ import { listRepositoryFiles } from '../platform/git.ts';
 import { loadPromptTemplate, interpolateTemplate } from '../shared/prompts.ts';
 import { PROMPTS_ROOT, SCHEMAS_DIR } from '../shared/paths.ts';
 import { serializeRepositoryMap } from '../workspace/repo-map.ts';
-import { nowIso, savePairPlanState } from '../workspace/state.ts';
+import { nowIso, planSlotOrDefault, savePairPlanState } from '../workspace/state.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 import { renderPlanReviewResult } from '../render/render.ts';
 import { firstMeaningfulLine } from '../shared/text.ts';
@@ -60,6 +60,7 @@ export interface PlanReviewRunRequest {
   model?: string | null;
   effort?: string | null;
   plan: string;
+  slot?: string | null;
   threadId?: string | null;
   round?: number;
   jobId?: string | null;
@@ -148,21 +149,25 @@ export async function executePlanReviewRun(
   };
 
   if (parsedPlanReview) {
-    savePairPlanState(workspaceRoot, {
-      plan: request.plan,
-      threadId,
-      model: request.model ?? null,
-      effort: request.effort ?? null,
-      round,
-      verdict: parsedPlanReview.verdict ?? null,
-      summary: parsedPlanReview.summary ?? null,
-      findings: parsedPlanReview.findings ?? [],
-      openQuestions: parsedPlanReview.open_questions ?? [],
-      // Stored camelCase deliberately (pair-plan state is a companion-internal
-      // record); the reviewer-facing schema field is snake_case residual_risks.
-      residualRisks: parsedPlanReview.residual_risks ?? [],
-      updatedAt: nowIso(),
-    });
+    savePairPlanState(
+      workspaceRoot,
+      {
+        plan: request.plan,
+        threadId,
+        model: request.model ?? null,
+        effort: request.effort ?? null,
+        round,
+        verdict: parsedPlanReview.verdict ?? null,
+        summary: parsedPlanReview.summary ?? null,
+        findings: parsedPlanReview.findings ?? [],
+        openQuestions: parsedPlanReview.open_questions ?? [],
+        // Stored camelCase deliberately (pair-plan state is a companion-internal
+        // record); the reviewer-facing schema field is snake_case residual_risks.
+        residualRisks: parsedPlanReview.residual_risks ?? [],
+        updatedAt: nowIso(),
+      },
+      planSlotOrDefault(request.slot),
+    );
   }
 
   return {

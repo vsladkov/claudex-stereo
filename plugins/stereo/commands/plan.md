@@ -1,6 +1,6 @@
 ---
 description: Draft or review a plan with independently selected Claude or Codex role models
-argument-hint: '[--draft-only|--review-only] [--plan-file <path>] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
+argument-hint: '[--draft-only|--review-only] [--plan-file <path>] [--slot <name>] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -31,6 +31,9 @@ a routed step:
   When no active role is Codex-routed, as under the command defaults, accept `--effort` but report
   that it is inert rather than silently dropping it.
 - `--max-plan-rounds <n>` defaults to 6.
+- `--slot <name>` selects the durable plan slot this run stores into and defaults to `default`.
+  Slot names are trimmed, lowercased, may contain only letters, digits, hyphens, and underscores,
+  and must start with a letter or digit. Relay the CLI's validation error verbatim.
 - `--draft-only` runs one draft step, stores it, and stops.
 - `--review-only` reviews the stored plan exactly once and stops.
 - `--plan-file <path>` reviews that external plan exactly once and is valid only with
@@ -57,6 +60,8 @@ Define these invocation placeholders before any routed step:
   `--model <effectivePlanReviewerModel> <planReviewerEffortArg>`.
 - `<plannerEffortArg>` and `<planReviewerEffortArg>` are `--effort <resolved effort>` when the
   corresponding role's resolved effort is non-null, and are omitted entirely otherwise.
+- `<slotArg>` = `--slot <slot>` when this run targets a non-default slot, and is omitted entirely
+  for the `default` slot.
 
 The `task` command injects no server-side effort default, so omitting the planner `--effort`
 silently loses a resolved `max` for a `gpt-*` planner. `plan-review` does default a missing
@@ -82,13 +87,37 @@ resolve effort as role effort flag > command-wide `--effort` > stored role effor
 default. Report a stored effort for a Claude-routed role as inert. Resolve stored `claude:*`
 selections as Claude routes and never pass them to the companion's `--model` flag.
 
+## Stored-plan overwrite guard
+
+Apply this guard only to a run that will store new plan content: the full phase, `--draft-only`, or
+`--review-only --plan-file`. Plain `--review-only` reviews the stored target slot and skips this
+guard entirely. Run the guard before drafting or routing any review:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json <slotArg>
+```
+
+If `available` is false, continue. If `implementedAt` is present, report it and continue without
+asking. If `available` is true and `implementedAt` is absent, name the stored summary, verdict,
+round, and `updatedAt`, then use `AskUserQuestion` exactly once with:
+
+- `Replace the plan in slot <slot>`
+- `Keep it; store this run in a new slot`
+- `Stop here`
+
+For the new-slot choice, derive a candidate from the task text for the full phase or `--draft-only`,
+and from the plan file's extension-stripped basename for `--plan-file` intake. Lowercase it,
+collapse non-alphanumeric runs to `-`, trim leading and trailing hyphens, and limit it to 32
+characters. Check the candidate against `plan-state --list --json`; append `-2`, `-3`, and so on
+until it is unused. Set `<slot>` and `<slotArg>` to that result and announce the chosen slot before
+continuing. This guard is the single replacement confirmation for every mode it covers.
+
 ## Stored-plan review step
 
 For `--review-only`, skip drafting. With `--plan-file`, perform external intake first:
 
-1. Run `plan-state --json` only to check for replacement. If `available` is true, warn that this
-   intake overwrites the repository's single stored plan. Name its summary, verdict, `updatedAt`,
-   and `implementedAt` when present, then ask once whether to replace it or stop.
+1. Report the target slot's stored summary from the overwrite-guard read when one exists. This step
+   is informational; do not ask a second replacement question.
 2. Read `<planFile>` from the exact user-provided path. Keep its exact bytes as the current plan.
    Warn, but do not reject it, when any of the seven canonical headings are absent.
 3. Always start an independent round 1 with no stored review thread. Fill the normal
@@ -97,7 +126,7 @@ For `--review-only`, skip drafting. With `--plan-file`, perform external intake 
    make a temporary copy:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> --plan-file "<planFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <slotArg> <reviewSelectionArgs> --plan-file "<planFile>"
 ```
 
 For `claude:session` apply the brief inline; for a named Claude model use it verbatim as the
@@ -106,18 +135,19 @@ review persists automatically. For a Claude-side result, write the findings JSON
 `<findingsPayloadFile>` and persist the user's exact file bytes with no thread:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 --no-thread --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<planFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round 1 --no-thread --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<planFile>"
 ```
 
-Report the verdict, findings, questions, risks, and reviewer usage/duration, then stop. The
-replacement confirmation is the only protection for the single stored-plan slot.
+Report the verdict, findings, questions, risks, and reviewer usage/duration. Name the stored slot
+and give its matching implementation command (`/stereo:implement` for `default`, or
+`/stereo:implement --slot <slot>` otherwise), then stop.
 
 Without `--plan-file`, review the stored plan:
 
 1. Load:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json <slotArg>
 ```
 
 2. If `available` is false, stop with: `Run /stereo:plan first.`
@@ -138,7 +168,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
      temporary-directory rule, then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> --plan-file "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <slotArg> <reviewSelectionArgs> --plan-file "<payloadFile>"
 ```
 
 Use the routing skill's validation and one-retry recovery. Read Codex results from
@@ -152,15 +182,16 @@ temporary-directory rule. Write the reviewer's findings array as JSON to a disti
 `<findingsPayloadFile>` under the same rule, then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict '<actual verdict>' --round 1 <--thread <threadId reported by plan-state>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict '<actual verdict>' --round 1 <--thread <threadId reported by plan-state>|--no-thread> --reviewed-by '<reviewer label>' --summary '<summary>' --findings-file "<findingsPayloadFile>" <repeated --open-question/--residual-risk args> < "<payloadFile>"
 ```
 
 Pass the `threadId` reported by `plan-state` with `--thread` when present; otherwise pass
 `--no-thread`.
 
 Report the verdict, findings, revision instructions, open questions, complete residual risks, and
-the reviewer's per-invocation usage and duration (or `usage unavailable`) verbatim. Do not revise
-or implement.
+the reviewer's per-invocation usage and duration (or `usage unavailable`) verbatim. Name the stored
+slot and give its matching implementation command (`/stereo:implement` for `default`, or
+`/stereo:implement --slot <slot>` otherwise). Do not revise or implement.
 
 ## Draft step
 
@@ -220,12 +251,13 @@ For `--draft-only`, derive a one-line summary. Write the full draft plan verbati
 reviewer label:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json --verdict 'draft' --round 0 --no-thread --summary '<one-line summary>' < "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict 'draft' --round 0 --no-thread --summary '<one-line summary>' < "<payloadFile>"
 ```
 
 Present the stored draft, identify the selected planner and its per-invocation usage/duration (or
-`usage unavailable`), and stop. Say that `/stereo:implement` will gate on the unapproved `draft`
-verdict and that `--review-only` runs the next step.
+`usage unavailable`), and stop. Name the stored slot. Say that the matching implementation command
+(`/stereo:implement` for `default`, `/stereo:implement --slot <slot>` otherwise) will gate on the
+unapproved `draft` verdict and that `--review-only` runs the next step.
 
 ## Full plan-review phase
 
@@ -259,14 +291,14 @@ For each round:
   temporary-directory rule, then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <reviewSelectionArgs> --plan-file "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --round 1 <slotArg> <reviewSelectionArgs> --plan-file "<payloadFile>"
 ```
 
 - Later Codex rounds resume only `planReviewThreadId`. Write the full revised plan verbatim to
   `<payloadFile>` under the same temporary-directory rule, then launch:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --thread <planReviewThreadId> --round <n> <reviewSelectionArgs> --plan-file "<payloadFile>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-review --background --json --thread <planReviewThreadId> --round <n> <slotArg> <reviewSelectionArgs> --plan-file "<payloadFile>"
 ```
 
 Refresh `planReviewThreadId` only from successful Codex plan-review payloads. On `parseError`,
@@ -306,5 +338,6 @@ per-invocation usage/duration for every routed draft and review turn (using `usa
 when omitted), plus whether a resumable Codex review thread exists. Use
 `storedJob.tokenUsage.job` for Codex turns and the Agent result's usage/duration for named Claude
 turns. Label `storedJob.tokenUsage.thread` separately as cumulative when it is included; never
-compare it with a single Claude invocation. Label `plannerThreadId` separately. Tell the user to
-run `/stereo:implement`. Never implement, commit, or push.
+compare it with a single Claude invocation. Label `plannerThreadId` separately. Name the slot that
+was stored and give the exact follow-up command: `/stereo:implement` for `default`, or
+`/stereo:implement --slot <slot>` for a named slot. Never implement, commit, or push.

@@ -10,9 +10,12 @@ import { readStdinTextIfPiped } from '../../shared/fs.ts';
 import {
   clearImplementState,
   clearPairPlanState,
+  DEFAULT_PLAN_SLOT,
   ensureStateDir,
+  listPairPlanSlots,
   loadPairPlanState,
   nowIso,
+  planSlotOrDefault,
   readImplementStateFile,
   resolvePairPlanMarkdownFile,
   savePairPlanState,
@@ -30,8 +33,8 @@ import {
   executePlanReviewRun,
   normalizePlanReviewRound,
 } from '../../workflows/plan-review.ts';
-import { renderStoredPlanState } from '../../render/render.ts';
-import type { StoredPairPlanState } from '../../render/render.ts';
+import { renderPlanSlotList, renderStoredPlanState } from '../../render/render.ts';
+import type { PlanSlotSummary, StoredPairPlanState } from '../../render/render.ts';
 import {
   outputCommandResult,
   parseCommandInput,
@@ -39,6 +42,7 @@ import {
   readUserFile,
   resolveCommandCwd,
   resolveCommandWorkspace,
+  resolvePlanSlotOption,
 } from '../io.ts';
 import { shorten } from '../../shared/text.ts';
 
@@ -78,6 +82,12 @@ function optionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function recordLike(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()))
@@ -114,7 +124,7 @@ function normalizeStoredPlanRound(round: unknown): number {
 
 export async function handlePlanReview(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['model', 'effort', 'cwd', 'plan-file', 'thread', 'round'],
+    valueOptions: ['model', 'effort', 'cwd', 'plan-file', 'thread', 'round', 'slot'],
     booleanOptions: ['json', 'background'],
     aliasMap: {
       m: 'model',
@@ -123,6 +133,7 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
 
   const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
+  const slot = resolvePlanSlotOption(options);
   const model =
     normalizeRequestedModel(options.model) ?? normalizeRequestedModel(PAIR_DEFAULT_MODEL);
   const effort = normalizeReasoningEffort(options.effort ?? defaultPairEffort(model as string));
@@ -152,6 +163,7 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
       model,
       effort,
       plan,
+      slot,
       threadId,
       round,
       jobId: job.id,
@@ -169,6 +181,7 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
         model,
         effort,
         plan,
+        slot,
         threadId,
         round,
         jobId: job.id,
@@ -183,31 +196,55 @@ export async function handlePlanState(
   deps: PlanStateDeps = defaultPlanStateDeps,
 ): Promise<void> {
   const { options } = parseCommandInput(argv, {
-    valueOptions: ['cwd'],
-    booleanOptions: ['json', 'open', 'clear', 'mark-implemented'],
+    valueOptions: ['cwd', 'slot'],
+    booleanOptions: ['json', 'list', 'open', 'clear', 'mark-implemented'],
   });
 
-  const actions = ['open', 'clear', 'mark-implemented'].filter((key) => options[key]);
+  const actions = ['list', 'open', 'clear', 'mark-implemented'].filter((key) => options[key]);
   if (actions.length > 1) {
-    throw new Error('Choose one of --open, --clear, or --mark-implemented.');
+    throw new Error('Choose one of --list, --open, --clear, or --mark-implemented.');
+  }
+  if (options.list && Object.hasOwn(options, 'slot')) {
+    throw new Error('--list covers every slot; drop --slot.');
   }
 
   const workspaceRoot = resolveCommandWorkspace(options);
-  if (options.clear) {
-    const removed = clearPairPlanState(workspaceRoot);
+  const slot = resolvePlanSlotOption(options);
+  if (options.list) {
+    const slots: PlanSlotSummary[] = listPairPlanSlots(workspaceRoot).map((entrySlot) => {
+      const record = loadPairPlanState(workspaceRoot, entrySlot) as StoredPairPlanState | null;
+      if (!record) {
+        return { slot: entrySlot, available: false, unreadable: true };
+      }
+      return {
+        slot: entrySlot,
+        available: true,
+        verdict: record.verdict,
+        round: record.round,
+        summary: record.summary,
+        updatedAt: record.updatedAt,
+        implementedAt: record.implementedAt,
+      };
+    });
     const implementState = readImplementStateFile(workspaceRoot);
-    const implementStateRecord =
-      implementState.record &&
-      typeof implementState.record === 'object' &&
-      !Array.isArray(implementState.record)
-        ? (implementState.record as Record<string, unknown>)
-        : null;
-    const implementStateWorktreeRecord =
-      implementStateRecord?.worktree &&
-      typeof implementStateRecord.worktree === 'object' &&
-      !Array.isArray(implementStateRecord.worktree)
-        ? (implementStateRecord.worktree as Record<string, unknown>)
-        : null;
+    const implementStateRecord = recordLike(implementState.record);
+    const implementStatePlan = recordLike(implementStateRecord?.plan);
+    const implementStateSlot = implementStateRecord
+      ? planSlotOrDefault(implementStatePlan?.slot)
+      : null;
+    outputCommandResult(
+      { slots, implementStateSlot },
+      renderPlanSlotList(slots, implementStateSlot),
+      options.json,
+    );
+    return;
+  }
+
+  if (options.clear) {
+    const removed = clearPairPlanState(workspaceRoot, slot);
+    const implementState = readImplementStateFile(workspaceRoot);
+    const implementStateRecord = recordLike(implementState.record);
+    const implementStateWorktreeRecord = recordLike(implementStateRecord?.worktree);
     const implementStateWorktree =
       implementStateRecord?.isolated &&
       typeof implementStateWorktreeRecord?.path === 'string' &&
@@ -220,13 +257,21 @@ export async function handlePlanState(
         ? 'unreadable'
         : (optionalString((implementState.record as { status?: unknown } | null)?.status) ??
           'unreadable');
-    const clearedImplementState = clearImplementState(workspaceRoot);
+    const implementStatePlan = recordLike(implementStateRecord?.plan);
+    const recordedSlot = planSlotOrDefault(implementStatePlan?.slot);
+    const implementStateBelongsToSlot = recordedSlot === slot;
+    const clearedImplementState = implementStateBelongsToSlot
+      ? clearImplementState(workspaceRoot)
+      : [];
+    const keptDifferentImplementState = !implementState.missing && !implementStateBelongsToSlot;
     const payload = {
       cleared: removed.length > 0,
       removed,
       clearedImplementState: clearedImplementState.length > 0,
       implementStateStatus,
       ...(implementStateWorktree ? { implementStateWorktree } : {}),
+      ...(keptDifferentImplementState ? { implementStateSlot: recordedSlot } : {}),
+      slot,
     };
     const planRendered =
       removed.length > 0
@@ -236,40 +281,54 @@ export async function handlePlanState(
       clearedImplementState.length > 0
         ? `Also cleared the implementation record (status: ${implementStateStatus ?? 'unreadable'}).\n${clearedImplementState.map((filePath) => `- ${filePath}`).join('\n')}\n`
         : '';
-    const implementWorktreeRendered = implementStateWorktree
-      ? `Isolated worktree ${implementStateWorktree}; remove it with git -C "${workspaceRoot}" worktree remove --force "${implementStateWorktree}".\n`
+    const keptImplementRendered = keptDifferentImplementState
+      ? `Kept the implementation record for slot ${recordedSlot} (status: ${implementStateStatus ?? 'unreadable'}).\n`
       : '';
-    const implementRendered = `${implementClearRendered}${implementWorktreeRendered}`;
+    const implementWorktreeRendered =
+      implementStateWorktree && clearedImplementState.length > 0
+        ? `Isolated worktree ${implementStateWorktree}; remove it with git -C "${workspaceRoot}" worktree remove --force "${implementStateWorktree}".\n`
+        : '';
+    const implementRendered = `${implementClearRendered}${keptImplementRendered}${implementWorktreeRendered}`;
     const rendered = `${planRendered}${implementRendered}`;
     outputCommandResult(payload, rendered, options.json);
     return;
   }
 
-  const record = loadPairPlanState(workspaceRoot) as StoredPairPlanState | null;
+  const record = loadPairPlanState(workspaceRoot, slot) as StoredPairPlanState | null;
   if (options['mark-implemented']) {
     if (!record) {
-      throw new Error('No stored plan to mark implemented. Run /stereo:plan first.');
+      if (slot === DEFAULT_PLAN_SLOT) {
+        throw new Error('No stored plan to mark implemented. Run /stereo:plan first.');
+      }
+      throw new Error(
+        `No stored plan in slot "${slot}" to mark implemented. Run /stereo:plan --slot ${slot} first.`,
+      );
     }
-    const updated = savePairPlanState(workspaceRoot, {
-      ...record,
-      implementedAt: nowIso(),
-    });
+    const updated = savePairPlanState(
+      workspaceRoot,
+      {
+        ...record,
+        implementedAt: nowIso(),
+      },
+      slot,
+    );
     outputCommandResult(
-      { available: true, ...updated },
+      { available: true, ...updated, slot },
       renderStoredPlanState(updated),
       options.json,
     );
     return;
   }
 
-  const payload = record ? { available: true, ...record } : { available: false };
-  const rendered = renderStoredPlanState(record);
+  const payload = record ? { available: true, ...record, slot } : { available: false, slot };
+  const slotLabel = slot === DEFAULT_PLAN_SLOT ? null : slot;
+  const rendered = renderStoredPlanState(record, slotLabel);
   if (!options.open || !record) {
     outputCommandResult(payload, rendered, options.json);
     return;
   }
 
-  const exportedPath = resolvePairPlanMarkdownFile(workspaceRoot);
+  const exportedPath = resolvePairPlanMarkdownFile(workspaceRoot, slot);
   ensureStateDir(workspaceRoot);
   writeTextAtomic(exportedPath, rendered);
   const openedInEditor = await deps.openInEditor(exportedPath);
@@ -285,7 +344,16 @@ export async function handlePlanState(
 
 export async function handlePlanStore(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['cwd', 'verdict', 'round', 'reviewed-by', 'summary', 'findings-file', 'thread'],
+    valueOptions: [
+      'cwd',
+      'verdict',
+      'round',
+      'reviewed-by',
+      'summary',
+      'findings-file',
+      'thread',
+      'slot',
+    ],
     arrayOptions: ['open-question', 'residual-risk'],
     booleanOptions: ['json', 'no-thread'],
   });
@@ -310,7 +378,8 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
   const cwd = resolveCommandCwd(options);
   const findings = readFindingsFile(cwd, options['findings-file']);
   const workspaceRoot = resolveCommandWorkspace(options);
-  const previous = loadPairPlanState(workspaceRoot) as StoredPairPlanState | null;
+  const slot = resolvePlanSlotOption(options);
+  const previous = loadPairPlanState(workspaceRoot, slot) as StoredPairPlanState | null;
   // Nulling these on a Claude-side persist destroyed a resumable review thread
   // and the implementer's stored model/effort defaults. Command call sites
   // always pass --thread or --no-thread, so preservation cannot inherit a
@@ -322,20 +391,24 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
   const effort = optionalString(previous?.effort);
   // This fresh record intentionally does not preserve implementedAt: a newly
   // stored plan or revision has not completed a full implementation phase.
-  const record = savePairPlanState(workspaceRoot, {
-    plan,
-    threadId,
-    model,
-    effort,
-    round: normalizeStoredPlanRound(options.round),
-    verdict,
-    summary: optionalString(options.summary),
-    findings,
-    openQuestions: stringArray(options['open-question']),
-    residualRisks: stringArray(options['residual-risk']),
-    reviewedBy: optionalString(options['reviewed-by']),
-    updatedAt: nowIso(),
-  });
+  const record = savePairPlanState(
+    workspaceRoot,
+    {
+      plan,
+      threadId,
+      model,
+      effort,
+      round: normalizeStoredPlanRound(options.round),
+      verdict,
+      summary: optionalString(options.summary),
+      findings,
+      openQuestions: stringArray(options['open-question']),
+      residualRisks: stringArray(options['residual-risk']),
+      reviewedBy: optionalString(options['reviewed-by']),
+      updatedAt: nowIso(),
+    },
+    slot,
+  );
 
-  outputCommandResult(record, renderStoredPlanState(record), options.json);
+  outputCommandResult({ ...record, slot }, renderStoredPlanState(record), options.json);
 }

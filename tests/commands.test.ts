@@ -44,6 +44,7 @@ test('every command wires the companion entry point it documents', () => {
     'implement.md': /task --background --json --write --thread/,
     'plan-state.md': [
       /codex-companion\.ts" plan-state\b/,
+      /plan-state --list/,
       /plan-state --clear/,
       /plan-state --mark-implemented/,
     ],
@@ -132,10 +133,14 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     1,
     'the canonical Claude persistence rule must deliver findings separately',
   );
+  assert.match(routing, /`<slotArg>` is `--slot <slot>`/);
 
   const plan = read('commands/plan.md');
   assert.match(plan, /skills\/model-routing\/SKILL\.md/);
-  assert.match(plan, /plan-review --background --json --thread <planReviewThreadId> --round <n>/);
+  assert.match(
+    plan,
+    /plan-review --background --json --thread <planReviewThreadId> --round <n> <slotArg>/,
+  );
   assert.match(plan, /plan-store --json/);
   assert.match(plan, /schemas\/plan-review-output\.schema\.json/);
   assert.match(plan, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
@@ -144,8 +149,16 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(plan, /config --json/);
   assert.match(
     plan,
-    /plan-review --background --json --round 1 <reviewSelectionArgs> --plan-file "<planFile>"/,
+    /plan-review --background --json --round 1 <slotArg> <reviewSelectionArgs> --plan-file "<planFile>"/,
   );
+  const planReviewLaunchLines = plan
+    .split('\n')
+    .filter((line) => line.includes('plan-review --background'));
+  assert.equal(planReviewLaunchLines.length, 4);
+  for (const line of planReviewLaunchLines) {
+    assert.match(line, /<slotArg>/);
+  }
+  assert.match(plan, /`<slotArg>` = `--slot <slot>`/);
   assert.equal(
     (plan.match(/^node .*plan-store .* < "<planFile>"$/gm) ?? []).length,
     1,
@@ -179,6 +192,7 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     '--plan-file',
     '--planner-effort',
     '--plan-reviewer-effort',
+    '--slot',
   ]) {
     assert.match(planHint, new RegExp(flag));
   }
@@ -188,6 +202,8 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(implement, /plan-state --json/);
   assert.match(implement, /config --json/);
   assert.match(implement, /plan-state --mark-implemented/);
+  assert.match(implement, /Define `<slotArg>` as `--slot <slot>`/);
+  assert.match(implement, /implement-state --record[^\n]*<slotArg>/);
   assert.match(implement, /task --background --json --write --model <effectiveModel> <effortArg>/);
   assert.match(implement, /approved outside\s+this Codex thread/);
   assert.match(implement, /reviewed but unapproved/);
@@ -230,6 +246,7 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     '--resume',
     '--base',
     '--isolated',
+    '--slot',
   ]) {
     assert.match(implementHint, new RegExp(flag));
   }

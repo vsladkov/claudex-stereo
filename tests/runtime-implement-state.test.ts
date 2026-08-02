@@ -36,11 +36,17 @@ function writePayload(repo: string, contents: unknown): string {
   return file;
 }
 
-function storePlan(repo: string, env: NodeJS.ProcessEnv, plan: string, round = 2): void {
+function storePlan(
+  repo: string,
+  env: NodeJS.ProcessEnv,
+  plan: string,
+  round = 2,
+  slot = 'default',
+): void {
   const stateDir = resolveDurableStateDir(repo, env.CODEX_HOME);
   fs.mkdirSync(stateDir, { recursive: true });
   fs.writeFileSync(
-    path.join(stateDir, 'pair-plan.json'),
+    path.join(stateDir, slot === 'default' ? 'pair-plan.json' : `pair-plan-${slot}.json`),
     `${JSON.stringify(
       {
         plan,
@@ -143,6 +149,7 @@ test('implement-state --record snapshots the plan and round-trips durable launch
     baselineCommit: 'abc123',
   });
   assert.equal(payload.record.plan.fingerprint, fingerprintPlanText(plan));
+  assert.equal(payload.record.plan.slot, 'default');
   assert.equal(payload.planMatches, true);
 
   const durableFile = path.join(
@@ -297,6 +304,68 @@ test('implement-state detects a re-stored plan without changing the recorded sna
   assert.equal(payload.plan.fingerprint, fingerprintPlanText('# Revised plan'));
 });
 
+test('implement-state --record snapshots and later compares against the selected plan slot', async () => {
+  const { repo, env } = setupRepo();
+  const namedPlan = '# Named plan';
+  storePlan(repo, env, namedPlan, 2, 'windows-lane');
+  storePlan(repo, env, '# Default plan', 1);
+  const stateFile = writePayload(repo, { baselineCommit: 'abc123' });
+
+  const recorded = await runImplementState(repo, env, [
+    '--record',
+    '--slot',
+    'Windows-Lane',
+    '--state-file',
+    stateFile,
+    '--json',
+  ]);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  const recordedPayload = JSON.parse(recorded.stdout);
+  assert.equal(recordedPayload.record.plan.slot, 'windows-lane');
+  assert.equal(recordedPayload.record.plan.fingerprint, fingerprintPlanText(namedPlan));
+  assert.equal(recordedPayload.plan.slot, 'windows-lane');
+  assert.equal(recordedPayload.planMatches, true);
+
+  storePlan(repo, env, '# Mutated default plan', 3);
+  const afterDefaultMutation = await runImplementState(repo, env, ['--json']);
+  assert.equal(afterDefaultMutation.status, 0, afterDefaultMutation.stderr);
+  assert.equal(JSON.parse(afterDefaultMutation.stdout).planMatches, true);
+
+  storePlan(repo, env, '# Mutated named plan', 4, 'windows-lane');
+  const afterNamedMutation = await runImplementState(repo, env, ['--json']);
+  assert.equal(afterNamedMutation.status, 0, afterNamedMutation.stderr);
+  const changedPayload = JSON.parse(afterNamedMutation.stdout);
+  assert.equal(changedPayload.plan.slot, 'windows-lane');
+  assert.equal(changedPayload.planMatches, false);
+});
+
+test('implement-state reads pre-slot records against the default plan', async () => {
+  const { repo, env } = setupRepo();
+  const plan = '# Pre-upgrade default plan';
+  storePlan(repo, env, plan);
+  const durableDir = resolveDurableStateDir(repo, env.CODEX_HOME);
+  fs.writeFileSync(
+    path.join(durableDir, 'implement-state.json'),
+    `${JSON.stringify(
+      {
+        version: 1,
+        status: 'in-progress',
+        plan: { fingerprint: fingerprintPlanText(plan) },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  const read = await runImplementState(repo, env, ['--json']);
+  assert.equal(read.status, 0, read.stderr);
+  const payload = JSON.parse(read.stdout);
+  assert.equal(payload.record.plan.slot, undefined);
+  assert.equal(payload.plan.slot, 'default');
+  assert.equal(payload.planMatches, true);
+});
+
 test('implement-state --complete applies a final patch and --clear is idempotent', async () => {
   const { repo, env } = setupRepo();
   const worktreePath = path.join(repo, 'isolated-worktree');
@@ -383,4 +452,13 @@ test('implement-state exposes corrupt state and rejects conflicting or misplaced
     ['unexpected'],
     'implement-state takes only flags; unexpected positional arguments.',
   );
+
+  for (const args of [
+    ['--update', '--slot', 'named'],
+    ['--complete', '--slot', 'named'],
+    ['--clear', '--slot', 'named'],
+    ['--slot', 'named'],
+  ]) {
+    await assertJsonError(repo, env, args, '--slot applies only to --record.');
+  }
 });

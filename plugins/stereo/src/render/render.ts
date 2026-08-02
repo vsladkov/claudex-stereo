@@ -4,6 +4,7 @@ import { formatJobModel, resolveJobModel } from '../jobs/job-control.ts';
 import type { UsageGroup, UsageSnapshot } from '../jobs/job-control.ts';
 import type { SessionJobAnnouncement } from '../jobs/job-announcements.ts';
 import type { RoleDefaultEntry } from '../models/role-defaults.ts';
+import { shorten } from '../shared/text.ts';
 
 // Renderer inputs are typed from usage: jobs and stored payloads come from
 // state files written across plugin versions, so every field beyond the id is
@@ -62,6 +63,17 @@ export interface StoredPairPlanState {
   openQuestions?: unknown;
   residualRisks?: unknown;
   [key: string]: unknown;
+}
+
+export interface PlanSlotSummary {
+  slot: string;
+  available: boolean;
+  unreadable?: boolean;
+  verdict?: unknown;
+  round?: unknown;
+  summary?: unknown;
+  updatedAt?: unknown;
+  implementedAt?: unknown;
 }
 
 export interface StoredImplementState {
@@ -650,15 +662,21 @@ function storedPlanFindings(value: unknown): NormalizedPlanReviewFinding[] {
     : [];
 }
 
-export function renderStoredPlanState(record: StoredPairPlanState | null): string {
+export function renderStoredPlanState(
+  record: StoredPairPlanState | null,
+  slotLabel: string | null = null,
+): string {
   if (!record) {
+    if (slotLabel !== null) {
+      return `No stored plan in slot "${slotLabel}" for this repository. Run /stereo:plan --slot ${slotLabel} first.\n`;
+    }
     return 'No stored plan for this repository. Run /stereo:plan first.\n';
   }
 
   const verdict = storedPlanMetadataValue(record.verdict) ?? 'unknown';
   const round = storedPlanMetadataValue(record.round);
   const updatedAt = storedPlanMetadataValue(record.updatedAt);
-  const headerParts = [`verdict: ${verdict}`];
+  const headerParts = [...(slotLabel === null ? [] : [`slot ${slotLabel}`]), `verdict: ${verdict}`];
   if (round) {
     headerParts.push(`round ${round}`);
   }
@@ -714,6 +732,43 @@ export function renderStoredPlanState(record: StoredPairPlanState | null): strin
   return output.endsWith('\n') ? output : `${output}\n`;
 }
 
+export function renderPlanSlotList(
+  entries: PlanSlotSummary[],
+  implementStateSlot: string | null,
+): string {
+  if (entries.length === 0) {
+    return 'No stored plans for this repository. Run /stereo:plan first.\n';
+  }
+
+  const lines = [`Stored plans (${entries.length}):`];
+  for (const entry of entries) {
+    const slot = storedPlanMetadataValue(entry.slot) ?? '-';
+    if (entry.unreadable || !entry.available) {
+      lines.push(`- ${slot} | unreadable`);
+      continue;
+    }
+
+    const verdict = storedPlanMetadataValue(entry.verdict) ?? 'unknown';
+    const round = storedPlanMetadataValue(entry.round) ?? '-';
+    const updatedAt = storedPlanMetadataValue(entry.updatedAt) ?? '-';
+    let line = `- ${slot} | verdict: ${verdict} | round ${round} | updated ${updatedAt}`;
+    const implementedAt = storedPlanMetadataValue(entry.implementedAt);
+    if (implementedAt) {
+      line += ` | implemented ${implementedAt}`;
+    }
+    if (slot === implementStateSlot) {
+      line += ' | implementation record';
+    }
+    lines.push(line);
+    const summary = storedPlanMetadataValue(entry.summary);
+    if (summary) {
+      lines.push(`  Summary: ${shorten(summary)}`);
+    }
+  }
+  lines.push('Show one with /stereo:plan-state --slot <name>.');
+  return `${lines.join('\n')}\n`;
+}
+
 function storedRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -767,6 +822,7 @@ export function renderImplementState(record: StoredImplementState | null): strin
     `Latest verdict: ${storedPlanMetadataValue(record.latestVerdict) ?? '-'}`,
     `Status: ${storedPlanMetadataValue(record.status) ?? 'unknown'}`,
     `Updated: ${storedPlanMetadataValue(record.updatedAt) ?? '-'}`,
+    `Recorded plan slot: ${storedPlanMetadataValue(plan?.slot) ?? '-'}`,
     `Recorded plan fingerprint: ${storedPlanMetadataValue(plan?.fingerprint) ?? '-'}`,
     `Recorded plan updated: ${storedPlanMetadataValue(plan?.updatedAt) ?? '-'}`,
   );

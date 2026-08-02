@@ -6,6 +6,7 @@ import {
   fingerprintPlanText,
   loadPairPlanState,
   nowIso,
+  planSlotOrDefault,
   readImplementStateFile,
   resolveImplementStateFile,
   saveImplementState,
@@ -16,6 +17,7 @@ import {
   readUserFile,
   resolveCommandCwd,
   resolveCommandWorkspace,
+  resolvePlanSlotOption,
 } from '../io.ts';
 
 const MAX_IMPLEMENT_STATE_BYTES = 512 * 1024;
@@ -70,21 +72,30 @@ function normalizeImplementationRound(value: unknown): number {
   return value as number;
 }
 
-function currentPlanSummary(workspaceRoot: string): {
+function currentPlanSummary(
+  workspaceRoot: string,
+  slot: string,
+): {
   available: boolean;
+  slot: string;
   fingerprint: string | null;
   updatedAt: unknown;
   verdict: unknown;
   round: unknown;
 } {
-  const storedPlan = recordLike(loadPairPlanState(workspaceRoot));
+  const storedPlan = recordLike(loadPairPlanState(workspaceRoot, slot));
   return {
     available: Boolean(storedPlan),
+    slot,
     fingerprint: fingerprintPlanText(storedPlan?.plan),
     updatedAt: storedPlan?.updatedAt ?? null,
     verdict: storedPlan?.verdict ?? null,
     round: storedPlan?.round ?? null,
   };
+}
+
+function recordedPlanSlot(record: JsonRecord | null): string {
+  return planSlotOrDefault(recordLike(record?.plan)?.slot);
 }
 
 function recordedPlanFingerprint(record: JsonRecord | null): string | null {
@@ -95,7 +106,7 @@ function recordedPlanFingerprint(record: JsonRecord | null): string | null {
 }
 
 function buildReadPayload(workspaceRoot: string, record: JsonRecord | null): JsonRecord {
-  const plan = currentPlanSummary(workspaceRoot);
+  const plan = currentPlanSummary(workspaceRoot, recordedPlanSlot(record));
   const recordedFingerprint = recordedPlanFingerprint(record);
   return {
     available: Boolean(record),
@@ -163,7 +174,7 @@ function loadExistingRecord(workspaceRoot: string): JsonRecord {
 
 export function handleImplementState(argv: string[]): void {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['cwd', 'state-file'],
+    valueOptions: ['cwd', 'state-file', 'slot'],
     booleanOptions: ['json', 'record', 'update', 'complete', 'clear'],
   });
 
@@ -176,6 +187,10 @@ export function handleImplementState(argv: string[]): void {
     throw new Error('Choose one of --record, --update, --complete, or --clear.');
   }
   const action = actions[0] ?? null;
+  const hasSlot = Object.hasOwn(options, 'slot');
+  if (action !== 'record' && hasSlot) {
+    throw new Error('--slot applies only to --record.');
+  }
   const hasStateFile = Object.hasOwn(options, 'state-file');
   if ((!action || action === 'clear') && hasStateFile) {
     throw new Error('--state-file applies only to --record, --update, or --complete.');
@@ -238,13 +253,14 @@ export function handleImplementState(argv: string[]): void {
   const timestamp = nowIso();
   let record: JsonRecord;
   if (action === 'record') {
+    const slot = resolvePlanSlotOption(options);
     const input = readStatePayload(cwd, options['state-file']);
     const baselineCommit =
       typeof input.baselineCommit === 'string' ? input.baselineCommit.trim() : '';
     if (!baselineCommit) {
       throw new Error('Provide baselineCommit in --state-file.');
     }
-    const plan = currentPlanSummary(workspaceRoot);
+    const plan = currentPlanSummary(workspaceRoot, slot);
     record = {
       ...input,
       version: 1,
@@ -253,6 +269,7 @@ export function handleImplementState(argv: string[]): void {
       round: normalizeImplementationRound(input.round),
       rounds: Array.isArray(input.rounds) ? input.rounds : [],
       plan: {
+        slot: plan.slot,
         fingerprint: plan.fingerprint,
         updatedAt: plan.updatedAt,
         verdict: plan.verdict,

@@ -359,6 +359,33 @@ test('plan-review reports approve with the plan-review-approve fixture behavior'
   assert.match(result.stdout, /No material findings\./);
 });
 
+test('plan-review --slot persists the reviewed plan only in the named slot', () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'plan-review-approve');
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
+  run('git', ['add', 'README.md'], { cwd: repo });
+  run('git', ['commit', '-m', 'init'], { cwd: repo });
+  const env = buildEnv(binDir);
+
+  const result = run(
+    'node',
+    [SCRIPT, 'plan-review', '--slot', 'Windows-Lane', 'Ship the Windows plan'],
+    { cwd: repo, env },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const durableDir = resolveDurableStateDir(repo, env.CODEX_HOME);
+  assert.equal(fs.existsSync(path.join(durableDir, 'pair-plan.json')), false);
+  assert.equal(fs.existsSync(path.join(durableDir, 'pair-plan-windows-lane.json')), true);
+  const stored = JSON.parse(
+    fs.readFileSync(path.join(durableDir, 'pair-plan-windows-lane.json'), 'utf8'),
+  );
+  assert.equal(stored.verdict, 'approve');
+  assert.match(stored.plan, /Windows plan/);
+});
+
 test('plan-review --thread resumes the same pair thread read-only and stores plan state', async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -542,7 +569,7 @@ test('plan-state reports unavailable before any plan review has run', () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).available, false);
+  assert.deepEqual(JSON.parse(result.stdout), { available: false, slot: 'default' });
 });
 
 test('plan-store persists a Claude-reviewed plan and round-trips through plan-state', () => {
@@ -611,6 +638,7 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.equal(storedPayload.effort, null);
   assert.equal(storedPayload.round, 4);
   assert.equal(storedPayload.verdict, 'approve');
+  assert.equal(storedPayload.slot, 'default');
   assert.equal(storedPayload.reviewedBy, 'claude:opus');
   assert.equal(storedPayload.summary, 'Claude approved the mixed plan.');
   assert.deepEqual(storedPayload.findings, findings);
@@ -638,6 +666,42 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.match(rendered.stdout, /Open questions:\n- Should "quotes" survive\?/);
   assert.match(rendered.stdout, /Residual risks:\n- -leading dash/);
   assert.match(rendered.stdout, /# Approved mixed plan/);
+});
+
+test('plan-store --slot writes and round-trips only the named plan file', () => {
+  const workspace = makeTempDir();
+  const plan = '# Named plan\n\nKeep the default slot untouched.\n';
+
+  const stored = run(
+    'node',
+    [
+      SCRIPT,
+      'plan-store',
+      '--json',
+      '--slot',
+      'Windows-Lane',
+      '--verdict',
+      'approve',
+      '--round',
+      '2',
+    ],
+    { cwd: workspace, input: plan },
+  );
+
+  assert.equal(stored.status, 0, stored.stderr);
+  const storedPayload = JSON.parse(stored.stdout);
+  assert.equal(storedPayload.slot, 'windows-lane');
+  assert.equal(fs.existsSync(resolvePairPlanFile(workspace)), false);
+  assert.equal(fs.existsSync(resolvePairPlanFile(workspace, 'windows-lane')), true);
+
+  const state = run('node', [SCRIPT, 'plan-state', '--json', '--slot', 'windows-lane'], {
+    cwd: workspace,
+  });
+  assert.equal(state.status, 0, state.stderr);
+  assert.deepEqual(JSON.parse(state.stdout), { available: true, ...storedPayload });
+  const { slot: storedSlot, ...storedRecord } = storedPayload;
+  assert.equal(storedSlot, 'windows-lane');
+  assert.deepEqual(loadPairPlanState(workspace, 'windows-lane'), storedRecord);
 });
 
 test('plan-store preserves pair defaults and controls the stored review thread explicitly', () => {
@@ -926,6 +990,78 @@ test('plan-store rejects invalid findings files before writing plan state', () =
   }
 });
 
+test('plan-store rejects invalid and blank slots without writing plan state', () => {
+  const cases = [
+    {
+      slot: '../escape',
+      error:
+        'Unsupported plan slot "../escape". Plan slots may contain only letters, digits, hyphens, and underscores, must start with a letter or digit, and may be at most 64 characters.',
+    },
+    { slot: '   ', error: 'Provide a name for --slot.' },
+  ];
+
+  for (const entry of cases) {
+    const workspace = makeTempDir();
+    const result = run(
+      'node',
+      [SCRIPT, 'plan-store', '--json', '--slot', entry.slot, '--verdict', 'approve'],
+      { cwd: workspace, input: '# Plan that must not be stored\n' },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(JSON.parse(result.stdout), { error: entry.error });
+    assert.equal(result.stderr.trim(), entry.error);
+    assert.equal(fs.existsSync(resolvePairPlanFile(workspace)), false);
+    assert.equal(fs.existsSync(resolveDurableStateDir(workspace)), false);
+  }
+});
+
+test('plan-state --list renders and returns an empty slot inventory', async () => {
+  const workspace = makeTempDir();
+
+  const textOutput = await captureStdout(() => handlePlanState(['--cwd', workspace, '--list']));
+  assert.equal(textOutput, 'No stored plans for this repository. Run /stereo:plan first.\n');
+
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--list', '--json']),
+  );
+  assert.deepEqual(JSON.parse(jsonOutput), { slots: [], implementStateSlot: null });
+});
+
+test('plan-state --list inventories two slots without inventing an implementation marker', async () => {
+  const workspace = makeTempDir();
+  savePairPlanState(
+    workspace,
+    storedPlan({ summary: 'Default plan summary.', implementedAt: '2026-08-02T08:00:00.000Z' }),
+  );
+  savePairPlanState(
+    workspace,
+    storedPlan({
+      verdict: 'needs-revision',
+      round: 3,
+      summary: 'Windows plan summary.',
+      updatedAt: '2026-08-02T09:00:00.000Z',
+    }),
+    'windows-lane',
+  );
+
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--list', '--json']),
+  );
+  const payload = JSON.parse(jsonOutput);
+  assert.equal(payload.implementStateSlot, null);
+  assert.deepEqual(
+    payload.slots.map((entry: { slot: string }) => entry.slot),
+    ['default', 'windows-lane'],
+  );
+
+  const textOutput = await captureStdout(() => handlePlanState(['--cwd', workspace, '--list']));
+  assert.match(textOutput, /^Stored plans \(2\):\n- default /);
+  assert.match(textOutput, /\n- windows-lane \| verdict: needs-revision \| round 3 /);
+  assert.doesNotMatch(textOutput, / \| implementation record/);
+  assert.match(textOutput, /Show one with \/stereo:plan-state --slot <name>\.\n$/);
+});
+
 test('plan-state --open materializes and refreshes the exact rendered plan', async () => {
   const workspace = makeTempDir();
   const record = storedPlan();
@@ -955,6 +1091,33 @@ test('plan-state --open materializes and refreshes the exact rendered plan', asy
   await captureStdout(() => handlePlanState(['--cwd', workspace, '--open'], deps));
 
   assert.equal(fs.readFileSync(markdownPath, 'utf8'), renderStoredPlanState(revisedRecord));
+});
+
+test('plan-state --open exports a named slot without creating the default export', async () => {
+  const workspace = makeTempDir();
+  const record = storedPlan({ plan: '# Named export\n' });
+  savePairPlanState(workspace, record, 'windows-lane');
+  const namedMarkdownPath = resolvePairPlanMarkdownFile(workspace, 'windows-lane');
+  const defaultMarkdownPath = resolvePairPlanMarkdownFile(workspace);
+  const openedPaths: string[] = [];
+  const deps: PlanStateDeps = {
+    openInEditor: async (filePath) => {
+      openedPaths.push(filePath);
+      return true;
+    },
+  };
+
+  const output = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--open', '--slot', 'windows-lane'], deps),
+  );
+
+  assert.equal(
+    fs.readFileSync(namedMarkdownPath, 'utf8'),
+    renderStoredPlanState(record, 'windows-lane'),
+  );
+  assert.equal(fs.existsSync(defaultMarkdownPath), false);
+  assert.deepEqual(openedPaths, [namedMarkdownPath]);
+  assert.match(output, /^Stored plan \(slot windows-lane, verdict: approve/);
 });
 
 test('plan-state --open reports the manual fallback in text and JSON', async () => {
@@ -1035,7 +1198,7 @@ test('plain plan-state keeps its text and JSON output byte-identical', async () 
   const textOutput = await captureStdout(() => handlePlanState(['--cwd', workspace], deps));
   assert.equal(textOutput, rendered);
 
-  const expectedPayload = { available: true, ...record };
+  const expectedPayload = { available: true, ...record, slot: 'default' };
   const jsonOutput = await captureStdout(() =>
     handlePlanState(['--cwd', workspace, '--json'], deps),
   );
@@ -1070,6 +1233,7 @@ test('plan-state --clear removes both artifacts and remains idempotent', async (
     removed: [],
     clearedImplementState: false,
     implementStateStatus: null,
+    slot: 'default',
   });
 
   const noRecordOutput = await captureStdout(() =>
@@ -1098,6 +1262,39 @@ test('plan-state --clear also removes and reports the implementation record', as
   assert.equal(fs.existsSync(implementPath), false);
 });
 
+test('plan-state --clear preserves an implementation record owned by another slot', async () => {
+  const workspace = makeTempDir();
+  const namedPlanPath = resolvePairPlanFile(workspace, 'windows-lane');
+  const implementPath = resolveImplementStateFile(workspace);
+  savePairPlanState(workspace, storedPlan(), 'windows-lane');
+  saveImplementState(workspace, {
+    status: 'in-progress',
+    baselineCommit: 'abc123',
+    plan: { slot: 'default', fingerprint: 'abc' },
+  });
+
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--clear', '--slot', 'windows-lane', '--json']),
+  );
+  const payload = JSON.parse(jsonOutput);
+  assert.equal(payload.cleared, true);
+  assert.equal(payload.clearedImplementState, false);
+  assert.equal(payload.implementStateSlot, 'default');
+  assert.equal(payload.slot, 'windows-lane');
+  assert.equal(fs.existsSync(namedPlanPath), false);
+  assert.equal(fs.existsSync(implementPath), true);
+
+  savePairPlanState(workspace, storedPlan(), 'windows-lane');
+  const textOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--clear', '--slot', 'windows-lane']),
+  );
+  assert.match(
+    textOutput,
+    /Kept the implementation record for slot default \(status: in-progress\)\.\n/,
+  );
+  assert.equal(fs.existsSync(implementPath), true);
+});
+
 test('plan-state --mark-implemented preserves review time and renders the marker', async () => {
   const workspace = makeTempDir();
   const record = storedPlan();
@@ -1108,6 +1305,7 @@ test('plan-state --mark-implemented preserves review time and renders the marker
   );
   const payload = JSON.parse(jsonOutput);
   assert.equal(payload.available, true);
+  assert.equal(payload.slot, 'default');
   assert.equal(payload.updatedAt, record.updatedAt);
   assert.equal(Number.isFinite(Date.parse(payload.implementedAt)), true);
 
@@ -1139,9 +1337,33 @@ test('plan-state mutations reject missing plans and conflicting actions', async 
   });
   assert.match(missing.stderr, /No stored plan to mark implemented/);
 
+  const missingNamed = run(
+    process.execPath,
+    [
+      SCRIPT,
+      'plan-state',
+      '--cwd',
+      workspace,
+      '--slot',
+      'windows-lane',
+      '--mark-implemented',
+      '--json',
+    ],
+    { cwd: workspace },
+  );
+  assert.notEqual(missingNamed.status, 0);
+  assert.deepEqual(JSON.parse(missingNamed.stdout), {
+    error:
+      'No stored plan in slot "windows-lane" to mark implemented. Run /stereo:plan --slot windows-lane first.',
+  });
+
   await assert.rejects(
     () => handlePlanState(['--cwd', workspace, '--open', '--clear']),
-    /Choose one of --open, --clear, or --mark-implemented/,
+    /Choose one of --list, --open, --clear, or --mark-implemented\./,
+  );
+  await assert.rejects(
+    () => handlePlanState(['--cwd', workspace, '--list', '--slot', 'named']),
+    /--list covers every slot; drop --slot\./,
   );
 });
 

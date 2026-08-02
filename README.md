@@ -302,6 +302,8 @@ raw model id, or qualified `model@provider` id, written here with the optional `
 `--effort` is the fallback for either role when its specific flag is absent. A role effort flag is
 rejected when that role is Claude-routed or excluded by `--draft-only`/`--review-only`. Under the
 Claude-routed defaults, a command-wide `--effort` is accepted but inert and reported as such.
+`--slot <name>` selects the durable plan slot and defaults to `default`; names are lowercased and
+may use letters, digits, hyphens, and underscores.
 
 With no new flags, a fresh contained `claude:opus` planner drafts and a contained `claude:fable`
 reviewer gates the plan. Claude revises the plan between rounds, rebuts findings it can disprove,
@@ -319,10 +321,11 @@ Use `--draft-only` to run and store just the draft step. The stored plan has ver
 review round 0, so implementation still presents the unapproved-plan gate. Use `--review-only` to
 load the stored plan, run one fresh review round, persist its actual verdict, and stop without
 revising it. Add `--plan-file <path>` to `--review-only` to intake an external plan using its exact
-bytes and an independent round 1; when a stored plan exists, Stereo names it and asks before
-replacing the repository's single plan slot. Missing canonical headings warn but do not reject an
-external document. The two modes conflict; each also rejects flags for a role or loop it does not
-run.
+bytes and an independent round 1. Before a full phase, draft-only run, or external intake replaces
+an unimplemented plan in its target slot, Stereo asks whether to replace it, choose a new named
+slot, or stop. Plain `--review-only` does not replace the stored plan and skips that guard. Missing
+canonical headings warn but do not reject an external document. The two modes conflict; each also
+rejects flags for a role or loop it does not run.
 
 Examples:
 
@@ -336,6 +339,7 @@ Examples:
 /stereo:plan --plan-reviewer codex:terra --effort high migrate the config loader
 /stereo:plan --planner codex:spark --planner-effort high --plan-reviewer codex:sol --plan-reviewer-effort max migrate the config loader
 /stereo:plan --draft-only draft a migration plan
+/stereo:plan --slot api-rate-limit add rate limiting to the public API
 /stereo:plan --review-only --plan-reviewer claude:opus
 /stereo:plan --review-only --plan-file ./approved-plan.md
 ```
@@ -361,6 +365,8 @@ The same Claude and Codex model values accepted by `/stereo:plan` work here, exc
 file-edit agent. `--implementer-effort` and `--implementation-reviewer-effort` override their
 respective Codex roles; `--effort` remains the fallback for either. A role effort flag is rejected
 for a Claude-routed role or a mode that does not run that role.
+`--slot <name>` selects the stored plan to implement and defaults to `default`. Resume takes its
+slot from the durable implementation record, so `--slot` and `--resume` cannot be combined.
 
 Use [`/stereo:plan-state`](#stereoplan-state) to read the complete stored plan, its review
 metadata, open questions, and residual risks before starting implementation.
@@ -437,6 +443,7 @@ Examples:
 /stereo:implement --max-fix-rounds 3
 /stereo:implement --fresh
 /stereo:implement --implement-only
+/stereo:implement --slot api-rate-limit --implement-only
 /stereo:implement --resume
 /stereo:implement --isolated
 /stereo:implement --review-only --implementation-reviewer claude:opus
@@ -457,27 +464,33 @@ user-owned command steps. Nothing is committed; you review and commit the result
 
 ### `/stereo:plan-state`
 
-Shows the complete plan most recently stored by `/stereo:plan` or `/stereo:quick`, together with
-its verdict, review round, model and Codex thread, update time, review findings, open questions,
-residual risks, and the `implementedAt` marker when present. That marker means a full implementation
-phase finished with an accepted review; it does not mean the work was committed or merged.
-Findings are rendered as a compact severity-and-title list;
-`/stereo:plan-state --json` returns their complete stored objects.
+Shows the complete plan in the selected durable slot, together with its verdict, review round,
+model and Codex thread, update time, review findings, open questions, residual risks, and the
+`implementedAt` marker when present. The default slot is selected when `--slot` is absent, and
+`/stereo:quick` always uses that slot. The marker means a full implementation phase finished with
+an accepted review; it does not mean the work was committed or merged. Findings are rendered as a
+compact severity-and-title list; `/stereo:plan-state --json` returns their complete stored objects.
 
 ```bash
 /stereo:plan-state
+/stereo:plan-state --list
+/stereo:plan-state --slot api-rate-limit
 /stereo:plan-state --open
+/stereo:plan-state --slot api-rate-limit --open
 /stereo:plan-state --clear
 /stereo:plan-state --mark-implemented
 ```
 
-Without flags, the command only renders the stored plan in the terminal. Use `--open` to refresh
-a `pair-plan.md` snapshot in the durable state directory and open it in VS Code through the
-`code` CLI. The command always prints the exported path, so you can open the file manually when
-`code` is unavailable.
+Without flags, the command only renders the default plan in the terminal. Use `--list` to inventory
+all slots and see which one owns the current implementation record. Use `--slot <name>` to select a
+named slot for showing, opening, clearing, or marking it implemented. `--open` refreshes
+`pair-plan.md` for the default slot or `pair-plan-<slot>.md` for a named slot in the durable state
+directory, then opens it in VS Code through the `code` CLI. The command always prints the exported
+path, so you can open the file manually when `code` is unavailable.
 
-`--clear` asks for confirmation and removes both stored plan artifacts. `--mark-implemented` is
-normally invoked automatically after a successful full `/stereo:implement` or `/stereo:quick`
+`--clear` asks for confirmation and removes both artifacts for the selected slot. It removes the
+single implementation record only when that record belongs to the cleared slot. `--mark-implemented`
+is normally invoked automatically after a successful full `/stereo:implement` or `/stereo:quick`
 phase; storing a new plan or review revision clears the marker.
 
 The durable state directory is normally `~/.codex/companion-state/<workspace>/`, outside the
@@ -716,17 +729,17 @@ automated revision loop.
 **Full-discovery planning sweep**
 
 ```bash
-/stereo:plan --draft-only add rate limiting to the public API
-/stereo:plan-state --open
-/stereo:plan --draft-only --planner claude:fable add rate limiting to the public API
+/stereo:plan --draft-only --slot rate-limit-opus add rate limiting to the public API
+/stereo:plan --draft-only --slot rate-limit-fable --planner claude:fable add rate limiting to the public API
+/stereo:plan-state --list
+/stereo:plan-state --slot rate-limit-opus --open
+/stereo:plan-state --slot rate-limit-fable --open
 ```
 
 Run two independent `--draft-only` passes with different planners, compare and merge their
-discoveries at the findings level, then plan once and review normally. Durable state holds exactly one stored plan per repository in `pair-plan.json`, so the
-second `/stereo:plan --draft-only` overwrites the first. After the first pass, export it with
-`/stereo:plan-state --open`; that command writes and prints `<state dir>/pair-plan.md`. Copy that
-file somewhere outside the repository before the second draft because the next `--open`
-overwrites it too.
+discoveries at the findings level, then plan once and review normally. Each draft remains in its
+own durable slot, and each `--open` writes a separate `pair-plan-<slot>.md` export, so no manual
+copy is needed between passes.
 
 **Start something long-running**
 

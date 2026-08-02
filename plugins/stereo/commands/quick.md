@@ -138,9 +138,10 @@ After the scope gate but before review, load:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json
 ```
 
-If `available` is true, warn that Quick will replace the stored plan, naming its summary and
-`updatedAt`. Report `implementedAt` when present; otherwise say `not marked implemented`. Do not
-read plan-state again during this run; carry current plan/review state in the conversation.
+If `available` is true, warn that Quick will replace the plan in the `default` slot, naming its
+summary and `updatedAt`; named slots are untouched. Report `implementedAt` when present; otherwise
+say `not marked implemented`. Do not read plan-state again during this run; carry current
+plan/review state in the conversation.
 
 ## Plan-review loop
 
