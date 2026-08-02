@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.34.0
+
+- Add `/stereo:tournament`: race two or three independent Codex implementers on the same approved
+  stored plan, each in its own throwaway detached git worktree, with staggered launches against the
+  shared workspace broker and a single relaunch on a transient busy rejection
+- Review every contestant's delta independently against the plan (no cross-contestant context),
+  present a comparison table of verdicts, diffstats, and per-invocation usage, and let the user
+  pick the winner; the winning delta lands through the existing user-confirmed `git apply --3way`
+  patch flow while losing deltas are preserved as patch files
+- Keep tournaments stateless by design: no durable implementation record, no `--resume`, the plan
+  is never marked implemented, and host gates run once in the main tree after a confirmed
+  hand-back
+
 ## 1.33.0
 
 - Add file-based `plan-store` metadata: `--summary-file`, `--open-questions-file`, and
