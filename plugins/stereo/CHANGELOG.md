@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.34.1
+
+- Allow Claude Code models as tournament contestants: the four named `claude:*` aliases and
+  `claude:inherit` run as foreground `stereo:implementer` agents confined to their own detached
+  worktrees, launched after the Codex contestants' concurrent background jobs; a denied or failed
+  Claude contestant is withdrawn (worktree retained) instead of aborting the tournament, and the
+  main-tree containment guard additionally runs after each Claude contestant returns
+- Give `/stereo:tournament` a built-in default lineup: with no `--implementer` flags it races
+  `codex:sol` at its `max` pair default against `claude:opus` at full session strength;
+  `--implementer-effort` becomes Codex-only (the shared `--effort` covers Codex contestants in
+  mixed lineups, and Claude contestants report their effort as not applicable)
+
 ## 1.34.0
 
 - Add `/stereo:tournament`: race two or three independent Codex implementers on the same approved
