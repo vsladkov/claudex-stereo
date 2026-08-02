@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.33.0
+
+- Add file-based `plan-store` metadata: `--summary-file`, `--open-questions-file`, and
+  `--residual-risks-file` mirror `--findings-file` (same containment, validation, and
+  validate-before-write ordering) so paragraph-length model text never passes through shell
+  quoting; supplying both the inline and file form of a field is a hard error, and every command
+  surface that emits a `plan-store` invocation now uses the file form
+- Add `result <id> --report` to print just the stored implementer report, with a compact
+  `jobId`/`status`/`report`/`threadId`/`tokenUsage` JSON envelope under `--json` instead of the
+  full stored-job envelope
+- Merge `implement-state --update`/`--complete` `rounds[]` entries by their `review` number
+  (`round` accepted as a legacy alias) instead of appending, so resending a round is idempotent
+  and previously duplicated entries self-heal on the next update
+
 ## 1.32.0
 
 - Add named plan slots: stored plans live in per-slot durable files selected with `--slot <name>`
