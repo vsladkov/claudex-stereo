@@ -32,6 +32,8 @@ thread reservations, plus an optional stop-time review gate.
 - [`/stereo:config`](#stereoconfig) to set durable per-workspace defaults for the four pair roles
 - [`/stereo:quick`](#stereoquick) for both phases of the same pair workflow in one command when
   the task is small
+- [`/stereo:tournament`](#stereotournament) to race 2–3 Codex implementers on the same approved
+  plan in isolated worktrees and hand back the winner
 - [`/stereo:rescue`](#stereorescue) and [`/stereo:transfer`](#stereotransfer) to delegate work and
   hand off sessions, with [`/stereo:status`, `/stereo:result`, and
   `/stereo:cancel`](#background-jobs) to manage background jobs
@@ -414,7 +416,9 @@ directory, confining Codex writes there while durable state, jobs, and the share
 keyed to the main workspace, so `/stereo:status` works as usual. Review and host checks target the
 worktree, then Stereo creates a binary patch and asks before handing it back with
 `git apply --3way`; it never creates a commit. Isolation is rejected with `--review-only` and
-`--base`, while `--resume` follows the worktree recorded by the interrupted phase.
+`--base`, while `--resume` follows the worktree recorded by the interrupted phase. Use
+[`/stereo:tournament`](#stereotournament) for the multi-implementer form of the same isolated
+worktree and patch hand-back machinery.
 
 Codex implementation-review tasks pass the shipped implementation-review schema to the runtime,
 so their final messages are schema-constrained before the command performs its normal validation
@@ -546,6 +550,48 @@ are stored before quick transitions or stops, so later `/stereo:implement` gates
 
 The latest reviewed plan is stored normally, so an interrupted approved run can resume with
 `/stereo:implement`. Nothing is committed or pushed.
+
+### `/stereo:tournament`
+
+Runs one already-approved stored plan through 2 or 3 independent Codex implementers concurrently. Each
+contestant starts a fresh write thread in its own detached temporary worktree at the same `HEAD`,
+so the main working tree stays untouched until you choose a winner and confirm patch hand-back.
+Two contestants are the minimum for a comparison; three is the cap because every extra contestant
+adds a concurrent write turn and an independent review, increasing cost, rate-limit pressure, and
+cleanup work. Use `/stereo:implement` when you want one implementer.
+
+Contestants must be Codex-routed. Claude implementers run in the foreground, cannot execute
+concurrently, and may be unable to write outside the main workspace. The one selected
+implementation reviewer may be Claude or Codex, but it receives each contestant independently in
+declaration order: every verdict is a fresh single-round review with no contestant or reviewer
+history carried into the next one. Stereo then shows the models, diffstats, implementer reports,
+review verdicts, and usage side by side and asks you which delta to hand back. It never chooses the
+winner automatically.
+
+Tournament worktrees are fresh checkouts and often lack gitignored dependencies or generated
+artifacts, so Stereo does not run the host gate suite per contestant and reviewers are told that
+the deltas are unverified. After a confirmed `git apply --3way` hand-back, the normal repository
+gates run once in the main tree. This makes tournaments most useful when tests do not need
+gitignored artifacts—or when you are comfortable treating the post-hand-back gates as the real
+verdict.
+
+Before removing any completed losing worktree, Stereo writes its binary delta to a patch file
+outside every repository tree and prints that path, so a losing implementation remains
+recoverable. Failed or cancelled contestants retain their worktrees so partial deltas are not
+destroyed. A crash or closed session can also strand worktrees; find them with
+`git worktree list --porcelain` and remove an unwanted path with `git worktree remove --force`.
+
+The tournament deliberately writes no implementation or tournament record, has no `--resume`, and
+never marks the stored plan implemented. Jobs and results remain visible through
+`/stereo:status` and `/stereo:result`, while worktrees remain discoverable through Git. A complete
+run costs 2–3 concurrent Codex write turns plus one reviewer invocation per non-empty contestant,
+so check both providers' usage limits before racing expensive models.
+
+```bash
+/stereo:tournament --implementer codex:sol --implementer codex:spark
+/stereo:tournament --implementer codex:sol --implementer codex:sol --implementer-effort high --implementer-effort max
+/stereo:tournament --slot api-rate-limit --implementer codex:sol --implementer codex:terra --implementation-reviewer claude:opus
+```
 
 ### `/stereo:rescue`
 

@@ -17,7 +17,7 @@ function read(relativePath: string): string {
 // sentences preserved stale text (a pinned README example once asserted a
 // model name that no longer existed) while taxing every legitimate edit.
 
-test('the command surface is exactly the thirteen stereo commands', () => {
+test('the command surface is exactly the fourteen stereo commands', () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, 'commands')).sort();
   assert.deepEqual(commandFiles, [
     'adversarial-review.md',
@@ -32,6 +32,7 @@ test('the command surface is exactly the thirteen stereo commands', () => {
     'review.md',
     'setup.md',
     'status.md',
+    'tournament.md',
     'transfer.md',
   ]);
 });
@@ -58,6 +59,11 @@ test('every command wires the companion entry point it documents', () => {
     'review.md': /codex-companion\.ts" review "\$ARGUMENTS"/,
     'setup.md': /codex-companion\.ts" setup "\$ARGUMENTS --json"/,
     'status.md': /codex-companion\.ts" status "\$ARGUMENTS"/,
+    'tournament.md': [
+      /task --background --json --write --model <contestantModel>/,
+      /plan-state --json <slotArg>/,
+      /worktree add --detach/,
+    ],
     'transfer.md': /codex-companion\.ts" transfer "\$ARGUMENTS"/,
   };
   for (const [file, required] of Object.entries(wiring)) {
@@ -94,6 +100,7 @@ test('directly-wired commands disable model invocation of the command file', () 
     'review.md',
     'setup.md',
     'status.md',
+    'tournament.md',
     'transfer.md',
   ]) {
     assert.match(read(path.join('commands', file)), /^disable-model-invocation:\s*true$/m, file);
@@ -317,6 +324,42 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     'both implementation-review task templates must keep runtime schema enforcement',
   );
 
+  const tournament = read('commands/tournament.md');
+  assert.match(tournament, /skills\/model-routing\/SKILL\.md/);
+  assert.match(tournament, /config --json/);
+  assert.match(tournament, /plan-state --json <slotArg>/);
+  assert.match(tournament, /implement-state --json/);
+  assert.match(tournament, /schemas\/implementation-review-output\.schema\.json/);
+  assert.match(tournament, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
+  assert.match(tournament, /^allowed-tools:.*Bash\(npm:\*\)/m);
+  assert.match(tournament, /run_in_background: false/);
+  assert.equal(
+    (tournament.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
+    2,
+    'Tournament must deliver its implementer and reviewer payloads by file',
+  );
+  const tournamentTaskLines = tournament
+    .split('\n')
+    .filter((line) => line.startsWith('node ') && line.includes('task --background'));
+  assert.equal(tournamentTaskLines.length, 2);
+  for (const line of tournamentTaskLines) {
+    assert.match(line, /<isolationArgs>/);
+  }
+  assert.match(tournament, /git -C "<mainRoot>" apply --3way --check/);
+  assert.match(tournament, /worktree remove --force/);
+  const tournamentHint = tournament.match(/^argument-hint:.*$/m)?.[0] ?? '';
+  for (const flag of [
+    '--implementer',
+    '--implementer-effort',
+    '--implementation-reviewer',
+    '--effort',
+    '--slot',
+  ]) {
+    assert.match(tournamentHint, new RegExp(flag));
+  }
+  assert.doesNotMatch(tournament, /--mark-implemented/);
+  assert.doesNotMatch(tournament, /implement-state --record/);
+
   const quick = read('commands/quick.md');
   assert.match(quick, /skills\/model-routing\/SKILL\.md/);
   assert.match(quick, /plan-state --json/);
@@ -447,6 +490,7 @@ test('pair commands fill the canonical role briefs', () => {
   const plan = read('commands/plan.md');
   const implement = read('commands/implement.md');
   const quick = read('commands/quick.md');
+  const tournament = read('commands/tournament.md');
 
   for (const [file, source] of [
     ['plan.md', plan],
@@ -469,6 +513,7 @@ test('pair commands fill the canonical role briefs', () => {
   for (const [file, source] of [
     ['implement.md', implement],
     ['quick.md', quick],
+    ['tournament.md', tournament],
   ] as const) {
     assert.match(
       source,
