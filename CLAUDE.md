@@ -73,14 +73,12 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   changelog entry as notes, and push main plus the tag. `CHANGELOG.md` is
   append-only history — never retro-edit shipped entries.
 - CI also runs `npm test` and `npm run build` (an alias for typecheck, still
-  with no emit). `.gitattributes` normalizes line endings. The green-but-advisory
-  Windows lane runs the portable `npm run test:windows` subset plus formatting,
-  lint, and version checks; its Codex-dependent codegen/typecheck steps remain
-  informational. Promote the lane after three consecutive green `main` runs and
-  a green typecheck step, removing the job-level and typecheck step-level
-  `continue-on-error` flags together. CI installs a pinned Codex CLI for the
-  codegen prestep — bump the pin in `.github/workflows/ci.yml` when upgrading
-  Codex locally.
+  with no emit). `.gitattributes` normalizes line endings. The required Windows
+  lane (promoted from advisory after three consecutive green `main` runs) runs
+  the portable `npm run test:windows` subset plus formatting, lint, and version
+  checks, and the Codex codegen/typecheck build step. CI installs a pinned
+  Codex CLI for the codegen prestep on both lanes — bump the pin in
+  `.github/workflows/ci.yml` when upgrading Codex locally.
 - Codex write runs need `sysctl kernel.apparmor_restrict_unprivileged_userns=0`
   (Ubuntu 24.04; not persisted across reboots — the symptom after a reboot is
   bubblewrap failing with `bwrap: loopback: Failed RTM_NEWADDR`).

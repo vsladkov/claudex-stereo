@@ -48,13 +48,10 @@ jobs:
       - name: Run build
         run: npm run build
 
-  # Remove the job-level continue-on-error after three consecutive green main runs and a green
-  # typecheck step; drop the typecheck step's continue-on-error at the same time.
   windows:
-    name: Windows (advisory)
+    name: Windows
     runs-on: windows-latest
     timeout-minutes: 10
-    continue-on-error: true
 
     steps:
       - name: Check out repository
@@ -81,11 +78,8 @@ jobs:
       - name: Run portable test suite
         run: npm run test:windows
 
-      # Informational until `codex app-server generate-ts` is proven on Windows.
       - name: Install Codex CLI
-        continue-on-error: true
         run: npm install -g @openai/codex@0.145.0
 
       - name: Run build
-        continue-on-error: true
         run: npm run build
