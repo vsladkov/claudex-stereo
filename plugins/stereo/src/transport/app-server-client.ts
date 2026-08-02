@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import net from 'node:net';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
@@ -10,6 +9,7 @@ import type { Readable, Writable } from 'node:stream';
 import { parseBrokerEndpoint } from '../broker/endpoint.ts';
 import { ensureBrokerSession, loadBrokerSession } from '../broker/lifecycle.ts';
 import { terminateProcessTree } from '../platform/process.ts';
+import { readPluginManifestVersion } from '../shared/plugin-manifest.ts';
 import {
   BROKER_ENDPOINT_ENV,
   resolveAppServerConnectTimeoutMs,
@@ -37,12 +37,10 @@ interface PendingRequest {
 }
 
 const MAX_STDERR_BYTES = 64 * 1024;
-const PLUGIN_MANIFEST_URL = new URL('../../.claude-plugin/plugin.json', import.meta.url);
 
-export function readPluginVersion(manifestUrl: URL = PLUGIN_MANIFEST_URL): string {
+export function readPluginVersion(manifestFile?: string): string {
   try {
-    const manifest = JSON.parse(fs.readFileSync(manifestUrl, 'utf8')) as { version?: unknown };
-    return typeof manifest?.version === 'string' ? manifest.version : '0.0.0';
+    return readPluginManifestVersion(manifestFile);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     process.stderr.write(

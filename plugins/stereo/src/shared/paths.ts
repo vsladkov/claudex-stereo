@@ -13,3 +13,5 @@ export const PROMPTS_ROOT = PLUGIN_ROOT;
 export const COMPANION_ENTRY = path.join(PLUGIN_ROOT, 'scripts', 'codex-companion.ts');
 
 export const BROKER_ENTRY = path.join(PLUGIN_ROOT, 'scripts', 'app-server-broker.ts');
+
+export const PLUGIN_MANIFEST_FILE = path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json');

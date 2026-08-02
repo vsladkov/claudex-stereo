@@ -21,6 +21,7 @@ const EXCLUDED_WINDOWS_TESTS = new Set([
   'runtime-sessions.test.ts',
   'runtime-tasks.test.ts',
   'stop-review-gate.test.ts',
+  'version-command.test.ts',
 ]);
 
 function windowsTestFiles(): string[] {

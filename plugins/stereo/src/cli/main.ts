@@ -11,6 +11,7 @@ import { handleResult, handleStatus } from './commands/status.ts';
 import { handleCancel } from './commands/cancel.ts';
 import { handleConfig } from './commands/config.ts';
 import { handleImplementState } from './commands/implement.ts';
+import { handleVersion } from './commands/version.ts';
 
 async function main(fullArgv: string[]): Promise<void> {
   const [subcommand, ...argv] = fullArgv;
@@ -64,6 +65,9 @@ async function main(fullArgv: string[]): Promise<void> {
       break;
     case 'cancel':
       await handleCancel(argv);
+      break;
+    case 'version':
+      handleVersion(argv);
       break;
     default:
       throw new Error(`Unknown subcommand: ${subcommand}`);

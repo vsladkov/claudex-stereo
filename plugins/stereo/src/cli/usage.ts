@@ -15,6 +15,7 @@ export function printUsage(): void {
       '  node scripts/codex-companion.ts status [job-id] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--usage] [--verbose] [--json]',
       '  node scripts/codex-companion.ts result [job-id] [--report] [--json]',
       '  node scripts/codex-companion.ts cancel [job-id] [--json]',
+      '  node scripts/codex-companion.ts version [--json]',
     ].join('\n'),
   );
 }
