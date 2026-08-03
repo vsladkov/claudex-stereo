@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.39.0
+
+- Make tournaments durable and resumable: a new `tournament-state` companion subaction keeps a
+  per-workspace record (contestants merged by label, plan-fingerprint snapshot with drift
+  detection, bounded summaries under the same 512 KiB rule as the implementation record), the
+  tournament records every phase transition into it, and `/stereo:tournament --resume` re-enters
+  an interrupted run by recorded contestant status — with honest limits: Codex contestants
+  recover from their durable jobs, a Claude contestant that already started is judged on its
+  worktree delta only, and a mandatory delta guard prevents re-invoking any contestant whose
+  worktree shows work regardless of its recorded status
+- Let the workspace `implementer` default supply the default lineup's first seat when it is valid
+  and Codex-routed (falling back to `codex:sol`), with the pre-launch announcement naming which
+  source supplied it
+- Mark the stored plan implemented automatically after a fully successful hand-back — acceptable
+  winner, clean apply, and all main-tree gates green — ending the follow-up friction of an
+  implemented-in-fact but unmarked plan, while tournaments still never write the implementation
+  record
+
 ## 1.38.0
 
 - Add `/stereo:doctor`, a diagnostics command for workspace state that previously had no
