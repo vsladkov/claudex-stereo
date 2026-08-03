@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.36.0
+
+- `/stereo:tournament` now selects the winner automatically when the review evidence is decisive:
+  exactly one acceptable contestant wins outright, byte-identical acceptable deltas win by lowest
+  label, and the selection question remains only for genuine ambiguity (multiple differing
+  acceptable deltas, or none acceptable); a decisively selected winner is auto-applied when no
+  patched path overlaps a dirty path, `HEAD` has not moved, and the 3-way pre-check passes, host
+  gates now run after any successful apply, and the final report names which decisiveness rule
+  fired
+- `/stereo:review` gains a first-class Claude route: `claude:session`, `claude:inherit`, and the
+  four named aliases run a standard implementation-quality review in the foreground through the
+  new `stereo:reviewer` agent and review prompt, validated against the same `review-output`
+  schema as `/stereo:adversarial-review`, while Codex selections keep the built-in reviewer,
+  `--background` stays Codex-only, and custom focus text is rejected on both routes
+- Restructure `commands/review.md` to mirror `adversarial-review.md` section for section, add the
+  routing skill's sixth foreground-agent template, and update the structural test pins and the
+  README's helper count, deliberate boundaries, and route-parity table coordinately
+
 ## 1.35.0
 
 - Add a `version` subcommand to the companion CLI: `codex-companion.ts version` prints the running
