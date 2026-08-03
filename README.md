@@ -24,7 +24,7 @@ thread reservations, plus an optional stop-time review gate.
 
 ## What you get
 
-- [`/stereo:review`](#stereoreview) for a normal read-only Codex review
+- [`/stereo:review`](#stereoreview) for a normal read-only review routed to Codex or Claude
 - [`/stereo:adversarial-review`](#stereoadversarial-review) for a steerable challenge review
 - [`/stereo:plan`](#stereoplan) and [`/stereo:implement`](#stereoimplement) for a checkpointed
   pair workflow with an independent Claude or Codex model choice at every step
@@ -98,9 +98,9 @@ If Codex is installed but not logged in yet, run:
 After install, you should see:
 
 - the slash commands listed below
-- the `stereo:codex-rescue` subagent and the five pair-workflow helpers—`stereo:planner`,
-  `stereo:plan-reviewer`, `stereo:implementer`, `stereo:implementation-reviewer`, and
-  `stereo:adversarial-reviewer`—in `/agents`
+- the `stereo:codex-rescue` subagent and the six pair-workflow helpers—`stereo:planner`,
+  `stereo:plan-reviewer`, `stereo:implementer`, `stereo:implementation-reviewer`,
+  `stereo:reviewer`, and `stereo:adversarial-reviewer`—in `/agents`
 
 ## Quick start
 
@@ -178,12 +178,14 @@ live in the [Model routing reference](#model-routing-reference).
 
 ### `/stereo:review`
 
-Runs a normal Codex review on your current work. It gives you the same quality of code review as
-running `/review` inside Codex directly.
+Runs a normal read-only implementation-quality review on your current work. Codex selections use
+the same built-in reviewer as running `/review` inside Codex directly; Claude selections use
+Stereo's standard structured review brief.
 
 > [!NOTE]
-> Code review especially for multi-file changes might take a while. It's generally recommended
-> to run it in the background.
+> Code review especially for multi-file changes might take a while. For a Codex selection, it's
+> generally recommended to run it in the background; Claude selections always run in the
+> foreground.
 
 Use it when you want:
 
@@ -195,12 +197,15 @@ working tree when `git status --short --untracked-files=all` is non-empty; other
 default-base branch diff. `--base <ref>` takes precedence over `--scope`. The `staged` and
 `unstaged` scopes are rejected.
 
-The command also supports `--wait`, `--background`, and a Codex `--model`. It is not steerable and
-does not take custom focus text. Claude model selections are rejected because this command maps to
-Codex's built-in reviewer; use
-[`/stereo:adversarial-review`](#stereoadversarial-review) for a Claude-routed challenge review.
-An explicit `--effort` is also rejected: the built-in `review/start` API has no reasoning-effort
-control. Use adversarial review when effort control is required.
+The command supports `--wait`, `--background`, and `--model` across both routes. Codex selections
+use Codex's built-in reviewer. `claude:session`, `claude:inherit`, `claude:sonnet`, `claude:opus`,
+`claude:haiku`, and `claude:fable` run Stereo's standard review brief in the foreground against the
+same `review-output.schema.json` contract used by
+[`/stereo:adversarial-review`](#stereoadversarial-review). A
+`--background --model claude:*` combination is rejected because Claude agent runs are bound to the
+current session; durable background reviews remain Codex-only. `--effort` is rejected on both
+routes. The command takes no custom focus text on either route; use adversarial review for a
+steerable or challenge review.
 
 `--pr <n>` is user-side sugar for reviewing a checked-out pull request. When the optional `gh` CLI
 is installed and authenticated, Stereo resolves the PR's base and verifies that `HEAD` exactly
@@ -215,6 +220,7 @@ Examples:
 /stereo:review --base main
 /stereo:review --pr 42
 /stereo:review --background
+/stereo:review --model claude:opus
 ```
 
 This command is read-only and will not perform any changes. When run in the background you can
@@ -557,8 +563,8 @@ Runs one already-approved stored plan through 2 or 3 independent implementers. W
 `--implementer` flags, the built-in default lineup races `codex:sol` at its `max` model-pair default
 unless `--effort` or the workspace implementer effort default overrides it, against `claude:opus`
 at full session strength (Claude has no effort dial). Each contestant starts in its own detached
-temporary worktree at the same `HEAD`, so the main working tree stays untouched until you choose a
-winner and confirm patch hand-back. Two contestants are the minimum for a comparison; three is the
+temporary worktree at the same `HEAD`, so the main working tree stays untouched while contestants
+run and their evidence is reviewed. Two contestants are the minimum for a comparison; three is the
 cap because every extra contestant adds an implementation run and an independent review,
 increasing cost, rate-limit pressure, and cleanup work. Use `/stereo:implement` when you want one
 implementer.
@@ -571,8 +577,13 @@ contestants then run one at a time in the foreground before Codex polling resume
 Codex contestant in a mixed lineup. The one selected implementation reviewer may be Claude or
 Codex, but it receives each contestant independently in declaration order: every verdict is a fresh
 single-round review with no contestant or reviewer history carried into the next one. Stereo then
-shows the models, diffstats, implementer reports, review verdicts, and usage side by side and asks
-you which delta to hand back. It never chooses the winner automatically.
+shows the models, diffstats, implementer reports, review verdicts, and usage side by side. When
+exactly one contestant is acceptable, or when every acceptable contestant produced a byte-identical
+delta, Stereo selects the winner automatically. When no patched path overlaps a currently dirty
+path, `HEAD` has not moved, and Git's 3-way preflight succeeds, it also applies that patch itself.
+When several acceptable contestants disagree or none is acceptable, Stereo shows the comparison
+and asks which delta to hand back. Nothing is ever committed or pushed, and every losing delta is
+still preserved as a patch file.
 
 A Claude contestant is file-edits-only with no shell, so shell-requiring plan steps appear as
 deviations in its report and comparison row. A denied or failed Claude contestant is withdrawn with
@@ -581,10 +592,10 @@ its worktree retained. It has no job id, so it does not appear in `/stereo:statu
 
 Tournament worktrees are fresh checkouts and often lack gitignored dependencies or generated
 artifacts, so Stereo does not run the host gate suite per contestant and reviewers are told that
-the deltas are unverified. After a confirmed `git apply --3way` hand-back, the normal repository
-gates run once in the main tree. This makes tournaments most useful when tests do not need
-gitignored artifacts—or when you are comfortable treating the post-hand-back gates as the real
-verdict.
+the deltas are unverified. After any successful `git apply --3way` hand-back, whether automatic or
+user-confirmed, the normal repository gates run once in the main tree. This makes tournaments most
+useful when tests do not need gitignored artifacts—or when you are comfortable treating the
+post-hand-back gates as the real verdict.
 
 Before removing any completed losing worktree, Stereo writes its binary delta to a patch file
 outside every repository tree and prints that path, so a losing implementation remains
@@ -943,6 +954,7 @@ Stereo uses one canonical brief per role, regardless of which ecosystem performs
 | ----------------------- | ------------------------------------------------- | -------------------------------------- | ------------------------------------------------ |
 | Planner                 | `plugins/stereo/prompts/plan-draft.md`            | Orchestrating command                  | Plan and Quick drafts, all routes                |
 | Plan reviewer           | `plugins/stereo/prompts/plan-review.md`           | Runtime for Codex; command for Claude  | Plan and Quick review rounds, all routes         |
+| Reviewer                | `plugins/stereo/prompts/review.md`                | Command on Claude; Codex uses built-in | `/stereo:review`                                 |
 | Implementation reviewer | `plugins/stereo/prompts/implementation-review.md` | Command; Codex runtime enforces schema | Implement and Quick review rounds, all routes    |
 | Adversarial reviewer    | `plugins/stereo/prompts/adversarial-review.md`    | Runtime for Codex; command for Claude  | Adversarial review, both ecosystems              |
 | Implementer             | Equivalent prompt and contained-agent contracts   | Route-specific by containment boundary | Implement and Quick implementation and fix turns |
@@ -961,24 +973,23 @@ remain platform- and user-owned.
 
 ### Deliberate boundaries
 
-There are three deliberate boundaries. `/stereo:review` remains Codex-native; use
-`/stereo:adversarial-review` for a Claude-routed review. `/stereo:rescue` and `/stereo:transfer`
-remain Codex bridges. `claude:session` is rejected for implementation so Claude writes stay
-contained in the file-edit-only implementer agent.
+There are two deliberate boundaries. `/stereo:rescue` and `/stereo:transfer` remain Codex bridges.
+`claude:session` is rejected for implementation so Claude writes stay contained in the
+file-edit-only implementer agent.
 
-| Surface                                                                | Codex route              | Claude route                                          | Why                                                                     |
-| ---------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------- |
-| Pair role flags (`/stereo:plan`, `/stereo:implement`, `/stereo:quick`) | All four roles           | All four; the implementer excludes `claude:session`   | Claude writes stay in the contained implementer agent                   |
-| `/stereo:tournament` contestants                                       | Two or three contestants | Named agents only; no `claude:session`                | Every contestant writes in an isolated worktree                         |
-| Tournament/implement implementation reviewer                           | Yes                      | Yes, including `claude:session`                       | Review routing stays independent of implementation routing              |
-| `/stereo:config` role defaults                                         | All four roles           | All four, with the same implementer containment       | Durable workspace intent is available for either route                  |
-| `/stereo:adversarial-review --model`                                   | Foreground or background | Foreground only                                       | `--background` creates durable Codex jobs                               |
-| `/stereo:review --model`                                               | Built-in `review/start`  | No; use `/stereo:adversarial-review`                  | Codex's tuned reviewer API has no Claude analogue                       |
-| `/stereo:rescue --model`                                               | Companion `task` runtime | Rejected; use Quick, Implement, or adversarial review | Rescue is a thin Codex bridge                                           |
-| `/stereo:transfer`                                                     | Fixed destination        | Source session only; no Claude destination            | Transfer is deliberately Claude → Codex                                 |
-| `--effort` and `--*-effort`                                            | Runtime controls         | No control; choose a Claude model instead             | An all-Claude command-wide `--effort` is accepted and reported as inert |
-| `--background` and `/stereo:status`                                    | Durable jobs and status  | Session-bound agents; use foreground role routes      | There is no session-independent Claude execution surface                |
-| Stored-plan `model`/`effort`                                           | Last Codex pair values   | Not recorded; use `/stereo:config` workspace defaults | The Claude workspace default outranks the stored-plan model             |
+| Surface                                                                | Codex route              | Claude route                                          | Why                                                                                                                 |
+| ---------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Pair role flags (`/stereo:plan`, `/stereo:implement`, `/stereo:quick`) | All four roles           | All four; the implementer excludes `claude:session`   | Claude writes stay in the contained implementer agent                                                               |
+| `/stereo:tournament` contestants                                       | Two or three contestants | Named agents only; no `claude:session`                | Every contestant writes in an isolated worktree                                                                     |
+| Tournament/implement implementation reviewer                           | Yes                      | Yes, including `claude:session`                       | Review routing stays independent of implementation routing                                                          |
+| `/stereo:config` role defaults                                         | All four roles           | All four, with the same implementer containment       | Durable workspace intent is available for either route                                                              |
+| `/stereo:adversarial-review --model`                                   | Foreground or background | Foreground only                                       | `--background` creates durable Codex jobs                                                                           |
+| `/stereo:review --model`                                               | Built-in `review/start`  | Foreground-only standard structured review            | Codex's built-in reviewer has no Claude analogue, so Stereo supplies its own brief; `--background` stays Codex-only |
+| `/stereo:rescue --model`                                               | Companion `task` runtime | Rejected; use Quick, Implement, or adversarial review | Rescue is a thin Codex bridge                                                                                       |
+| `/stereo:transfer`                                                     | Fixed destination        | Source session only; no Claude destination            | Transfer is deliberately Claude → Codex                                                                             |
+| `--effort` and `--*-effort`                                            | Runtime controls         | No control; choose a Claude model instead             | An all-Claude command-wide `--effort` is accepted and reported as inert                                             |
+| `--background` and `/stereo:status`                                    | Durable jobs and status  | Session-bound agents; use foreground role routes      | There is no session-independent Claude execution surface                                                            |
+| Stored-plan `model`/`effort`                                           | Last Codex pair values   | Not recorded; use `/stereo:config` workspace defaults | The Claude workspace default outranks the stored-plan model                                                         |
 
 Implementation review defaults to a contained `claude:fable`, independent of the orchestrating
 session that produced and fixed the work. The cheaper `claude:session` route remains available as

@@ -56,6 +56,11 @@ const PRODUCTION_VARIABLES = {
     ROUND_NUMBER: '1',
     REVISION_CONTEXT: '',
   },
+  review: {
+    TARGET_LABEL: 'working tree diff',
+    REVIEW_COLLECTION_GUIDANCE: '',
+    REVIEW_INPUT: 'diff content',
+  },
   'stop-review-gate': {
     CLAUDE_RESPONSE_BLOCK: '',
   },
@@ -80,6 +85,7 @@ test('review prompts fence every untrusted data block from instructions', () => 
     'implementation-review': 3,
     'plan-review': 2,
     'adversarial-review': 2,
+    review: 1,
   } as const;
 
   for (const [name, expectedCount] of Object.entries(expectedCounts)) {

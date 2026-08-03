@@ -121,17 +121,18 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     'plan-reviewer',
     'implementer',
     'implementation-reviewer',
+    'reviewer',
     'adversarial-reviewer',
   ]) {
     assert.match(routing, new RegExp(`subagent_type: "stereo:${role}"`), role);
   }
   assert.ok(
-    (routing.match(/run_in_background: false/g) ?? []).length >= 5,
+    (routing.match(/run_in_background: false/g) ?? []).length >= 6,
     'all routing-skill Agent templates must stay foreground',
   );
   assert.equal(
     (routing.match(/^model: "<sonnet\|opus\|haiku\|fable>"$/gm) ?? []).length,
-    5,
+    6,
     'all explicit Claude aliases must keep passing an invocation-level model',
   );
   assert.match(routing, /\|\s*`claude:inherit`\s*\|/);
@@ -488,7 +489,12 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(adversarial, /^allowed-tools:.*Bash\(gh:\*\)/m);
 
   const nativeReview = read('commands/review.md');
-  assert.match(nativeReview, /does not accept Claude models/);
+  assert.match(nativeReview, /skills\/model-routing\/SKILL\.md/);
+  assert.match(nativeReview, /prompts\/review\.md/);
+  assert.match(nativeReview, /schemas\/review-output\.schema\.json/);
+  assert.match(nativeReview, /`stereo:reviewer`/);
+  assert.match(nativeReview, /^allowed-tools:.*\bAgent\b.*$/m);
+  assert.match(nativeReview, /run_in_background: false/);
   assert.match(nativeReview, /\/stereo:adversarial-review/);
   assert.match(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /--pr/);
   assert.doesNotMatch(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /--effort/);
@@ -556,6 +562,7 @@ test('pair agents keep their role-specific tool and output contracts', () => {
     'implementer.md',
     'plan-reviewer.md',
     'planner.md',
+    'reviewer.md',
   ];
   assert.deepEqual(fs.readdirSync(path.join(PLUGIN_ROOT, 'agents')).sort(), expectedAgents);
 
@@ -570,6 +577,8 @@ test('pair agents keep their role-specific tool and output contracts', () => {
 
   const adversarialReviewer = read('agents/adversarial-reviewer.md');
   assert.match(adversarialReviewer, /schemas\/review-output\.schema\.json/);
+
+  assert.match(read('agents/reviewer.md'), /schemas\/review-output\.schema\.json/);
 
   const implementationReviewer = read('agents/implementation-reviewer.md');
   assert.match(implementationReviewer, /schemas\/implementation-review-output\.schema\.json/);
@@ -592,6 +601,7 @@ test('pair agents keep their role-specific tool and output contracts', () => {
     'implementation-reviewer.md',
     'plan-reviewer.md',
     'planner.md',
+    'reviewer.md',
   ]) {
     assert.match(
       read(path.join('agents', file)),

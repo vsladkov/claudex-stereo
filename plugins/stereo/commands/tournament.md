@@ -11,7 +11,7 @@ agent, validation, quoting, and background-job rules. The rules below are step-s
 Run one stored plan through independent Codex-routed or Claude-routed contestants in isolated
 worktrees. Codex contestants run as concurrent detached jobs, while Claude contestants run one at a
 time in the foreground. The main Claude session owns preflight, containment, evidence collection,
-independent reviews, user selection, hand-back, cleanup, and final verification.
+independent reviews, winner selection, hand-back, cleanup, and final verification.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
@@ -427,7 +427,7 @@ Do not run host gates per contestant. Fresh worktrees commonly lack gitignored d
 generated artifacts, and paying the full suite cost for every candidate is not useful when the
 isolated result would only say `not runnable in the isolated worktree`. For every contestant set
 `{{HOST_RESULTS}}` to: host verification was not run in this worktree, and the reviewer must not
-treat the delta as verified. Run the complete gate set once in the main tree only after a confirmed
+treat the delta as verified. Run the complete gate set once in the main tree only after a successful
 hand-back.
 
 ## Per-contestant implementation review
@@ -516,15 +516,40 @@ metric. State beside the table that no candidate has passed host gates. A Claude
 not run any command at all, so its shell-requiring plan steps appear as deviations. Also flag
 byte-identical deltas.
 
-Use `AskUserQuestion` exactly once with one option per selectable contestant plus
-`Discard all and stop`. Suffix `(Recommended)` on the acceptable contestant with the fewest fixes,
-breaking ties by the smallest total diff. If no contestant is acceptable, recommend none and say
-so plainly.
+Print the comparison table before making or asking for any decision. Define the selectable
+contestants as the non-empty, completed contestants with validated review verdicts; an unvalidated
+review already stopped the run under the rules above. Evaluate this ordered decisiveness rule over
+that set:
+
+1. `single-acceptable` — exactly one contestant is `acceptable`. Select it as the winner without
+   asking.
+2. `identical-acceptable` — two or more contestants are acceptable and every acceptable
+   contestant's patch file is byte-identical. Select the lowest-labeled acceptable contestant
+   without asking, and state that the choice is immaterial because those deltas are identical.
+3. `tie-ask` — two or more contestants are acceptable and their deltas differ. The evidence is
+   ambiguous, so ask.
+4. `none-acceptable-ask` — zero contestants are acceptable. The evidence is ambiguous, so ask.
+
+The implementation-review contract makes these branches exhaustive: `acceptable: true` is valid
+only with an empty `fixes` array, so every acceptable contestant has zero fixes and fix count cannot
+separate two acceptable contestants. Total diff size is not decisive evidence and must never
+auto-select a winner.
+
+For either decisive branch, announce the auto-selection before proceeding. Name the rule id and
+the winner's label, route, selection, verdict, and review summary. Name every rejected alternative
+with its verdict and fix count, and include every withdrawn or empty contestant. When the winner is
+the only selectable contestant, say so explicitly rather than overstating the comparison.
+
+For either ask branch, use `AskUserQuestion` exactly once with one option per selectable contestant
+plus `Discard all and stop`. For `tie-ask`, suffix `(Recommended)` on the acceptable contestant with
+the smallest total diff; this is a recommendation tie-break only. For `none-acceptable-ask`,
+recommend none and say so plainly.
 
 If the user discards all, remove every selectable contestant worktree, leave every patch file in
 place, print all patch paths, and report the cleanup results. Retain withdrawn contestants as
 specified above. Otherwise save the selected contestant as the winner. After this selection
-question is answered, remove every unchosen selectable worktree with:
+question is answered or after an auto-selection announcement, remove every unchosen selectable
+worktree the same way with:
 
 ```bash
 git -C "<mainRoot>" worktree remove --force "<worktreePath>"
@@ -543,7 +568,25 @@ git -C "<mainRoot>" rev-parse HEAD
 ```
 
 Report every overlap between patched paths and currently dirty main-tree paths, and report when
-`HEAD` moved from `baselineCommit`. Show the winning patch stat and ask exactly once:
+`HEAD` moved from `baselineCommit` as the first hand-back step on both selection paths.
+
+An auto-selected winner is eligible for automatic apply only when all four preconditions are
+provably true:
+
+1. The winner was auto-selected, so it is `acceptable` with zero fixes.
+2. No patched path overlaps the recomputed main-tree dirty path set.
+3. The recomputed `HEAD` still equals `baselineCommit`.
+4. `git -C "<mainRoot>" apply --3way --check "<patchFile>"` exits zero.
+
+If precondition 2 or 3 fails, fall back to the same three-option hand-back question used for a
+user-selected winner. Include the existing overlap-refusal or moved-`HEAD` warning described below.
+If both hold, capture the pre-apply status and evaluate precondition 4. When the check succeeds,
+apply without asking and report that the apply was automatic under the named decisiveness rule.
+When the check fails, do not apply; use the failure reporting below and retain the patch and
+worktree.
+
+For a user-selected winner, or for an auto-selected winner falling back because precondition 2 or
+3 failed, show the winning patch stat and ask exactly once:
 
 - `Apply the patch to the working tree (Recommended)`
 - `Leave the patch and the worktree for me`
@@ -554,24 +597,29 @@ overlaps a currently dirty path, say inside the same question that apply is refu
 overlap is cleaned; if the user nevertheless selects apply, do not run Git, retain the patch and
 worktree, and report the refusal.
 
-On an allowed apply, first run:
+On an allowed apply from the question, capture the pre-apply status and first run the same check
+used for automatic apply:
 
 ```bash
 git -C "<mainRoot>" apply --3way --check "<patchFile>"
 ```
 
-Only after that succeeds run:
+Only after that succeeds run the following command. On the automatic path, run it immediately
+after the successful precondition-4 check without asking:
 
 ```bash
 git -C "<mainRoot>" apply --3way "<patchFile>"
 ```
 
 The check validates pre-images and index compatibility, but with `--3way` it cannot detect every
-merge conflict. Capture the pre-apply status. A real apply can exit nonzero, leave conflict markers,
-and create unmerged index entries on paths that were clean before it. A successful apply stages the
-delta because `--3way` implies `--index`; nothing is committed or pushed.
+merge conflict. A real apply can exit nonzero, leave conflict markers, and create unmerged index
+entries on paths that were clean before it. A successful apply stages the delta because `--3way`
+implies `--index`; nothing is committed or pushed. If the pre-apply status contained unrelated
+staged work on non-overlapping paths, report plainly that it remains staged in the same index as the
+applied delta.
 
-On failure at either step, report Git's exact stdout and stderr plus:
+The following failure block applies to both automatic and user-confirmed applies. On failure at
+either step, report Git's exact stdout and stderr plus:
 
 ```bash
 git -C "<mainRoot>" diff --name-only --diff-filter=U
@@ -582,11 +630,15 @@ patch and winner worktree and hand resolution to the user. Explain that the user
 paths to their pre-apply `HEAD` state with a user-chosen `git reset -- <paths>` followed by
 `git checkout -- <paths>`; never run that recovery automatically.
 
-Remove the winner's worktree automatically only after the user confirms a successful patch apply.
-The explicit `Discard the worktree without applying` choice also authorizes its removal while the
-patch file remains recoverable. For `Leave`, an overlap refusal, an apply failure, or any other
-non-confirmed result, print `<worktreePath>`, `<patchFile>`, and this exact command, and say the
-worktree was intentionally left in place:
+After a successful automatic apply, report every applied path. State explicitly that a user-chosen
+`git reset -- <paths>` followed by `git checkout -- <paths>` returns tracked paths to `HEAD`, while
+files newly added by the patch must be removed by hand.
+
+Remove the winner's worktree automatically after a successful patch apply on either path, whether
+user-confirmed or decisive and automatic. The explicit `Discard the worktree without applying`
+choice also authorizes its removal while the patch file remains recoverable. For `Leave`, an overlap
+refusal, an apply failure, or any other non-success result, print `<worktreePath>`, `<patchFile>`, and
+this exact command, and say the worktree was intentionally left in place:
 
 ```bash
 git -C "<mainRoot>" worktree remove --force "<worktreePath>"
@@ -598,8 +650,9 @@ written; recover with `git -C "<mainRoot>" worktree list --porcelain` and the re
 
 ## Post-hand-back verification and final report
 
-After a confirmed successful apply, run the repository's identifiable host gates once in the main
-tree. For this repository run and record every command's exact exit result:
+After any successful apply, whether user-confirmed or decisive and automatic, run the repository's
+identifiable host gates once in the main tree. For this repository run and record every command's
+exact exit result:
 
 ```text
 npm test
@@ -617,12 +670,16 @@ The final report includes:
 - whether the lineup was default or explicit, the plan slot, and every contestant's label, route,
   model, effort, job id, thread id, status, and review verdict; use `not applicable` for a Claude
   contestant's effort, job id, and thread id
-- the winner and the evidence behind the user's choice, including identical-delta notes and
-  reported deviations
-- the hand-back result, including `staged, not committed` on success and every conflicted path on
-  failure
+- which of `single-acceptable`, `identical-acceptable`, `tie-ask`, or `none-acceptable-ask` fired;
+  whether that rule selected the winner automatically or caused the user to be asked and why the
+  evidence was ambiguous; the winner and its evidence; and every alternative with its verdict,
+  including identical-delta notes and reported deviations
+- the hand-back result, including whether apply was automatic or user-confirmed,
+  `staged, not committed` on success, every conflicted path on failure, and, for an automatic
+  success, the applied path list plus the tracked-path and newly-added-file revert instructions
+  above
 - every retained worktree, every patch path, every cleanup failure, and the exact recovery commands
-- every main-tree gate command and exit result, or that gates did not run without a confirmed apply
+- every main-tree gate command and exit result, or that gates did not run without a successful apply
 - every implementer and reviewer invocation's usage and duration, using `usage unavailable` when
   omitted
 

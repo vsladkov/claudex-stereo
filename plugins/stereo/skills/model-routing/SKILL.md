@@ -35,10 +35,12 @@ fields store the resolved model id, which is never prefixed.
 
 ### One-runtime surfaces
 
-The remaining one-runtime surfaces are deliberate:
+The remaining one-runtime surfaces and route asymmetries are deliberate:
 
-- `/stereo:review` is Codex's built-in reviewer (`review/start`), which has no Claude analogue and
-  no effort control. The Claude-routed structured review is `/stereo:adversarial-review`.
+- `/stereo:review` uses Codex's built-in reviewer (`review/start`) on the Codex path, with no
+  reasoning-effort control, and a foreground structured review against
+  `schemas/review-output.schema.json` on the Claude path. `--effort` is rejected on both paths, and
+  `--background` remains Codex-only.
 - `/stereo:rescue` and `/stereo:transfer` are Codex bridges. A `claude:*` `--model` is rejected on
   rescue, and transfer is Claude → Codex only.
 - `--background` creates durable Codex jobs. Claude agent runs are session-bound and never appear
@@ -55,7 +57,7 @@ agent frontmatter's `model: inherit` resolves to the main conversation's model. 
 effective model reported by the Agent result in the invocation note; if it is not exposed, label
 the effective model `unavailable` rather than guessing.
 
-Allow `claude:session` for planner, plan-reviewer, implementation-reviewer, and
+Allow `claude:session` for planner, plan-reviewer, reviewer, implementation-reviewer, and
 adversarial-reviewer roles. Reject it for the implementer: Claude writes must stay inside the
 contained `stereo:implementer` agent.
 
@@ -183,6 +185,24 @@ prompt: |
 Validate `acceptable`, non-empty `summary`, and `fixes`; validate every fix's non-empty `file`,
 positive-integer `line`, non-empty `problem`, and non-empty `correct`. Require empty fixes when
 acceptable and at least one fix otherwise.
+
+Reviewer:
+
+```text
+subagent_type: "stereo:reviewer"
+model: "<sonnet|opus|haiku|fable>"
+run_in_background: false
+prompt: |
+  Apply the filled review prompt below to the named git target.
+  [filled ${CLAUDE_PLUGIN_ROOT}/prompts/review.md]
+
+  Return only raw JSON matching
+  ${CLAUDE_PLUGIN_ROOT}/schemas/review-output.schema.json.
+```
+
+Validate the top-level object and every field required by
+`${CLAUDE_PLUGIN_ROOT}/schemas/review-output.schema.json`, including verdict enums, finding
+severity, positive line ranges, confidence range, recommendation, and `next_steps`.
 
 Adversarial reviewer:
 
