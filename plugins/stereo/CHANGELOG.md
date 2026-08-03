@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.40.0
+
+- Inspect and cancel jobs across workspaces: `status`, `result`, and `cancel` accept
+  `--workspace <path>` so runs recorded against another repository root — as isolated
+  implementations and tournaments write them — have a first-class inspect and cancel path, with
+  cancel retargeting its broker interrupt accordingly
+- Persist what a task actually did: bounded command executions (output tails only for failing
+  commands) and file changes (paths and kinds, never diffs) are stored with each task job and
+  exposed by `result --json`, while the human-rendered output stays byte-identical
+- Accept focus text on `/stereo:review`'s Claude route as fenced untrusted steering, ending a
+  needlessly propagated Codex-only limitation; the Codex route keeps its built-in-reviewer
+  rejection
+- Consolidate the authored and runtime surfaces: implementer-payload contracts normalized to one
+  wording across implement/quick/tournament and pinned by line-anchored tag counts, the
+  `codex-result-handling` skill finally declared by the rescue agent with a verbatim-return
+  precedence rule (and the never-auto-apply rule carried into `result.md`), twelve duplicated
+  helpers absorbed into a new shared JSON module with dead helpers deleted, terminal-status sets
+  and JSON-RPC error construction single-sourced, pid-liveness paths unified only where semantics
+  match (deliberate inversions documented in place), and `/stereo:doctor` now reporting the
+  tournament record beside the implementation record
+
 ## 1.39.0
 
 - Make tournaments durable and resumable: a new `tournament-state` companion subaction keeps a
