@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { processHasExited } from '../platform/process.ts';
 import {
   claimAndDeleteThreadLock,
   readReservationRecord,
@@ -159,18 +160,15 @@ function readValidatedReservationRecord(
 }
 
 function pidIsAlive(pid: number | null | undefined, options: PidLivenessOptions = {}): boolean {
+  // A reservation without a finite recorded pid is reapable (dead), while
+  // processHasExited treats a non-finite pid as not exited. This inversion is deliberate.
   if (!Number.isFinite(pid)) {
     return false;
   }
   if (options.isProcessAlive) {
     return Boolean(options.isProcessAlive(pid as number));
   }
-  try {
-    process.kill(pid as number, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException | null | undefined)?.code !== 'ESRCH';
-  }
+  return !processHasExited(pid as number);
 }
 
 function strandedReservationSortPath(entry: StrandedReservationEntry): string {

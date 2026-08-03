@@ -18,6 +18,8 @@ Output rules:
   stranded-worktree removal commands.
 - When an implementation record is in progress, name `/stereo:implement --resume` as the
   continuation path.
+- Report the tournament record and, when it is in progress, name `/stereo:tournament --resume` as
+  the continuation path.
 - Describe an unavailable model-catalog check as "not checked"; it is never a diagnostics
   failure.
 - Point to `/stereo:setup` for installation, authentication, sandbox, provider, or rate-limit

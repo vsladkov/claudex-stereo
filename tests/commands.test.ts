@@ -382,6 +382,32 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.doesNotMatch(tournament, /implement-state --record/);
 
   const quick = read('commands/quick.md');
+  const countContractTag = (source: string, tag: string): number =>
+    (source.match(new RegExp(`^\\s*<${tag}>\\s*$`, 'gm')) ?? []).length;
+  const contractTagCounts = (source: string) => ({
+    actionSafety: countContractTag(source, 'action_safety'),
+    completeness: countContractTag(source, 'completeness_contract'),
+    verification: countContractTag(source, 'verification_loop'),
+    compactOutput: countContractTag(source, 'compact_output_contract'),
+  });
+  assert.deepEqual(contractTagCounts(implement), {
+    actionSafety: 2,
+    completeness: 2,
+    verification: 3,
+    compactOutput: 3,
+  });
+  assert.deepEqual(contractTagCounts(quick), {
+    actionSafety: 2,
+    completeness: 2,
+    verification: 3,
+    compactOutput: 3,
+  });
+  assert.deepEqual(contractTagCounts(tournament), {
+    actionSafety: 1,
+    completeness: 1,
+    verification: 2,
+    compactOutput: 1,
+  });
   assert.match(quick, /skills\/model-routing\/SKILL\.md/);
   assert.match(quick, /plan-state --json/);
   assert.match(quick, /config --json/);
@@ -503,13 +529,17 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(nativeReview, /run_in_background: false/);
   assert.match(nativeReview, /\/stereo:adversarial-review/);
   assert.match(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /--pr/);
+  assert.match(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /focus/);
   assert.doesNotMatch(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /--effort/);
   assert.match(nativeReview, /^allowed-tools:.*Bash\(gh:\*\)/m);
 
   const status = read('commands/status.md');
   assert.match(status.match(/^argument-hint:.*$/m)?.[0] ?? '', /--usage/);
+  assert.match(status.match(/^argument-hint:.*$/m)?.[0] ?? '', /--workspace/);
   const resultCommand = read('commands/result.md');
   assert.match(resultCommand.match(/^argument-hint:.*$/m)?.[0] ?? '', /--report/);
+  assert.match(resultCommand.match(/^argument-hint:.*$/m)?.[0] ?? '', /--workspace/);
+  assert.match(read('commands/cancel.md').match(/^argument-hint:.*$/m)?.[0] ?? '', /--workspace/);
 });
 
 test('pair commands fill the canonical role briefs', () => {
@@ -593,6 +623,11 @@ test('pair agents keep their role-specific tool and output contracts', () => {
 
   const rescueAgent = read('agents/codex-rescue.md');
   assert.match(rescueAgent, /^tools:\s*Read, Bash$/m);
+  const rescueFrontmatter = rescueAgent.match(/^---\n[\s\S]*?\n---/)?.[0] ?? '';
+  for (const skill of ['codex-cli-runtime', 'codex-prompting', 'codex-result-handling']) {
+    assert.match(rescueFrontmatter, new RegExp(`^  - ${skill}$`, 'm'));
+  }
+  assert.match(read('commands/result.md'), /codex-result-handling/);
   const rescueRuntime = read('skills/codex-cli-runtime/SKILL.md');
   for (const [file, source] of [
     ['agents/codex-rescue.md', rescueAgent],

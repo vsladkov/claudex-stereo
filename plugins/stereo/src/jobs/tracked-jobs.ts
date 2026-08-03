@@ -4,6 +4,7 @@ import process from 'node:process';
 import {
   nowIso,
   readJobFile,
+  readStoredJobOrNull,
   resolveJobFile,
   resolveJobLogFile,
   upsertJob,
@@ -193,18 +194,6 @@ export function createProgressReporter({
     appendLogBlock(logFile, event.logTitle, event.logBody);
     onEvent?.(event);
   };
-}
-
-function readStoredJobOrNull(workspaceRoot: string, jobId: string): JobRecord | null {
-  const jobFile = resolveJobFile(workspaceRoot, jobId);
-  if (!fs.existsSync(jobFile)) {
-    return null;
-  }
-  try {
-    return readJobFile(jobFile);
-  } catch {
-    return null;
-  }
 }
 
 function persistTerminalState(

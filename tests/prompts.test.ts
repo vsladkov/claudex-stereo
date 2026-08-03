@@ -58,6 +58,7 @@ const PRODUCTION_VARIABLES = {
   },
   review: {
     TARGET_LABEL: 'working tree diff',
+    USER_FOCUS: 'No extra focus provided.',
     REVIEW_COLLECTION_GUIDANCE: '',
     REVIEW_INPUT: 'diff content',
   },
@@ -85,7 +86,7 @@ test('review prompts fence every untrusted data block from instructions', () => 
     'implementation-review': 3,
     'plan-review': 2,
     'adversarial-review': 2,
-    review: 1,
+    review: 2,
   } as const;
 
   for (const [name, expectedCount] of Object.entries(expectedCounts)) {

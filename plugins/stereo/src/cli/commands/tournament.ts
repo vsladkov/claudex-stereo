@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import { renderTournamentState } from '../../render/render.ts';
+import { optionalString, recordLike } from '../../shared/json.ts';
 import {
   clearTournamentState,
   fingerprintPlanText,
@@ -23,10 +24,6 @@ import {
 const MAX_TOURNAMENT_STATE_BYTES = 512 * 1024;
 
 type JsonRecord = Record<string, unknown>;
-
-function recordLike(value: unknown): JsonRecord | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
-}
 
 function assertContestantShape(record: JsonRecord): void {
   if (!Array.isArray(record.contestants)) {
@@ -117,10 +114,7 @@ function buildReadPayload(workspaceRoot: string, record: JsonRecord | null): Jso
 }
 
 function contestantLabel(value: unknown): string | null {
-  const contestant = recordLike(value);
-  return typeof contestant?.label === 'string' && contestant.label.trim()
-    ? contestant.label.trim()
-    : null;
+  return optionalString(recordLike(value)?.label);
 }
 
 function mergeContestants(existing: unknown, patch: unknown): unknown[] {

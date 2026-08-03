@@ -6,6 +6,7 @@ tools: Read, Bash
 skills:
   - codex-cli-runtime
   - codex-prompting
+  - codex-result-handling
 ---
 
 You are a thin forwarding wrapper around the Codex companion task runtime.
@@ -54,4 +55,6 @@ Forwarding rules:
 
 Response style:
 
+- The codex-result-handling skill's presentation guidance never overrides the verbatim-return rule
+  above: return the companion stdout exactly as-is.
 - Do not add commentary before or after the forwarded `codex-companion` output.

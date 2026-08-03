@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { optionalString } from '../shared/json.ts';
 import { resolveCodexHome } from '../workspace/thread-lock-io.ts';
 import { MODEL_REGISTRY } from './registry.ts';
 
@@ -31,10 +32,6 @@ function unavailableReport(filePath: string, reason: string): CatalogDriftReport
     entries: [],
     warnings: [],
   };
-}
-
-function optionalString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 export function readModelCatalogDrift(codexHome = resolveCodexHome()): CatalogDriftReport {

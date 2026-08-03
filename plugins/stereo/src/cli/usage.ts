@@ -14,9 +14,9 @@ export function printUsage(): void {
       '  node scripts/codex-companion.ts implement-state [--record|--update|--complete|--clear] [--state-file <path>] [--slot <name>] [--json]',
       '  node scripts/codex-companion.ts tournament-state [--record|--update|--complete|--clear] [--state-file <path>] [--slot <name>] [--json]',
       '  node scripts/codex-companion.ts transfer [--source <claude-jsonl>] [--json]',
-      '  node scripts/codex-companion.ts status [job-id] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--usage] [--verbose] [--json]',
-      '  node scripts/codex-companion.ts result [job-id] [--report] [--json]',
-      '  node scripts/codex-companion.ts cancel [job-id] [--json]',
+      '  node scripts/codex-companion.ts status [job-id] [--workspace <path>] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--usage] [--verbose] [--json]',
+      '  node scripts/codex-companion.ts result [job-id] [--workspace <path>] [--report] [--json]',
+      '  node scripts/codex-companion.ts cancel [job-id] [--workspace <path>] [--json]',
       '  node scripts/codex-companion.ts version [--json]',
     ].join('\n'),
   );

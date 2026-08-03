@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 export const STDIN_TIMEOUT_ENV = 'CODEX_STDIN_TIMEOUT_MS';
@@ -15,20 +14,8 @@ export function ensureAbsolutePath(cwd: string, maybePath: string): string {
   return path.isAbsolute(maybePath) ? maybePath : path.resolve(cwd, maybePath);
 }
 
-export function createTempDir(prefix = 'codex-plugin-'): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
-
 export function readJsonFile(filePath: string): unknown {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-}
-
-export function writeJsonFile(filePath: string, value: unknown): void {
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-}
-
-export function safeReadFile(filePath: string): string {
-  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 }
 
 export function isProbablyText(buffer: Buffer): boolean {

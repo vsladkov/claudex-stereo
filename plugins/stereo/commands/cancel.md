@@ -1,11 +1,14 @@
 ---
 description: Cancel an active background Codex job in this repository
-argument-hint: '[job-id]'
+argument-hint: '[job-id] [--workspace <path>]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
 !`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" cancel "$ARGUMENTS"`
+
+Use `--workspace <path>` to cancel jobs recorded against another repository root, such as the main
+workspace used by a worktree-isolated `/stereo:implement --isolated` or `/stereo:tournament` run.
 
 Present the rendered result verbatim without summarizing it. Preserve any
 `Stored job file is unreadable:` warning and its path.

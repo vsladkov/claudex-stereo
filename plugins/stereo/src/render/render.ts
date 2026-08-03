@@ -220,6 +220,16 @@ export interface DoctorRenderReport {
     round: unknown;
     worktree: string | null;
   };
+  tournamentRecord: {
+    path: string;
+    present: boolean;
+    unreadable: boolean;
+    parseError: string | null;
+    status: string | null;
+    baselineCommit: string | null;
+    contestants: number;
+    winner: string | null;
+  };
   worktrees: {
     available: boolean;
     detail: string | null;
@@ -1230,6 +1240,21 @@ export function renderDoctorReport(report: DoctorRenderReport): string {
           implementDetails.length > 0 ? ` (${implementDetails.join(', ')})` : ''
         }`
       : `not present (${report.implementRecord.path})`;
+  const tournamentDetails = [
+    report.tournamentRecord.status ? `status ${report.tournamentRecord.status}` : null,
+    report.tournamentRecord.baselineCommit
+      ? `baseline ${report.tournamentRecord.baselineCommit}`
+      : null,
+    `${report.tournamentRecord.contestants} contestants`,
+    report.tournamentRecord.winner ? `winner ${report.tournamentRecord.winner}` : null,
+  ].filter((value): value is string => Boolean(value));
+  const tournamentStatus = report.tournamentRecord.unreadable
+    ? `unreadable at ${report.tournamentRecord.path} (${report.tournamentRecord.parseError ?? 'unknown parse error'})`
+    : report.tournamentRecord.present
+      ? `${report.tournamentRecord.path}${
+          tournamentDetails.length > 0 ? ` (${tournamentDetails.join(', ')})` : ''
+        }`
+      : `not present (${report.tournamentRecord.path})`;
   const watermarkStatus = report.jobAnnouncements.lastJobAnnouncementAt
     ? `${report.jobAnnouncements.lastJobAnnouncementAt} (${
         !report.jobAnnouncements.parsed
@@ -1261,6 +1286,7 @@ export function renderDoctorReport(report: DoctorRenderReport): string {
     `State file: ${report.state.stateFile} (${report.state.exists.stateFile ? 'present' : 'missing'})`,
     `Jobs directory: ${report.state.jobsDir} (${report.state.exists.jobsDir ? 'present' : 'missing'})`,
     `Implementation record: ${implementStatus}`,
+    `Tournament record: ${tournamentStatus}`,
     `Stereo worktrees: ${
       report.worktrees.available
         ? report.worktrees.entries.length === 0

@@ -1,11 +1,15 @@
 ---
 description: Show active and recent Codex jobs for this repository, including review-gate status
-argument-hint: '[job-id] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--usage] [--verbose]'
+argument-hint: '[job-id] [--workspace <path>] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--usage] [--verbose]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
 !`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" status "$ARGUMENTS"`
+
+Use `--workspace <path>` to inspect jobs recorded against another repository root, such as the
+main workspace used by a worktree-isolated `/stereo:implement --isolated` or
+`/stereo:tournament` run.
 
 When the user passed `--usage`, present the usage headline and both tables verbatim. Preserve the
 window and scope sentence exactly, including whether it covers this session or the workspace.

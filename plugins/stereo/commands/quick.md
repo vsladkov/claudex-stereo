@@ -262,13 +262,13 @@ Advisory review findings (the approved plan takes precedence where they conflict
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
 </action_safety>
 <completeness_contract>
-Implement the whole plan and report impossible steps explicitly.
+Implement the whole plan before stopping. Report any impossible step explicitly.
 </completeness_contract>
 <verification_loop>
-Run relevant tests or builds and fix regressions.
+Run the repository's relevant tests or build and fix regressions.
 </verification_loop>
 <compact_output_contract>
-Report changes, touched files, verification, and deviations.
+Report changes, touched files, verification results, and deviations with reasons.
 </compact_output_contract>
 ```
 
@@ -295,13 +295,13 @@ Advisory review findings (the approved plan takes precedence where they conflict
 Only make changes the plan calls for. Do not commit, push, or touch unrelated files.
 </action_safety>
 <completeness_contract>
-Implement the whole plan and report impossible steps explicitly.
+Implement the whole plan before stopping. Report any impossible step explicitly.
 </completeness_contract>
 <verification_loop>
-Run relevant tests or builds and fix regressions.
+Run the repository's relevant tests or build and fix regressions.
 </verification_loop>
 <compact_output_contract>
-Report changes, touched files, verification, and deviations.
+Report changes, touched files, verification results, and deviations with reasons.
 </compact_output_contract>
 ```
 
@@ -431,12 +431,15 @@ Fix the review findings below in this repository. Keep all other behavior unchan
 [numbered fixes]
 </task>
 <verification_loop>
-Run relevant tests or builds and fix regressions.
+Run the repository's relevant tests or build and fix regressions.
 </verification_loop>
 <compact_output_contract>
-Report fixed findings and verification.
+Report which findings were fixed, how, and what verification ran.
 </compact_output_contract>
 ```
+
+The four implementer contract bodies are shared verbatim across `/stereo:implement` and
+`/stereo:quick` and must be edited together.
 
 Then launch:
 

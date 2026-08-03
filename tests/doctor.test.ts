@@ -15,6 +15,7 @@ import {
   getConfig,
   resolveDurableStateDir,
   saveImplementState,
+  saveTournamentState,
   setConfig,
 } from '../plugins/stereo/src/workspace/state.ts';
 import { makeTempDir } from './helpers.ts';
@@ -161,6 +162,28 @@ test('doctor points an in-progress implementation record to --resume', async () 
   assert.equal(report.implementRecord.baselineCommit, 'abc123');
   assert.equal(report.implementRecord.round, 2);
   assert.match(report.nextSteps.join('\n'), /\/stereo:implement --resume/);
+});
+
+test('doctor points an in-progress tournament record to --resume', async () => {
+  const workspace = makeTempDir();
+  saveTournamentState(workspace, {
+    status: 'in-progress',
+    baselineCommit: 'def456',
+    contestants: [{ label: 'alpha' }, { label: 'beta' }],
+    winner: { label: 'beta' },
+  });
+
+  const report = await buildDoctorReport(workspace, [], doctorDeps());
+
+  assert.equal(report.tournamentRecord.present, true);
+  assert.equal(report.tournamentRecord.baselineCommit, 'def456');
+  assert.equal(report.tournamentRecord.contestants, 2);
+  assert.equal(report.tournamentRecord.winner, 'beta');
+  assert.match(report.nextSteps.join('\n'), /\/stereo:tournament --resume/);
+
+  const absent = await buildDoctorReport(makeTempDir(), [], doctorDeps());
+  assert.equal(absent.tournamentRecord.present, false);
+  assert.doesNotMatch(absent.nextSteps.join('\n'), /\/stereo:tournament --resume/);
 });
 
 test('doctor keeps only stereo worktrees and emits the exact removal command', async () => {

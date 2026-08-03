@@ -128,7 +128,7 @@ function looksLikeMissingProcessMessage(text: string): boolean {
   return /not found|no running instance|cannot find|does not exist|no such process/i.test(text);
 }
 
-function errorCode(error: unknown): string | undefined {
+export function errorCode(error: unknown): string | undefined {
   return error && typeof error === 'object' && 'code' in error
     ? String((error as { code: unknown }).code)
     : undefined;

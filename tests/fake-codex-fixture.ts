@@ -940,6 +940,59 @@ rl.on("line", (line) => {
               }
             ]
             : []),
+          ...(BEHAVIOR === "captured-write-data"
+            ? [
+                {
+                  completed: {
+                    type: "commandExecution",
+                    id: "command_ok_" + turnId,
+                    command: "npm run check:ok",
+                    cwd: thread.cwd,
+                    processId: null,
+                    source: "agent",
+                    status: "completed",
+                    commandActions: [],
+                    aggregatedOutput: "successful output must not be retained",
+                    exitCode: 0,
+                    durationMs: 12
+                  }
+                },
+                {
+                  completed: {
+                    type: "commandExecution",
+                    id: "command_failed_" + turnId,
+                    command: "npm run check:failed",
+                    cwd: thread.cwd,
+                    processId: null,
+                    source: "agent",
+                    status: "failed",
+                    commandActions: [],
+                    aggregatedOutput: "discarded-prefix-" + "x".repeat(2200) + "failed-output-tail",
+                    exitCode: 7,
+                    durationMs: 34
+                  }
+                },
+                {
+                  completed: {
+                    type: "fileChange",
+                    id: "file_change_" + turnId,
+                    status: "completed",
+                    changes: [
+                      {
+                        path: "src/added.ts",
+                        kind: { type: "add" },
+                        diff: "diff --git a/src/added.ts b/src/added.ts"
+                      },
+                      {
+                        path: "src/updated.ts",
+                        kind: { type: "update", move_path: null },
+                        diff: "diff --git a/src/updated.ts b/src/updated.ts"
+                      }
+                    ]
+                  }
+                }
+              ]
+            : []),
           ...(BEHAVIOR === "provider-probe" && state.turnStarts.length === 1
             ? [
                 {

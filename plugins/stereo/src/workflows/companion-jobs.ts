@@ -14,12 +14,16 @@ import {
   runTrackedJob,
 } from '../jobs/tracked-jobs.ts';
 import type { JobExecution, TrackedJob } from '../jobs/tracked-jobs.ts';
-import { readStoredJob } from '../jobs/job-control.ts';
-import { generateJobId, nowIso, upsertJob, writeJobFile } from '../workspace/state.ts';
+import {
+  generateJobId,
+  nowIso,
+  readStoredJobOrNull,
+  TERMINAL_JOB_STATUSES,
+  upsertJob,
+  writeJobFile,
+} from '../workspace/state.ts';
 import { COMPANION_ENTRY } from '../shared/paths.ts';
 import { outputResult } from '../shared/text.ts';
-
-const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 export type CompanionTerminationSignal = 'SIGTERM' | 'SIGINT';
 
@@ -38,13 +42,8 @@ export function terminalizeJobForSignal(
   { jobId, workspaceRoot }: SignalCleanupContext,
   signal: CompanionTerminationSignal,
 ): boolean {
-  let storedJob = null;
-  try {
-    storedJob = readStoredJob(workspaceRoot, jobId);
-  } catch {
-    // A corrupt or concurrently replaced record still gets a minimal
-    // terminal replacement below.
-  }
+  // A corrupt or concurrently replaced record still gets a minimal terminal replacement below.
+  const storedJob = readStoredJobOrNull(workspaceRoot, jobId);
   if (storedJob && TERMINAL_JOB_STATUSES.has(storedJob.status)) {
     return false;
   }
@@ -344,12 +343,8 @@ export function spawnDetachedTaskWorker(
 }
 
 function failQueuedJobForSpawnError(workspaceRoot: string, jobId: string, message: string): void {
-  let storedJob = null;
-  try {
-    storedJob = readStoredJob(workspaceRoot, jobId);
-  } catch {
-    // A minimal failed record is still preferable to a permanently queued row.
-  }
+  // A minimal failed record is still preferable to a permanently queued row.
+  const storedJob = readStoredJobOrNull(workspaceRoot, jobId);
   const completedAt = nowIso();
   const failedRecord = {
     ...(storedJob ?? { id: jobId }),
@@ -419,12 +414,8 @@ export function enqueueBackgroundTask(
     throw error;
   }
   if (child.pid) {
-    let current = null;
-    try {
-      current = readStoredJob(job.workspaceRoot, job.id);
-    } catch {
-      // Preserve the previous whole-record fallback when the stored job cannot be read.
-    }
+    // Preserve the previous whole-record fallback when the stored job cannot be read.
+    const current = readStoredJobOrNull(job.workspaceRoot, job.id);
     writeJobFile(job.workspaceRoot, job.id, { ...(current ?? queuedRecord), pid: child.pid });
     upsertJob(job.workspaceRoot, { id: job.id, pid: child.pid });
   }

@@ -11,14 +11,17 @@ import { listWorktrees } from '../../platform/git.ts';
 import { processHasExited } from '../../platform/process.ts';
 import { renderDoctorReport } from '../../render/render.ts';
 import type { DoctorRenderReport } from '../../render/render.ts';
+import { optionalString, recordLike } from '../../shared/json.ts';
 import { outputResult } from '../../shared/text.ts';
 import {
   getConfig,
   readImplementStateFile,
+  readTournamentStateFile,
   resolveDurableStateDir,
   resolveImplementStateFile,
   resolveJobsDir,
   resolveStateFile,
+  resolveTournamentStateFile,
   setConfig,
 } from '../../workspace/state.ts';
 import { resolveCodexHome } from '../../workspace/thread-lock-io.ts';
@@ -44,16 +47,6 @@ export const defaultDoctorDeps: DoctorDeps = {
   listWorktrees,
   readModelCatalogDrift,
 };
-
-function recordLike(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function stringField(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
 
 export async function buildDoctorReport(
   cwd: string,
@@ -95,10 +88,20 @@ export async function buildDoctorReport(
   const implementState = readImplementStateFile(workspaceRoot);
   const implementRecord = recordLike(implementState.record);
   const worktreeRecord = recordLike(implementRecord?.worktree);
-  const implementStatus = stringField(implementRecord?.status);
+  const implementStatus = optionalString(implementRecord?.status);
   if (implementStatus === 'in-progress') {
     nextSteps.push(
       `An implementation record is in progress at ${resolveImplementStateFile(workspaceRoot)}; continue it with /stereo:implement --resume.`,
+    );
+  }
+
+  const tournamentState = readTournamentStateFile(workspaceRoot);
+  const tournamentRecord = recordLike(tournamentState.record);
+  const tournamentStatus = optionalString(tournamentRecord?.status);
+  const tournamentWinner = recordLike(tournamentRecord?.winner);
+  if (tournamentStatus === 'in-progress') {
+    nextSteps.push(
+      `A tournament record is in progress at ${resolveTournamentStateFile(workspaceRoot)}; continue it with /stereo:tournament --resume.`,
     );
   }
 
@@ -180,9 +183,21 @@ export async function buildDoctorReport(
       unreadable: Boolean(implementState.parseError),
       parseError: implementState.parseError,
       status: implementStatus,
-      baselineCommit: stringField(implementRecord?.baselineCommit),
+      baselineCommit: optionalString(implementRecord?.baselineCommit),
       round: implementRecord?.round ?? null,
-      worktree: stringField(worktreeRecord?.path),
+      worktree: optionalString(worktreeRecord?.path),
+    },
+    tournamentRecord: {
+      path: resolveTournamentStateFile(workspaceRoot),
+      present: !tournamentState.missing,
+      unreadable: Boolean(tournamentState.parseError),
+      parseError: tournamentState.parseError,
+      status: tournamentStatus,
+      baselineCommit: optionalString(tournamentRecord?.baselineCommit),
+      contestants: Array.isArray(tournamentRecord?.contestants)
+        ? tournamentRecord.contestants.length
+        : 0,
+      winner: optionalString(tournamentWinner?.label),
     },
     worktrees: {
       available: worktreeListing.available,

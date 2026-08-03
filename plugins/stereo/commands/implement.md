@@ -673,6 +673,9 @@ Report which findings were fixed, how, and what verification ran.
 </compact_output_contract>
 ```
 
+The four implementer contract bodies are shared verbatim across `/stereo:implement` and
+`/stereo:quick` and must be edited together.
+
 Then launch:
 
 ```bash

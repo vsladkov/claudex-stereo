@@ -10,6 +10,14 @@ export const APP_SERVER_CONNECT_TIMEOUT_ENV = 'CODEX_APP_SERVER_CONNECT_TIMEOUT_
 const DEFAULT_APP_SERVER_REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_APP_SERVER_CONNECT_TIMEOUT_MS = 5_000;
 
+export function buildJsonRpcError(
+  code: number,
+  message: string,
+  data?: unknown,
+): { code: number; message: string; data?: unknown } {
+  return data === undefined ? { code, message } : { code, message, data };
+}
+
 function resolveDeadlineMs(env: NodeJS.ProcessEnv, name: string, defaultValue: number): number {
   const raw = env[name];
   if (raw == null || raw.trim() === '') {

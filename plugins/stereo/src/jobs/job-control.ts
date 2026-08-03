@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import process from 'node:process';
 
+import { processHasExited } from '../platform/process.ts';
 import {
   getSessionRuntimeStatus,
   listStrandedThreadReservations,
@@ -12,11 +13,14 @@ import {
   listJobs,
   MAX_JOBS,
   readJobFile,
+  readStoredJobOrNull,
   resolveJobFile,
+  TERMINAL_JOB_STATUSES,
   upsertJob,
 } from '../workspace/state.ts';
 import type { JobRecord, StereoConfig } from '../workspace/state.ts';
 import { modelProviderFor } from '../models/registry.ts';
+import { optionalString, recordLike } from '../shared/json.ts';
 import { SESSION_ID_ENV } from './tracked-jobs.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 
@@ -27,6 +31,7 @@ export const VERBOSE_MAX_PROGRESS_LINES = 20;
 export interface SessionFilterOptions {
   sessionId?: string | null;
   env?: NodeJS.ProcessEnv | null;
+  workspaceRoot?: string;
 }
 
 export interface EnrichJobOptions {
@@ -37,6 +42,10 @@ export interface EnrichJobOptions {
 export interface StatusSnapshotOptions extends SessionFilterOptions, EnrichJobOptions {
   all?: unknown;
   maxJobs?: number;
+}
+
+function jobWorkspaceRoot(cwd: string, options: { workspaceRoot?: string } = {}): string {
+  return options.workspaceRoot ?? resolveWorkspaceRoot(cwd);
 }
 
 export interface UsageTotals {
@@ -85,33 +94,22 @@ export interface JobModelLike {
   result?: unknown;
 }
 
-function recordLike(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function normalizedStoredModel(value: unknown): string | null {
-  const model = typeof value === 'string' ? value.trim() : '';
-  return model || null;
-}
-
 export function resolveJobModel(
   job: JobModelLike | null | undefined,
   storedJob: JobModelLike | null | undefined = null,
 ): string | null {
-  const direct = normalizedStoredModel(job?.model) ?? normalizedStoredModel(storedJob?.model);
+  const direct = optionalString(job?.model) ?? optionalString(storedJob?.model);
   if (direct) {
     return direct;
   }
 
   const request = recordLike(storedJob?.request);
   const result = recordLike(storedJob?.result);
-  return normalizedStoredModel(request?.model) ?? normalizedStoredModel(result?.model);
+  return optionalString(request?.model) ?? optionalString(result?.model);
 }
 
 export function formatJobModel(model: unknown): string {
-  const normalized = normalizedStoredModel(model);
+  const normalized = optionalString(model);
   if (!normalized) {
     return '-';
   }
@@ -209,7 +207,7 @@ export function buildUsageSnapshot(
   cwd: string,
   options: StatusSnapshotOptions = {},
 ): UsageSnapshot {
-  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const workspaceRoot = jobWorkspaceRoot(cwd, options);
   const retained = listJobs(workspaceRoot);
   const retainedJobs = retained.length;
   const sessionId = options.sessionId ?? getCurrentSessionId(options);
@@ -222,13 +220,9 @@ export function buildUsageSnapshot(
   for (const job of jobs) {
     let storedJob: JobRecord | null = null;
     if (!job.tokenUsage || !resolveJobModel(job)) {
-      try {
-        storedJob = readStoredJob(workspaceRoot, job.id);
-      } catch {
-        // Older or degraded bookkeeping may leave a missing/corrupt job file.
-        // Usage reporting remains a best-effort read of the retained index.
-        storedJob = null;
-      }
+      // Older or degraded bookkeeping may leave a missing/corrupt job file.
+      // Usage reporting remains a best-effort read of the retained index.
+      storedJob = readStoredJobOrNull(workspaceRoot, job.id);
     }
     const tokenUsage = recordLike(job.tokenUsage) ?? recordLike(storedJob?.tokenUsage);
     const jobUsage = recordLike(tokenUsage?.job);
@@ -426,6 +420,7 @@ function inferLegacyJobPhase(job: JobRecord, progressPreview: string[] = []): st
 }
 
 function isJobProcessGone(job: JobRecord): boolean {
+  // Windows process probing remains intentionally disabled for job status.
   if (process.platform === 'win32') {
     return false;
   }
@@ -436,26 +431,16 @@ function isJobProcessGone(job: JobRecord): boolean {
   if (typeof pid !== 'number' || !Number.isFinite(pid) || pid <= 0) {
     return false;
   }
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    // EPERM means the process exists but belongs to another user: alive.
-    return (error as NodeJS.ErrnoException | null | undefined)?.code === 'ESRCH';
-  }
+  return processHasExited(pid);
 }
 
 export function enrichJob(job: JobRecord, options: EnrichJobOptions = {}): EnrichedJob {
   const maxProgressLines = options.maxProgressLines ?? DEFAULT_MAX_PROGRESS_LINES;
   let storedJob: JobRecord | null = null;
   if (!resolveJobModel(job) && options.workspaceRoot) {
-    try {
-      storedJob = readStoredJob(options.workspaceRoot, job.id);
-    } catch {
-      // Job files are written by another process and may be absent or
-      // temporarily incomplete. Model visibility is advisory.
-      storedJob = null;
-    }
+    // Job files are written by another process and may be absent or
+    // temporarily incomplete. Model visibility is advisory.
+    storedJob = readStoredJobOrNull(options.workspaceRoot, job.id);
   }
   const model = resolveJobModel(job, storedJob);
   const enriched = {
@@ -468,10 +453,9 @@ export function enrichJob(job: JobRecord, options: EnrichJobOptions = {}): Enric
         ? readJobProgressPreview(job.logFile, maxProgressLines)
         : [],
     elapsed: formatElapsedDuration(job.startedAt ?? job.createdAt, job.completedAt ?? null),
-    duration:
-      job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
-        ? formatElapsedDuration(job.startedAt ?? job.createdAt, job.completedAt ?? job.updatedAt)
-        : null,
+    duration: TERMINAL_JOB_STATUSES.has(job.status)
+      ? formatElapsedDuration(job.startedAt ?? job.createdAt, job.completedAt ?? job.updatedAt)
+      : null,
   };
 
   return {
@@ -483,6 +467,9 @@ export function enrichJob(job: JobRecord, options: EnrichJobOptions = {}): Enric
 }
 
 export function readStoredJob(workspaceRoot: string, jobId: string): JobRecord | null {
+  // Parse errors intentionally reach CLI cancel and status/result so they can
+  // render user-visible warnings, and CLI task-worker so it can record a
+  // detached-worker bootstrap failure.
   const jobFile = resolveJobFile(workspaceRoot, jobId);
   if (!fs.existsSync(jobFile)) {
     return null;
@@ -528,7 +515,7 @@ export function buildStatusSnapshot(
   cwd: string,
   options: StatusSnapshotOptions = {},
 ): StatusSnapshot {
-  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const workspaceRoot = jobWorkspaceRoot(cwd, options);
   const config = getConfig(workspaceRoot);
   const jobs = sortJobsNewestFirst(filterJobsForCurrentSession(listJobs(workspaceRoot), options));
   const maxJobs = options.maxJobs ?? DEFAULT_MAX_STATUS_JOBS;
@@ -568,7 +555,7 @@ export function buildSingleJobSnapshot(
   reference: string,
   options: EnrichJobOptions = {},
 ): SingleJobSnapshot {
-  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const workspaceRoot = jobWorkspaceRoot(cwd, options);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const selected = matchJobReference(jobs, reference, () => true, { optional: true });
   if (!selected) {
@@ -585,15 +572,16 @@ export function buildSingleJobSnapshot(
 export function resolveResultJob(
   cwd: string,
   reference: string,
+  options: { workspaceRoot?: string } = {},
 ): { workspaceRoot: string; job: JobRecord } {
-  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const workspaceRoot = jobWorkspaceRoot(cwd, options);
   const jobs = sortJobsNewestFirst(
     reference ? listJobs(workspaceRoot) : filterJobsForCurrentSession(listJobs(workspaceRoot)),
   );
   const selected = matchJobReference(
     jobs,
     reference,
-    (job) => job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled',
+    (job) => TERMINAL_JOB_STATUSES.has(job.status),
     { optional: true },
   );
 
@@ -610,16 +598,9 @@ export function resolveResultJob(
     },
   );
   if (active) {
-    let stored: JobRecord | null = null;
-    try {
-      stored = readStoredJob(workspaceRoot, active.id);
-    } catch {
-      // A missing or corrupt per-job file preserves the existing active-job error.
-    }
-    if (
-      stored &&
-      (stored.status === 'completed' || stored.status === 'failed' || stored.status === 'cancelled')
-    ) {
+    // A missing or corrupt per-job file preserves the existing active-job error.
+    const stored = readStoredJobOrNull(workspaceRoot, active.id);
+    if (stored && TERMINAL_JOB_STATUSES.has(stored.status)) {
       const repairedFields = {
         id: stored.id,
         status: stored.status,
@@ -650,7 +631,7 @@ export function resolveCancelableJob(
   reference: string,
   options: SessionFilterOptions = {},
 ): { workspaceRoot: string; job: JobRecord } {
-  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const workspaceRoot = jobWorkspaceRoot(cwd, options);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const activeJobs = jobs.filter((job) => job.status === 'queued' || job.status === 'running');
 

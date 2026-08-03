@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { errorCode } from '../platform/process.ts';
 import { ensureAbsolutePath } from '../shared/fs.ts';
 
 export const TRANSCRIPT_PATH_ENV = 'CODEX_COMPANION_TRANSCRIPT_PATH';
@@ -19,12 +20,6 @@ function resolveUserPath(cwd: string, value: string): string {
     return path.join(os.homedir(), value.slice(2));
   }
   return ensureAbsolutePath(cwd, value);
-}
-
-function errorCode(error: unknown): string {
-  return error && typeof error === 'object' && 'code' in error
-    ? String((error as { code: unknown }).code)
-    : String(error);
 }
 
 export function resolveClaudeSessionPath(
@@ -47,7 +42,9 @@ export function resolveClaudeSessionPath(
   try {
     source = fs.realpathSync(sourcePath);
   } catch (error) {
-    throw new Error(`Claude session file not found: ${sourcePath} (${errorCode(error)})`);
+    throw new Error(
+      `Claude session file not found: ${sourcePath} (${errorCode(error) ?? String(error)})`,
+    );
   }
 
   let projects: string;
@@ -55,7 +52,7 @@ export function resolveClaudeSessionPath(
     projects = fs.realpathSync(CLAUDE_PROJECTS_DIR);
   } catch (error) {
     throw new Error(
-      `Claude projects directory unavailable: ${CLAUDE_PROJECTS_DIR} (${errorCode(error)})`,
+      `Claude projects directory unavailable: ${CLAUDE_PROJECTS_DIR} (${errorCode(error) ?? String(error)})`,
     );
   }
   const relative = path.relative(projects, source);

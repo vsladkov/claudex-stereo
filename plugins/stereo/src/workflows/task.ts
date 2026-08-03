@@ -6,7 +6,7 @@ import {
   findLatestTaskThread,
   runAppServerTurn,
 } from '../runtime/index.ts';
-import type { ProgressReporter } from '../runtime/index.ts';
+import type { AppServerTurnResult, ProgressReporter } from '../runtime/index.ts';
 import {
   buildSingleJobSnapshot,
   filterJobsForCurrentSession,
@@ -24,6 +24,78 @@ import type { CompanionExecution } from './companion-jobs.ts';
 const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000;
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 2000;
 const STOP_REVIEW_TASK_MARKER = 'Run a stop-gate review of the previous Claude turn.';
+export const MAX_CAPTURED_COMMANDS = 100;
+export const MAX_CAPTURED_FILE_CHANGES = 500;
+export const MAX_COMMAND_OUTPUT_CHARS = 2000;
+
+export interface CapturedTaskCommandExecution {
+  command: string;
+  cwd: string;
+  status: unknown;
+  exitCode: number | null;
+  durationMs: number | null;
+  output?: string;
+}
+
+export interface CapturedTaskFileChange {
+  path: string;
+  kind: unknown;
+  status: unknown;
+}
+
+export interface TaskCapturePayload {
+  commandExecutions?: CapturedTaskCommandExecution[];
+  commandExecutionsOmitted?: number;
+  fileChanges?: CapturedTaskFileChange[];
+  fileChangesOmitted?: number;
+}
+
+// This deliberately covers task runs only: review and plan-review are read-only.
+// Job files share the job log's trust boundary, but failed-command output may
+// still contain secrets, so only a bounded non-zero-exit tail is retained and
+// diffs are never stored.
+export function buildTaskCapturePayload(
+  result: Pick<AppServerTurnResult, 'commandExecutions' | 'fileChanges'>,
+): TaskCapturePayload {
+  const commandExecutionsOmitted = Math.max(
+    0,
+    result.commandExecutions.length - MAX_CAPTURED_COMMANDS,
+  );
+  const commandExecutions = result.commandExecutions
+    .slice(-MAX_CAPTURED_COMMANDS)
+    .map((item): CapturedTaskCommandExecution => ({
+      command: item.command,
+      cwd: item.cwd,
+      status: item.status,
+      exitCode: item.exitCode,
+      durationMs: item.durationMs,
+      ...(typeof item.exitCode === 'number' && item.exitCode !== 0
+        ? { output: (item.aggregatedOutput ?? '').slice(-MAX_COMMAND_OUTPUT_CHARS) }
+        : {}),
+    }));
+
+  const fileChangesByPath = new Map<string, CapturedTaskFileChange>();
+  for (const item of result.fileChanges) {
+    for (const change of item.changes ?? []) {
+      fileChangesByPath.delete(change.path);
+      fileChangesByPath.set(change.path, {
+        path: change.path,
+        kind: change.kind,
+        status: item.status,
+      });
+    }
+  }
+  const flattenedFileChanges = [...fileChangesByPath.values()];
+  const fileChangesOmitted = Math.max(0, flattenedFileChanges.length - MAX_CAPTURED_FILE_CHANGES);
+  const fileChanges = flattenedFileChanges.slice(-MAX_CAPTURED_FILE_CHANGES);
+
+  return {
+    ...(commandExecutions.length > 0 ? { commandExecutions } : {}),
+    ...(commandExecutionsOmitted > 0 ? { commandExecutionsOmitted } : {}),
+    ...(fileChanges.length > 0 ? { fileChanges } : {}),
+    ...(fileChangesOmitted > 0 ? { fileChangesOmitted } : {}),
+  };
+}
 
 export function getCurrentClaudeSessionId(): string | null {
   return process.env[SESSION_ID_ENV] ?? null;
@@ -49,6 +121,7 @@ export interface WaitForSingleJobOptions {
   timeoutMs?: unknown;
   pollIntervalMs?: unknown;
   maxProgressLines?: number;
+  workspaceRoot?: string;
 }
 
 export interface AwaitedJobSnapshot extends SingleJobSnapshot {
@@ -69,12 +142,14 @@ export async function waitForSingleJobSnapshot(
   const deadline = Date.now() + timeoutMs;
   let snapshot = buildSingleJobSnapshot(cwd, reference, {
     maxProgressLines: options.maxProgressLines,
+    workspaceRoot: options.workspaceRoot,
   });
 
   while (isActiveJobStatus(snapshot.job.status) && Date.now() < deadline) {
     await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
     snapshot = buildSingleJobSnapshot(cwd, reference, {
       maxProgressLines: options.maxProgressLines,
+      workspaceRoot: options.workspaceRoot,
     });
   }
 
@@ -238,6 +313,7 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
     rawOutput,
     touchedFiles: result.touchedFiles,
     reasoningSummary: result.reasoningSummary,
+    ...buildTaskCapturePayload(result),
     ...(result.droppedNotifications > 0
       ? { droppedNotifications: result.droppedNotifications }
       : {}),

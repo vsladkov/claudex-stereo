@@ -1,4 +1,5 @@
 import type { ConfigReadResponse, GetAccountResponse } from '../protocol/app-server.ts';
+import { optionalString } from '../shared/json.ts';
 import { CodexAppServerClient } from '../transport/app-server-client.ts';
 import { getCodexAvailability } from './availability.ts';
 import type { AppServerClient } from './threads.ts';
@@ -36,11 +37,6 @@ const BUILTIN_PROVIDER_LABELS = new Map([
   ['ollama', 'Ollama'],
   ['lmstudio', 'LM Studio'],
 ]);
-
-function normalizeProviderId(value: unknown): string | null {
-  const providerId = typeof value === 'string' ? value.trim() : '';
-  return providerId || null;
-}
 
 function formatProviderLabel(
   providerId: string | null,
@@ -85,7 +81,7 @@ function resolveProviderConfig(configResponse: ConfigReadResponse | null | undef
     };
   }
 
-  const providerId = normalizeProviderId(config.model_provider);
+  const providerId = optionalString(config.model_provider);
   // `model_providers` (the custom provider table) is not part of the generated
   // Config type, so it is read structurally.
   const providersValue = (config as { model_providers?: unknown }).model_providers;

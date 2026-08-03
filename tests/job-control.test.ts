@@ -215,6 +215,39 @@ test('buildUsageSnapshot returns an empty workspace window', (t) => {
   assert.deepEqual(snapshot.byModel, []);
 });
 
+test('job-control entry points honor an explicit workspace root', (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  const unrelatedCwd = makeTempDir();
+  seedJobs(workspace, [
+    jobAt('task-finished', 5),
+    jobAt('task-running', 10, { status: 'running', pid: process.pid }),
+  ]);
+
+  const usage = buildUsageSnapshot(unrelatedCwd, { workspaceRoot: workspace, env: {} });
+  assert.equal(usage.workspaceRoot, workspace);
+  assert.equal(usage.window.countedJobs, 2);
+
+  const status = buildStatusSnapshot(unrelatedCwd, { workspaceRoot: workspace, env: {} });
+  assert.equal(status.workspaceRoot, workspace);
+  assert.equal(status.running[0]?.id, 'task-running');
+
+  const single = buildSingleJobSnapshot(unrelatedCwd, 'task-finished', {
+    workspaceRoot: workspace,
+  });
+  assert.equal(single.workspaceRoot, workspace);
+  assert.equal(single.job.id, 'task-finished');
+
+  assert.equal(
+    resolveResultJob(unrelatedCwd, 'task-finished', { workspaceRoot: workspace }).job.id,
+    'task-finished',
+  );
+  assert.equal(
+    resolveCancelableJob(unrelatedCwd, 'task-running', { workspaceRoot: workspace }).job.id,
+    'task-running',
+  );
+});
+
 test('resolveResultJob reports a referenced running job as still running', (t) => {
   useTempCodexHome(t);
   const workspace = makeTempDir();

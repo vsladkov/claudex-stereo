@@ -3,8 +3,9 @@ import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 
+import { processHasExited } from '../platform/process.ts';
 import { parseArgs } from '../shared/args.ts';
-import { BROKER_BUSY_RPC_CODE } from '../protocol/broker-rpc.ts';
+import { BROKER_BUSY_RPC_CODE, buildJsonRpcError } from '../protocol/broker-rpc.ts';
 import type {
   AppServerMethod,
   AppServerNotification,
@@ -126,12 +127,7 @@ function buildExpectedCompletionIds(
 }
 
 function defaultProcessIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException | null | undefined)?.code !== 'ESRCH';
-  }
+  return !processHasExited(pid);
 }
 
 export async function releaseLockForDeadOwner(
@@ -168,14 +164,6 @@ export async function releaseLockForDeadOwner(
     released: outcome.released,
     reason: outcome.reason,
   };
-}
-
-function buildJsonRpcError(
-  code: number,
-  message: string,
-  data?: unknown,
-): { code: number; message: string; data?: unknown } {
-  return data === undefined ? { code, message } : { code, message, data };
 }
 
 function send(socket: net.Socket, message: unknown): void {

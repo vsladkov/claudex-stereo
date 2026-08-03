@@ -1,6 +1,6 @@
 ---
 description: Run a code review against local git state on Codex or Claude
-argument-hint: '[--wait|--background] [--base <ref>] [--pr <n>] [--scope auto|working-tree|branch] [--model <model-or-alias>]'
+argument-hint: '[--wait|--background] [--base <ref>] [--pr <n>] [--scope auto|working-tree|branch] [--model <model-or-alias>] [focus ...]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), Bash(gh:*), AskUserQuestion, Agent
 ---
@@ -31,14 +31,17 @@ role default applies to this command.
 - `claude:session`, `claude:inherit`, `claude:sonnet`, `claude:opus`, `claude:haiku`, and
   `claude:fable` take the Claude path. Reject any other `claude:*` value using the routing skill's
   availability rule.
-- Reject any trailing focus text on both routes before repository work. State that
-  `/stereo:review` does not support custom focus text and name
-  `/stereo:adversarial-review <focus>` as the steerable route.
+- Reject any trailing focus text on the Codex path before repository work because the built-in
+  reviewer does not accept custom focus text. Name `/stereo:adversarial-review <focus>` as the
+  Codex-side steerable route. The Claude path accepts trailing focus text as untrusted steering.
 - Reject `--effort` on a Codex selection because the built-in reviewer exposes no
   reasoning-effort control. Direct the user to
   `/stereo:adversarial-review --effort <effort>` instead.
-- Reject `--effort` on a `claude:*` selection because effort is a Codex runtime control. Tell the
-  user to remove it or choose a Codex model; do not direct this combination to adversarial review.
+- Reject `--effort` on a `claude:*` selection because a single-role command's `--effort` is that
+  role's effort flag, and every Stereo command rejects a role effort flag when its role is
+  Claude-routed. Only a command-wide `--effort` on a multi-role command is accepted and reported
+  as inert. Tell the user to remove it or choose a Codex model; do not direct this combination to
+  adversarial review.
 - Reject `--background` with a Claude model before inspecting the repository:
   "`--background` creates durable Codex jobs visible in `/stereo:status`. A Claude agent review is
   bound to this session and would not survive it. Remove `--background` to run the Claude review
@@ -138,7 +141,7 @@ Run the same read-only size probes used by the Codex path. Record a precise `tar
 `working tree (staged, unstaged, and untracked)` or `branch diff <base>...HEAD`. The reviewer must
 inspect that exact target directly with read-only `git status`, `git diff`, and file reads.
 
-Read `${CLAUDE_PLUGIN_ROOT}/prompts/review.md` and fill all three current variables without changing
+Read `${CLAUDE_PLUGIN_ROOT}/prompts/review.md` and fill all four current variables without changing
 any other part of the template:
 
 - `{{TARGET_LABEL}}` = `targetLabel`.
@@ -146,6 +149,7 @@ any other part of the template:
   with read-only git and repository reads, including untracked files for a working-tree review.
 - `{{REVIEW_INPUT}}` = an instruction that repository context is available through those tools and
   that only the resolved target is reviewable.
+- `{{USER_FOCUS}}` = the trailing focus text verbatim, or `No extra focus provided.` when empty.
 
 Do not summarize the template: use the complete filled template as the review brief.
 

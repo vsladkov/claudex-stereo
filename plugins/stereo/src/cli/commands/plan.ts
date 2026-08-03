@@ -7,6 +7,7 @@ import {
   PAIR_DEFAULT_MODEL,
 } from '../../models/registry.ts';
 import { readStdinTextIfPiped } from '../../shared/fs.ts';
+import { optionalString, recordLike } from '../../shared/json.ts';
 import {
   clearImplementState,
   clearPairPlanState,
@@ -77,16 +78,6 @@ async function openInVsCode(filePath: string): Promise<boolean> {
 export const defaultPlanStateDeps: PlanStateDeps = {
   openInEditor: openInVsCode,
 };
-
-function optionalString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function recordLike(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)

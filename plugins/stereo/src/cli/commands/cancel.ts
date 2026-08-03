@@ -10,7 +10,12 @@ import { appendLogLine } from '../../jobs/tracked-jobs.ts';
 import { nowIso, resolveJobFile, upsertJob, writeJobFile } from '../../workspace/state.ts';
 import type { JobRecord } from '../../workspace/state.ts';
 import { renderCancelReport } from '../../render/render.ts';
-import { outputCommandResult, parseCommandInput, resolveCommandCwd } from '../io.ts';
+import {
+  outputCommandResult,
+  parseCommandInput,
+  resolveCommandCwd,
+  resolveCommandWorkspace,
+} from '../io.ts';
 
 export interface CancelDeps {
   interruptAppServerTurn: typeof interruptAppServerTurn;
@@ -32,20 +37,25 @@ export async function handleCancel(
   deps: CancelDeps = defaultCancelDeps,
 ): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['cwd'],
+    valueOptions: ['cwd', 'workspace'],
     booleanOptions: ['json'],
   });
 
   const cwd = resolveCommandCwd(options);
+  const workspaceRoot = Object.hasOwn(options, 'workspace')
+    ? resolveCommandWorkspace(options)
+    : undefined;
   const reference = positionals[0] ?? '';
-  const { workspaceRoot, job } = resolveCancelableJob(cwd, reference, {
+  const resolved = resolveCancelableJob(cwd, reference, {
     env: deps.env ?? process.env,
+    workspaceRoot,
   });
-  const jobFile = resolveJobFile(workspaceRoot, job.id);
+  const { job } = resolved;
+  const jobFile = resolveJobFile(resolved.workspaceRoot, job.id);
   let existing: Partial<JobRecord>;
   let storedJobWarning: string | null = null;
   try {
-    existing = readStoredJob(workspaceRoot, job.id) ?? {};
+    existing = readStoredJob(resolved.workspaceRoot, job.id) ?? {};
   } catch (error) {
     existing = {};
     const message = error instanceof Error ? error.message : String(error);
@@ -57,7 +67,7 @@ export async function handleCancel(
     (existing.request as { threadId?: string | null } | null | undefined)?.threadId ?? null;
   const turnId = existing.turnId ?? job.turnId ?? null;
 
-  const interrupt = await deps.interruptAppServerTurn(cwd, { threadId, turnId });
+  const interrupt = await deps.interruptAppServerTurn(workspaceRoot ?? cwd, { threadId, turnId });
   if (interrupt.attempted) {
     appendLogLine(
       job.logFile,
@@ -119,12 +129,12 @@ export async function handleCancel(
     errorMessage: 'Cancelled by user.',
   };
 
-  writeJobFile(workspaceRoot, job.id, {
+  writeJobFile(resolved.workspaceRoot, job.id, {
     ...existing,
     ...nextJob,
     cancelledAt: completedAt,
   });
-  upsertJob(workspaceRoot, {
+  upsertJob(resolved.workspaceRoot, {
     id: job.id,
     status: 'cancelled',
     phase: 'cancelled',

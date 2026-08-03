@@ -12,6 +12,7 @@ import { terminateProcessTree } from '../platform/process.ts';
 import { readPluginManifestVersion } from '../shared/plugin-manifest.ts';
 import {
   BROKER_ENDPOINT_ENV,
+  buildJsonRpcError,
   resolveAppServerConnectTimeoutMs,
   resolveAppServerRequestTimeoutMs,
 } from '../protocol/broker-rpc.ts';
@@ -66,14 +67,6 @@ const DEFAULT_CAPABILITIES: InitializeCapabilities = {
     'item/reasoning/textDelta',
   ],
 };
-
-function buildJsonRpcError(
-  code: number,
-  message: string,
-  data?: unknown,
-): { code: number; message: string; data?: unknown } {
-  return data === undefined ? { code, message } : { code, message, data };
-}
 
 function createProtocolError(message: string, data?: unknown): ProtocolError {
   const error = new Error(message) as ProtocolError;

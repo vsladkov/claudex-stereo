@@ -1,5 +1,6 @@
 import { normalizeReasoningEffort, normalizeRequestedModel } from './registry.ts';
 import type { ReasoningEffort } from './registry.ts';
+import { optionalString } from '../shared/json.ts';
 import type { StereoRoleDefault, StereoRoleDefaults, StereoRoleKey } from '../workspace/state.ts';
 
 export const CLAUDE_SELECTIONS = [
@@ -114,10 +115,6 @@ export interface RoleDefaultEntry {
   invalidReason: string | null;
 }
 
-function storedString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
 export function describeRoleDefaults(defaults: StereoRoleDefaults | undefined): {
   entries: RoleDefaultEntry[];
   warnings: string[];
@@ -125,8 +122,8 @@ export function describeRoleDefaults(defaults: StereoRoleDefaults | undefined): 
   const warnings: string[] = [];
   const entries = ROLE_DEFINITIONS.map((definition): RoleDefaultEntry => {
     const stored = defaults?.[definition.key] as StereoRoleDefault | undefined;
-    const model = storedString(stored?.model);
-    const effort = storedString(stored?.effort);
+    const model = optionalString(stored?.model);
+    const effort = optionalString(stored?.effort);
     let route: 'claude' | 'codex' | null = null;
     let resolvedModel: string | null = null;
     const invalidParts: string[] = [];
@@ -181,8 +178,8 @@ function cloneRoleDefaults(current: StereoRoleDefaults | undefined): StereoRoleD
     if (!entry) {
       continue;
     }
-    const model = storedString(entry.model);
-    const effort = storedString(entry.effort);
+    const model = optionalString(entry.model);
+    const effort = optionalString(entry.effort);
     if (model || effort) {
       next[definition.key] = { model, effort };
     }
@@ -200,8 +197,8 @@ export function applyRoleDefaultChanges(
 
   for (const definition of ROLE_DEFINITIONS) {
     const previous = next[definition.key] ?? {};
-    let model = storedString(previous.model);
-    let effort = storedString(previous.effort);
+    let model = optionalString(previous.model);
+    let effort = optionalString(previous.effort);
     if (clearSet.has(definition.flag)) {
       model = null;
     }
@@ -209,10 +206,10 @@ export function applyRoleDefaultChanges(
       effort = null;
     }
     if (Object.hasOwn(changes, definition.flag)) {
-      model = storedString(changes[definition.flag]);
+      model = optionalString(changes[definition.flag]);
     }
     if (Object.hasOwn(changes, definition.effortFlag)) {
-      effort = storedString(changes[definition.effortFlag]);
+      effort = optionalString(changes[definition.effortFlag]);
     }
 
     if (model || effort) {

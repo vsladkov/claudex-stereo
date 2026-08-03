@@ -24,6 +24,8 @@ import {
   withCodexHome,
 } from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
+import { renderStoredJobResult } from '../plugins/stereo/src/render/render.ts';
+import type { StoredJobLike } from '../plugins/stereo/src/render/render.ts';
 import { TURN_INACTIVITY_TIMEOUT_ENV } from '../plugins/stereo/src/runtime/turn-capture.ts';
 import { APP_SERVER_REQUEST_TIMEOUT_ENV } from '../plugins/stereo/src/protocol/broker-rpc.ts';
 import {
@@ -37,7 +39,18 @@ import {
   buildSingleJobSnapshot,
   DEFAULT_MAX_PROGRESS_LINES,
 } from '../plugins/stereo/src/jobs/job-control.ts';
-import { resolveDurableStateDir, resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { handleCancel } from '../plugins/stereo/src/cli/commands/cancel.ts';
+import type { CancelDeps } from '../plugins/stereo/src/cli/commands/cancel.ts';
+import {
+  readJobFile,
+  resolveDurableStateDir,
+  resolveJobFile,
+  resolveStateDir,
+  saveState,
+  writeJobFile,
+} from '../plugins/stereo/src/workspace/state.ts';
+import type { JobRecord } from '../plugins/stereo/src/workspace/state.ts';
+import { buildTaskCapturePayload } from '../plugins/stereo/src/workflows/task.ts';
 import { CODEX_NOT_AUTHENTICATED_ERROR } from '../plugins/stereo/src/workflows/companion-jobs.ts';
 
 registerBrokerReaping();
@@ -1092,6 +1105,207 @@ test('task --workspace keeps isolated thread state on the main workspace broker'
   assert.equal(fs.existsSync(path.join(resolveStateDir(worktree), 'broker.json')), false);
   assert.equal(fs.existsSync(path.join(resolveStateDir(repo), 'broker.json')), true);
   assert.equal(readFakeState(binDir).threads[0].cwd, worktree);
+});
+
+test('cancel --workspace retargets the turn interrupt to the recorded workspace', async () => {
+  const workspace = makeTempDir();
+  const unrelatedCwd = makeTempDir();
+  const job = {
+    id: 'task-cross-workspace-cancel',
+    status: 'running',
+    title: 'Cross-workspace task',
+    threadId: 'thread-cross-workspace',
+    turnId: 'turn-cross-workspace',
+    pid: null,
+  };
+  saveState(workspace, {
+    version: 1,
+    config: { stopReviewGate: false },
+    jobs: [job],
+  });
+  writeJobFile(workspace, job.id, job);
+
+  let interruptCwd: string | null = null;
+  const deps: CancelDeps = {
+    interruptAppServerTurn: async (cwd, target) => {
+      interruptCwd = cwd;
+      assert.deepEqual(target, { threadId: job.threadId, turnId: job.turnId });
+      return { attempted: true, interrupted: true, transport: 'broker', detail: '' };
+    },
+    terminateProcessTree: () => {
+      throw new Error('A missing worker pid must not be terminated.');
+    },
+    processHasExited: () => true,
+    releaseThreadReservationForCancelledJob: async () => ({
+      released: false,
+      status: 'none-found',
+    }),
+    env: {},
+  };
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    await handleCancel(['--cwd', unrelatedCwd, '--workspace', workspace, '--json', job.id], deps);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(interruptCwd, workspace);
+});
+
+test('status and result resolve isolated jobs from an unrelated cwd with --workspace', async (t) => {
+  const repo = initializeBasicRepo();
+  const unrelatedCwd = makeTempDir('unrelated-job-control-cwd-');
+  const worktree = path.join(makeTempDir('isolated-job-control-worktree-'), 'checkout');
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'slow-task');
+  const env = buildEnv(binDir);
+  registerSessionCleanup(t, repo, env);
+
+  const added = run('git', ['-C', repo, 'worktree', 'add', '--detach', worktree, 'HEAD']);
+  assert.equal(added.status, 0, added.stderr);
+
+  const launched = run(
+    process.execPath,
+    [
+      SCRIPT,
+      'task',
+      '--background',
+      '--json',
+      '--write',
+      '--cwd',
+      worktree,
+      '--workspace',
+      repo,
+      'implement it',
+    ],
+    { cwd: unrelatedCwd, env },
+  );
+  assert.equal(launched.status, 0, launched.stderr);
+  const jobId = JSON.parse(launched.stdout).jobId as string;
+
+  const status = run(
+    process.execPath,
+    [SCRIPT, 'status', jobId, '--workspace', repo, '--wait', '--timeout-ms', '15000', '--json'],
+    { cwd: unrelatedCwd, env },
+  );
+  assert.equal(status.status, 0, status.stderr);
+  const statusPayload = JSON.parse(status.stdout);
+  assert.equal(statusPayload.workspaceRoot, repo);
+  assert.equal(statusPayload.job.id, jobId);
+  assert.equal(statusPayload.job.status, 'completed');
+
+  const result = await waitFor(() => {
+    const outcome = run(
+      process.execPath,
+      [SCRIPT, 'result', jobId, '--workspace', repo, '--json'],
+      { cwd: unrelatedCwd, env },
+    );
+    return outcome.status === 0 ? outcome : null;
+  });
+  assert.equal(JSON.parse(result.stdout).job.id, jobId);
+});
+
+test('status reports a missing explicit workspace through the JSON error contract', () => {
+  const cwd = makeTempDir();
+  const missing = path.join(cwd, 'missing-workspace');
+  const result = run(process.execPath, [SCRIPT, 'status', '--workspace', missing, '--json'], {
+    cwd,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    error: `--workspace ${missing} is not an existing directory.`,
+  });
+});
+
+test('task job payloads retain bounded command and file-change metadata', () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, 'captured-write-data');
+  const env = buildEnv(binDir);
+
+  const runResult = run(process.execPath, [SCRIPT, 'task', '--write', 'capture metadata'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(runResult.status, 0, runResult.stderr);
+
+  const indexedJob = requireCompanionState(repo, env).jobs[0]! as JobRecord;
+  const storedJob = withCodexHome(env.CODEX_HOME, () =>
+    readJobFile(resolveJobFile(repo, indexedJob.id)),
+  ) as JobRecord & StoredJobLike;
+  const payload = storedJob.result as Record<string, any>;
+  assert.equal(payload.commandExecutions.length, 2);
+  assert.deepEqual(payload.commandExecutions[0], {
+    command: 'npm run check:ok',
+    cwd: repo,
+    status: 'completed',
+    exitCode: 0,
+    durationMs: 12,
+  });
+  assert.equal(Object.hasOwn(payload.commandExecutions[0], 'output'), false);
+  assert.equal(payload.commandExecutions[1].exitCode, 7);
+  assert.equal(payload.commandExecutions[1].output.length, 2000);
+  assert.match(payload.commandExecutions[1].output, /failed-output-tail$/);
+  assert.doesNotMatch(payload.commandExecutions[1].output, /discarded-prefix/);
+  assert.deepEqual(payload.fileChanges, [
+    { path: 'src/added.ts', kind: { type: 'add' }, status: 'completed' },
+    {
+      path: 'src/updated.ts',
+      kind: { type: 'update', move_path: null },
+      status: 'completed',
+    },
+  ]);
+  assert.equal(
+    payload.fileChanges.some((change: Record<string, unknown>) => 'diff' in change),
+    false,
+  );
+
+  const legacyStoredJob = structuredClone(storedJob);
+  const legacyPayload = legacyStoredJob.result as Record<string, unknown>;
+  delete legacyPayload.commandExecutions;
+  delete legacyPayload.commandExecutionsOmitted;
+  delete legacyPayload.fileChanges;
+  delete legacyPayload.fileChangesOmitted;
+  assert.equal(
+    renderStoredJobResult(indexedJob, storedJob),
+    renderStoredJobResult(indexedJob, legacyStoredJob),
+  );
+});
+
+test('task capture metadata stays within its command and file-change caps', () => {
+  const commandExecutions = Array.from({ length: 300 }, (_, index) => ({
+    type: 'commandExecution' as const,
+    id: `command-${index}`,
+    command: `command ${index}`,
+    cwd: '/repo',
+    processId: null,
+    source: 'agent' as const,
+    status: 'completed' as const,
+    commandActions: [],
+    aggregatedOutput: '',
+    exitCode: 0,
+    durationMs: index,
+  }));
+  const fileChanges = [
+    {
+      type: 'fileChange' as const,
+      id: 'file-changes',
+      status: 'completed' as const,
+      changes: Array.from({ length: 900 }, (_, index) => ({
+        path: `src/file-${index}.ts`,
+        kind: { type: 'update' as const, move_path: null },
+        diff: `diff ${index}`,
+      })),
+    },
+  ];
+
+  const payload = buildTaskCapturePayload({ commandExecutions, fileChanges });
+  assert.equal(payload.commandExecutions?.length, 100);
+  assert.equal(payload.commandExecutionsOmitted, 200);
+  assert.equal(payload.fileChanges?.length, 500);
+  assert.equal(payload.fileChangesOmitted, 400);
 });
 
 test('task results report dropped malformed notifications without failing the run', () => {

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { TokenUsageBreakdown } from '../protocol/app-server.ts';
+import { optionalString } from '../shared/json.ts';
 import { resolveCodexHome } from './thread-lock-io.ts';
 import { resolveWorkspaceRoot } from './workspace.ts';
 
@@ -118,10 +119,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function normalizedOptionalString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
 function normalizeRoleDefaults(value: unknown): StereoRoleDefaults {
   if (!isPlainObject(value)) {
     return {};
@@ -133,8 +130,8 @@ function normalizeRoleDefaults(value: unknown): StereoRoleDefaults {
     if (!isPlainObject(rawEntry)) {
       continue;
     }
-    const model = normalizedOptionalString(rawEntry.model);
-    const effort = normalizedOptionalString(rawEntry.effort);
+    const model = optionalString(rawEntry.model);
+    const effort = optionalString(rawEntry.effort);
     if (model || effort) {
       normalized[key] = { model, effort };
     }
@@ -385,7 +382,7 @@ export function loadState(cwd: string): StereoState {
         ...defaultState().config,
         ...parsedConfig,
         roleDefaults: normalizeRoleDefaults(parsedConfig.roleDefaults),
-        lastJobAnnouncementAt: normalizedOptionalString(parsedConfig.lastJobAnnouncementAt),
+        lastJobAnnouncementAt: optionalString(parsedConfig.lastJobAnnouncementAt),
       },
       jobs: Array.isArray(parsed.jobs) ? parsed.jobs.map(stripIndexOnlyFields) : [],
     };
@@ -408,7 +405,7 @@ function removeFileIfExists(filePath: string | null | undefined): void {
   }
 }
 
-const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+export const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const SAFE_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 export const DEFAULT_PLAN_SLOT = 'default';
 const SAFE_PLAN_SLOT = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -526,7 +523,7 @@ export function saveState(cwd: string, state: StereoStateInput): StereoState {
       ...defaultState().config,
       ...(state.config ?? {}),
       roleDefaults: normalizeRoleDefaults(state.config?.roleDefaults),
-      lastJobAnnouncementAt: normalizedOptionalString(state.config?.lastJobAnnouncementAt),
+      lastJobAnnouncementAt: optionalString(state.config?.lastJobAnnouncementAt),
     },
     jobs: nextJobs,
   };
@@ -610,6 +607,18 @@ export function resolveJobFile(cwd: string, jobId: string): string {
   assertSafeJobId(jobId);
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
+}
+
+export function readStoredJobOrNull(cwd: string, jobId: string): JobRecord | null {
+  const jobFile = resolveJobFile(cwd, jobId);
+  if (!fs.existsSync(jobFile)) {
+    return null;
+  }
+  try {
+    return readJobFile(jobFile);
+  } catch {
+    return null;
+  }
 }
 
 export function resolvePairPlanFile(cwd: string, slot = DEFAULT_PLAN_SLOT): string {

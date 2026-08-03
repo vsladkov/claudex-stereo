@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import { renderImplementState } from '../../render/render.ts';
+import { recordLike } from '../../shared/json.ts';
 import {
   clearImplementState,
   fingerprintPlanText,
@@ -23,10 +24,6 @@ import {
 const MAX_IMPLEMENT_STATE_BYTES = 512 * 1024;
 
 type JsonRecord = Record<string, unknown>;
-
-function recordLike(value: unknown): JsonRecord | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
-}
 
 function assertIsolationShape(record: JsonRecord): void {
   if (!record.isolated) {
