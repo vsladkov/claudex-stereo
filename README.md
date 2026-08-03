@@ -482,9 +482,10 @@ user-owned command steps. Nothing is committed; you review and commit the result
 Shows the complete plan in the selected durable slot, together with its verdict, review round,
 model and Codex thread, update time, review findings, open questions, residual risks, and the
 `implementedAt` marker when present. The default slot is selected when `--slot` is absent, and
-`/stereo:quick` always uses that slot. The marker means a full implementation phase finished with
-an accepted review; it does not mean the work was committed or merged. Findings are rendered as a
-compact severity-and-title list; `/stereo:plan-state --json` returns their complete stored objects.
+`/stereo:quick` defaults to it and accepts `--slot <name>` like the phase commands. The marker means
+a full implementation phase finished with an accepted review; it does not mean the work was
+committed or merged. Findings are rendered as a compact severity-and-title list;
+`/stereo:plan-state --json` returns their complete stored objects.
 
 ```bash
 /stereo:plan-state
@@ -523,12 +524,16 @@ session.
 
 Quick deliberately has no `--resume`: an interrupted quick run restarts from the beginning. Use
 `/stereo:plan` plus `/stereo:implement` for longer work that needs resumable implementation state.
+If an isolated Quick run crashes, its worktree is stranded without a durable pointer; Quick prints
+the path when it creates the worktree, and [`/stereo:doctor`](#stereodoctor) lists stranded entries
+with exact removal commands.
 
-Quick automatically pauses after 2 plan-review rounds and 2 implementation fix rounds. At the plan
-cap you can keep iterating, implement the reviewed but unapproved plan with its findings carried
-forward, or stop. Choosing keep iterating continues automatically through rounds 3-5, with the
-reviewer carried forward per [reviewer continuation](#reviewer-continuation). Round 6 is an
-absolute safeguard and
+Quick pauses after 2 plan-review rounds and 2 implementation fix rounds by default.
+`--max-plan-rounds <n>` (maximum 6) and `--max-fix-rounds <n>` change those caps. At the plan cap
+you can keep iterating, implement the reviewed but unapproved plan with its findings carried
+forward, or stop. Choosing keep iterating continues automatically through the rounds after the
+cap, up to round 5, with the reviewer carried forward per
+[reviewer continuation](#reviewer-continuation). Round 6 is an absolute safeguard and
 offers only implement anyway or stop. Approved plans also carry their review findings forward as
 advisory context. Dirty worktrees and exhausted fix rounds still produce explicit safety gates. If
 the task needs a plan longer than roughly 120 lines or crosses multiple features or subsystems,
@@ -544,6 +549,13 @@ Use the same four role flags as the phase commands:
 | Implementer             | `--implementer`             | `--implementer-effort`             | `codex:sol` at `max` after default Claude review; latest Codex plan-review model and effort otherwise |
 | Implementation reviewer | `--implementation-reviewer` | `--implementation-reviewer-effort` | `claude:fable`                                                                                        |
 
+`--slot <name>` selects the durable plan slot Quick stores into and defaults to `default`. Quick
+warns about an existing plan in that slot but never asks, because a Quick run that stores a plan
+always implements it. `--isolated` moves implementation, implementation review, and fixes into a
+throwaway detached worktree using the same machinery as
+[`/stereo:implement --isolated`](#stereoimplement), while the plan draft and plan review always run
+against the main tree. Use [`/stereo:doctor`](#stereodoctor) for stranded-worktree cleanup.
+
 Because the default Claude plan reviewer leaves no Codex thread to resume, quick starts a fresh
 Codex implementation task by default. Its implementer is `codex:sol` with `--implementer-effort`, then
 command-wide `--effort`, then `max`, and the recap names that effective choice before writes
@@ -553,6 +565,9 @@ are stored before quick transitions or stops, so later `/stereo:implement` gates
 
 ```bash
 /stereo:quick fix the retry delay calculation
+/stereo:quick --slot scratch fix the retry delay calculation
+/stereo:quick --isolated --max-fix-rounds 1 fix a small bug
+/stereo:quick --max-plan-rounds 3 add a validation check
 /stereo:quick --planner claude:haiku --plan-reviewer codex:terra --effort high add a validation check
 /stereo:quick --plan-reviewer claude:sonnet --implementation-reviewer claude:opus fix a small bug
 /stereo:quick --plan-reviewer codex:sol fix a small bug
@@ -560,7 +575,8 @@ are stored before quick transitions or stops, so later `/stereo:implement` gates
 ```
 
 The latest reviewed plan is stored normally, so an interrupted approved run can resume with
-`/stereo:implement`. Nothing is committed or pushed.
+`/stereo:implement` for the default slot or `/stereo:implement --slot <name>` otherwise. Nothing is
+committed or pushed.
 
 ### `/stereo:tournament`
 

@@ -418,6 +418,14 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
   assert.match(quick, /^allowed-tools:.*Bash\(npm:\*\)/m);
   assert.match(quick, /`<plannerSelectionArgs>` = `--model/);
   assert.match(quick, /`<reviewSelectionArgs>` =\s*\n?\s*`--model/);
+  assert.match(quick, /`<slotArg>` = `--slot <slot>`/);
+  const quickPlanReviewLines = quick
+    .split('\n')
+    .filter((line) => line.includes('plan-review --background'));
+  assert.equal(quickPlanReviewLines.length, 2);
+  for (const line of quickPlanReviewLines) {
+    assert.match(line, /<slotArg>/);
+  }
   assert.equal(
     (quick.match(/--plan-file "<payloadFile>"/g) ?? []).length,
     2,
@@ -428,6 +436,18 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     5,
     'Quick must deliver all five Codex task payloads by file',
   );
+  const quickIsolatedTaskLines = quick
+    .split('\n')
+    .filter(
+      (line) =>
+        line.startsWith('node ') &&
+        line.includes('task --background') &&
+        (line.includes('--write') || line.includes('--output-schema')),
+    );
+  assert.equal(quickIsolatedTaskLines.length, 4);
+  for (const line of quickIsolatedTaskLines) {
+    assert.match(line, /<isolationArgs>/);
+  }
   assert.equal(
     (quick.match(/^node .*plan-store .* < "<payloadFile>"$/gm) ?? []).length,
     1,
@@ -471,6 +491,10 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     '--implementer-effort',
     '--implementation-reviewer',
     '--implementation-reviewer-effort',
+    '--slot',
+    '--isolated',
+    '--max-plan-rounds',
+    '--max-fix-rounds',
   ]) {
     assert.match(quickHint, new RegExp(flag));
   }
