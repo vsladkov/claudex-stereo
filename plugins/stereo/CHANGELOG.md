@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.37.0
+
+- Rename the `spark` alias to `mini`, now resolving to `gpt-5.4-mini`: the previous
+  `gpt-5.3-codex-spark` id is retired upstream (absent from the Codex CLI's shipped model catalog
+  and marked unsupported for API use, so it only appeared to work because unregistered ids pass
+  through unchanged). The row pins its default pair effort at `xhigh` — a live probe showed the
+  model rejects `max` — and the routing skill's effort ladder now resolves per-model registry
+  defaults instead of assuming `max` for every `gpt-*` model. There is no back-compat `spark`
+  alias: a stored `codex:spark` workspace default or habit now passes `spark` through as a
+  literal unknown model id and fails when the job starts
+- Update the `glm` alias from `glm-5.1` to `glm-5.2`, the current Z.AI flagship; its effort
+  default deliberately stays unset pending verification of how the Codex CLI forwards reasoning
+  effort to OpenAI-compatible custom providers
+- Bump the pinned Codex CLI in CI from 0.145.0 to 0.146.0 on both lanes, with codegen and
+  typecheck compatibility verified against the new version; `sol`, `terra`, `luna`, `kimi`,
+  `deepseek`, and `qwen` were audited against upstream and remain current and unchanged
+
 ## 1.36.0
 
 - `/stereo:tournament` now selects the winner automatically when the review evidence is decisive:

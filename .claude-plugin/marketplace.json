@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Claudex Stereo: Claude and the Codex CLI as one signal - mixed-model planning, implementation, and adversarial review for Claude Code.",
-    "version": "1.36.0"
+    "version": "1.37.0"
   },
   "plugins": [
     {
       "name": "stereo",
       "displayName": "Claudex Stereo",
       "description": "Pair Claude with the Codex CLI: /stereo:plan and /stereo:implement mixed-model workflow, adversarial reviews, delegated tasks, and background jobs.",
-      "version": "1.36.0",
+      "version": "1.37.0",
       "author": {
         "name": "Veselin Sladkov"
       },
