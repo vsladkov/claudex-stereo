@@ -96,6 +96,24 @@ export interface StoredImplementState {
   [key: string]: unknown;
 }
 
+export interface StoredTournamentState {
+  version?: unknown;
+  status?: unknown;
+  baselineCommit?: unknown;
+  baselineDirtyPaths?: unknown;
+  mainRoot?: unknown;
+  lineupSource?: unknown;
+  reviewer?: unknown;
+  contestants?: unknown;
+  winner?: unknown;
+  handBack?: unknown;
+  plan?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  completedAt?: unknown;
+  [key: string]: unknown;
+}
+
 export interface NativeReviewRenderResult {
   status?: number | null;
   stdout: string;
@@ -883,6 +901,43 @@ export function renderImplementState(record: StoredImplementState | null): strin
     `Recorded plan slot: ${storedPlanMetadataValue(plan?.slot) ?? '-'}`,
     `Recorded plan fingerprint: ${storedPlanMetadataValue(plan?.fingerprint) ?? '-'}`,
     `Recorded plan updated: ${storedPlanMetadataValue(plan?.updatedAt) ?? '-'}`,
+  );
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
+export function renderTournamentState(record: StoredTournamentState | null): string {
+  if (!record) {
+    return 'No tournament state for this repository. Run /stereo:tournament first.\n';
+  }
+
+  const baselineDirtyCount = Array.isArray(record.baselineDirtyPaths)
+    ? record.baselineDirtyPaths.length
+    : 0;
+  const plan = storedRecord(record.plan);
+  const winner = storedRecord(record.winner);
+  const handBack = storedRecord(record.handBack);
+  const lines = [
+    '# Stereo Tournament State',
+    '',
+    `Baseline commit: ${storedPlanMetadataValue(record.baselineCommit) ?? '-'}`,
+    `Baseline-dirty paths: ${baselineDirtyCount}`,
+    `Lineup: ${storedPlanMetadataValue(record.lineupSource) ?? '-'}`,
+    'Contestants:',
+  ];
+  for (const value of Array.isArray(record.contestants) ? record.contestants : []) {
+    const contestant = storedRecord(value);
+    lines.push(
+      `- ${storedPlanMetadataValue(contestant?.label) ?? '-'} ${storedPlanMetadataValue(contestant?.selection) ?? '-'} (${storedPlanMetadataValue(contestant?.route) ?? '-'}) status ${storedPlanMetadataValue(contestant?.status) ?? '-'} job ${storedPlanMetadataValue(contestant?.jobId) ?? 'not applicable'} worktree ${storedPlanMetadataValue(contestant?.worktreePath) ?? '-'}`,
+    );
+  }
+  lines.push(
+    `Winner: ${storedPlanMetadataValue(winner?.label) ?? '-'} (${storedPlanMetadataValue(winner?.rule) ?? '-'})`,
+    `Hand-back: ${storedPlanMetadataValue(handBack?.decision) ?? '-'}`,
+    `Plan marked implemented: ${storedPlanMetadataValue(handBack?.markedImplemented) ?? 'no'}`,
+    `Status: ${storedPlanMetadataValue(record.status) ?? 'unknown'}`,
+    `Updated: ${storedPlanMetadataValue(record.updatedAt) ?? '-'}`,
+    `Recorded plan slot: ${storedPlanMetadataValue(plan?.slot) ?? '-'}`,
+    `Recorded plan fingerprint: ${storedPlanMetadataValue(plan?.fingerprint) ?? '-'}`,
   );
   return `${lines.join('\n').trimEnd()}\n`;
 }

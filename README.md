@@ -562,14 +562,15 @@ The latest reviewed plan is stored normally, so an interrupted approved run can 
 ### `/stereo:tournament`
 
 Runs one already-approved stored plan through 2 or 3 independent implementers. With no
-`--implementer` flags, the built-in default lineup races `codex:sol` at its `max` model-pair default
-unless `--effort` or the workspace implementer effort default overrides it, against `claude:opus`
-at full session strength (Claude has no effort dial). Each contestant starts in its own detached
-temporary worktree at the same `HEAD`, so the main working tree stays untouched while contestants
-run and their evidence is reviewed. Two contestants are the minimum for a comparison; three is the
-cap because every extra contestant adds an implementation run and an independent review,
-increasing cost, rate-limit pressure, and cleanup work. Use `/stereo:implement` when you want one
-implementer.
+`--implementer` flags, the default lineup uses the workspace `implementer` model for `c1` when it is
+valid and Codex-routed, otherwise `codex:sol`; `c2` remains `claude:opus`. The Codex contestant uses
+that model's pair-default effort unless `--effort` or an applicable workspace implementer effort
+overrides it; an effort stored alongside a Claude-routed implementer remains inert. Claude runs at
+full session strength and has no effort dial. Each contestant starts in its own detached temporary
+worktree at the same `HEAD`, so the main working tree stays untouched while contestants run and their
+evidence is reviewed. Two contestants are the minimum for a comparison; three is the cap because
+every extra contestant adds an implementation run and an independent review, increasing cost,
+rate-limit pressure, and cleanup work. Use `/stereo:implement` when you want one implementer.
 
 Contestants may be Codex selections or `claude:sonnet`, `claude:opus`, `claude:haiku`,
 `claude:fable`, and `claude:inherit`. `claude:session` is rejected because Claude writes stay in the
@@ -605,15 +606,20 @@ recoverable. Failed or cancelled contestants retain their worktrees so partial d
 destroyed. A crash or closed session can also strand worktrees; find them with
 `git worktree list --porcelain` and remove an unwanted path with `git worktree remove --force`.
 
-The tournament deliberately writes no implementation or tournament record, has no `--resume`, and
-never marks the stored plan implemented. Codex jobs and results remain visible through
-`/stereo:status` and `/stereo:result`, while worktrees remain discoverable through Git. A complete
-run costs one concurrent Codex write turn per Codex contestant plus one sequential foreground
-Claude implementer run per Claude contestant, and one reviewer invocation per non-empty completed
-contestant, so check both providers' usage limits before racing expensive models.
+The tournament writes a durable tournament record beside the stored plan and can be re-entered with
+`/stereo:tournament --resume`; it never writes the implementation record. A fully successful
+hand-back—an acceptable winner, a successful apply, and every identifiable main-tree gate green—marks
+the stored plan implemented. Codex contestants resume from durable jobs. A Claude contestant already
+running when the session ended cannot be resumed and is judged on its worktree delta alone. Clearing
+the stored plan does not clear the tournament record; use the tournament-state clear action as an
+explicit reset. A complete run costs one concurrent Codex write turn per Codex contestant plus one
+sequential foreground Claude implementer run per Claude contestant, and one reviewer invocation per
+non-empty completed contestant, so check both providers' usage limits before racing expensive
+models.
 
 ```bash
 /stereo:tournament
+/stereo:tournament --resume
 /stereo:tournament --implementer codex:sol --implementer claude:opus
 /stereo:tournament --implementer codex:sol --implementer codex:mini
 /stereo:tournament --implementer codex:sol --implementer codex:sol --implementer-effort high --implementer-effort max

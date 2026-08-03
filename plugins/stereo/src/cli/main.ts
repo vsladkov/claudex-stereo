@@ -12,6 +12,7 @@ import { handleResult, handleStatus } from './commands/status.ts';
 import { handleCancel } from './commands/cancel.ts';
 import { handleConfig } from './commands/config.ts';
 import { handleImplementState } from './commands/implement.ts';
+import { handleTournamentState } from './commands/tournament.ts';
 import { handleVersion } from './commands/version.ts';
 
 async function main(fullArgv: string[]): Promise<void> {
@@ -51,6 +52,9 @@ async function main(fullArgv: string[]): Promise<void> {
       break;
     case 'implement-state':
       handleImplementState(argv);
+      break;
+    case 'tournament-state':
+      handleTournamentState(argv);
       break;
     case 'transfer':
       await handleTransfer(argv);

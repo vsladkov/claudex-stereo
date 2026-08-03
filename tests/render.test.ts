@@ -16,6 +16,7 @@ import {
   renderStoredJobResult,
   renderStoredPlanState,
   renderTaskResult,
+  renderTournamentState,
   renderUsageReport,
 } from '../plugins/stereo/src/render/render.ts';
 
@@ -708,6 +709,46 @@ test('renderImplementState preserves the unavailable message', () => {
   assert.equal(
     renderImplementState(null),
     'No implementation state for this repository. Run /stereo:implement first.\n',
+  );
+});
+
+test('renderTournamentState shows the durable race metadata and unavailable message', () => {
+  const output = renderTournamentState({
+    baselineCommit: '8b995ad',
+    baselineDirtyPaths: ['README.md'],
+    lineupSource: 'default',
+    contestants: [
+      {
+        label: 'c1',
+        selection: 'codex:sol',
+        route: 'codex',
+        status: 'completed',
+        jobId: 'task-background-8',
+        worktreePath: '/tmp/stereo-worktrees/example-c1',
+      },
+    ],
+    winner: { label: 'c1', rule: 'single-acceptable' },
+    handBack: { decision: 'automatic', markedImplemented: '2026-08-03T10:30:00.000Z' },
+    status: 'complete',
+    updatedAt: '2026-08-03T10:30:00.000Z',
+    plan: {
+      slot: 'windows-lane',
+      fingerprint: '0123456789abcdef0123456789abcdef',
+    },
+  });
+
+  assert.match(output, /^# Stereo Tournament State/m);
+  assert.match(output, /Baseline commit: 8b995ad/);
+  assert.match(
+    output,
+    /- c1 codex:sol \(codex\) status completed job task-background-8 worktree \/tmp\/stereo-worktrees\/example-c1/,
+  );
+  assert.match(output, /Winner: c1 \(single-acceptable\)/);
+  assert.match(output, /Recorded plan slot: windows-lane/);
+  assert.match(output, /Recorded plan fingerprint: 0123456789abcdef0123456789abcdef/);
+  assert.equal(
+    renderTournamentState(null),
+    'No tournament state for this repository. Run /stereo:tournament first.\n',
   );
 });
 

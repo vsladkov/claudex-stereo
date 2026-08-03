@@ -12,6 +12,7 @@ export function printUsage(): void {
       '  node scripts/codex-companion.ts plan-state [--list|--open|--clear|--mark-implemented] [--slot <name>] [--json]',
       '  node scripts/codex-companion.ts plan-store --verdict <value> [--round <n>] [--slot <name>] [--thread <id>|--no-thread] [--reviewed-by <label>] [--summary <text>|--summary-file <path>] [--findings-file <path>] [--open-question <text>]...|[--open-questions-file <path>] [--residual-risk <text>]...|[--residual-risks-file <path>] [--json] < plan.md',
       '  node scripts/codex-companion.ts implement-state [--record|--update|--complete|--clear] [--state-file <path>] [--slot <name>] [--json]',
+      '  node scripts/codex-companion.ts tournament-state [--record|--update|--complete|--clear] [--state-file <path>] [--slot <name>] [--json]',
       '  node scripts/codex-companion.ts transfer [--source <claude-jsonl>] [--json]',
       '  node scripts/codex-companion.ts status [job-id] [--wait] [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--all] [--usage] [--verbose] [--json]',
       '  node scripts/codex-companion.ts result [job-id] [--report] [--json]',

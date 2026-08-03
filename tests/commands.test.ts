@@ -64,6 +64,8 @@ test('every command wires the companion entry point it documents', () => {
     'tournament.md': [
       /task --background --json --write --model <contestantModel>/,
       /plan-state --json <slotArg>/,
+      /tournament-state --record --state-file "<statePayloadFile>"/,
+      /tournament-state --json/,
       /worktree add --detach/,
       /subagent_type: "stereo:implementer"/,
     ],
@@ -371,11 +373,12 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     '--implementer-effort',
     '--implementation-reviewer',
     '--effort',
+    '--resume',
     '--slot',
   ]) {
     assert.match(tournamentHint, new RegExp(flag));
   }
-  assert.doesNotMatch(tournament, /--mark-implemented/);
+  assert.match(tournament, /plan-state --mark-implemented/);
   assert.doesNotMatch(tournament, /implement-state --record/);
 
   const quick = read('commands/quick.md');

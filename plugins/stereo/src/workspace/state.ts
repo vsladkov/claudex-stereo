@@ -16,6 +16,7 @@ const JOBS_DIR_NAME = 'jobs';
 const PAIR_PLAN_FILE_NAME = 'pair-plan.json';
 const PAIR_PLAN_MARKDOWN_FILE_NAME = 'pair-plan.md';
 const IMPLEMENT_STATE_FILE_NAME = 'implement-state.json';
+const TOURNAMENT_STATE_FILE_NAME = 'tournament-state.json';
 export const MAX_JOBS = 50;
 const migrationChecked = new Set<string>();
 const migrationWarningsEmitted = new Set<string>();
@@ -670,6 +671,57 @@ export function clearImplementState(cwd: string): string[] {
   try {
     fs.unlinkSync(implementStateFile);
     return [implementStateFile];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
+      throw error;
+    }
+    return [];
+  }
+}
+
+export function resolveTournamentStateFile(cwd: string): string {
+  return path.join(resolveDurableStateDir(cwd), TOURNAMENT_STATE_FILE_NAME);
+}
+
+export function saveTournamentState<T>(cwd: string, record: T): T {
+  ensureStateDir(cwd);
+  writeJsonAtomic(resolveTournamentStateFile(cwd), record);
+  return record;
+}
+
+export function readTournamentStateFile(cwd: string): {
+  missing: boolean;
+  record: unknown;
+  parseError: string | null;
+} {
+  const tournamentStateFile = resolveTournamentStateFile(cwd);
+  if (!fs.existsSync(tournamentStateFile)) {
+    return { missing: true, record: null, parseError: null };
+  }
+  try {
+    return {
+      missing: false,
+      record: JSON.parse(fs.readFileSync(tournamentStateFile, 'utf8')),
+      parseError: null,
+    };
+  } catch (error) {
+    return {
+      missing: false,
+      record: null,
+      parseError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export function loadTournamentState(cwd: string): unknown {
+  return readTournamentStateFile(cwd).record;
+}
+
+export function clearTournamentState(cwd: string): string[] {
+  const tournamentStateFile = resolveTournamentStateFile(cwd);
+  try {
+    fs.unlinkSync(tournamentStateFile);
+    return [tournamentStateFile];
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
       throw error;

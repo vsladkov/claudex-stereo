@@ -20,6 +20,7 @@ const EXCLUDED_WINDOWS_TESTS = new Set([
   'runtime-plan.test.ts',
   'runtime-sessions.test.ts',
   'runtime-tasks.test.ts',
+  'runtime-tournament-state.test.ts',
   'stop-review-gate.test.ts',
   'version-command.test.ts',
 ]);
