@@ -1278,6 +1278,11 @@ test('task capture metadata stays within its command and file-change caps', () =
   const commandExecutions = Array.from({ length: 300 }, (_, index) => ({
     type: 'commandExecution' as const,
     id: `command-${index}`,
+    // pluginId/scriptPath are required by the 0.146.0 codegen types and are
+    // harmless extra properties under 0.145.0 (no excess-property check on a
+    // variable-passed object) — keep both so either pinned CLI typechecks.
+    pluginId: null,
+    scriptPath: null,
     command: `command ${index}`,
     cwd: '/repo',
     processId: null,
