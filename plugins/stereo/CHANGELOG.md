@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.41.0
+
+- Bring `/stereo:quick` to flag parity with the phase commands: `--slot <name>` targets a named
+  durable plan slot with `<slotArg>` threaded onto all five slot-scoped companion invocations —
+  including Quick's two `plan-review` launches, which store each parsed round durably and would
+  otherwise overwrite the `default` slot under a Codex plan reviewer while the warning named the
+  selected slot — with the existing-plan notice retargeted to the selected slot and deliberately
+  kept warn-only
+- Make both pause points configurable: `--max-plan-rounds <n>` (default 2, rejected above Quick's
+  fixed absolute safeguard of 6) and `--max-fix-rounds <n>` (default 2), with cap-relative pause
+  and keep-iterating wording in the command and README
+- Add `--isolated`: implementation, implementation review, and fixes run in a throwaway detached
+  worktree via the same machinery as `/stereo:implement --isolated`, minus durable state — Quick
+  keeps no implementation record, so the worktree path is printed at creation and
+  `/stereo:doctor`'s stranded-worktree listing is the crash mitigation; the plan draft and plan
+  review always run against the main tree, and the implemented marker is set only after an
+  applied or empty patch
+- Pin the new wiring structurally: the four flags in the argument hint, the `<slotArg>` idiom,
+  both `plan-review` launch lines, and all four `<isolationArgs>` launch lines
+
 ## 1.40.0
 
 - Inspect and cancel jobs across workspaces: `status`, `result`, and `cancel` accept
