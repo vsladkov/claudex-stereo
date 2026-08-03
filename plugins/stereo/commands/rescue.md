@@ -55,7 +55,7 @@ Operating rules:
 - Do not ask the subagent to inspect files, monitor progress, poll `/stereo:status`, fetch `/stereo:result`, call `/stereo:cancel`, summarize output, or do follow-up work of its own.
 - Leave `--effort` unset unless the user explicitly asks for a specific reasoning effort. Task runs never inject an effort default; the pair workflow applies defaults only to OpenAI `gpt-*` models. An explicit `--effort` is forwarded verbatim, including for provider models that may ignore or reject it. Never invent an effort the user did not ask for.
 - Leave the model unset unless the user explicitly asks for one. Otherwise pass the user's
-  `--model` value through verbatim — a model id or one of the plugin aliases (`codex:spark`,
+  `--model` value through verbatim — a model id or one of the plugin aliases (`codex:mini`,
   `codex:sol`, `codex:terra`, `codex:luna`, `codex:kimi`, `codex:qwen`, `codex:deepseek`,
   `codex:glm`); the runtime resolves aliases itself, and `/stereo:setup` shows each provider
   alias's readiness. The bare form without the `codex:` prefix is also accepted; forward either

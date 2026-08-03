@@ -13,12 +13,12 @@ test('parseArgs separates value options, boolean options, and positionals', () =
 });
 
 test('parseArgs resolves aliases for long and short flags', () => {
-  const { options } = parseArgs(['-m', 'spark', '--bg'], {
+  const { options } = parseArgs(['-m', 'mini', '--bg'], {
     valueOptions: ['model'],
     booleanOptions: ['background'],
     aliasMap: { m: 'model', bg: 'background' },
   });
-  assert.deepEqual(options, { model: 'spark', background: true });
+  assert.deepEqual(options, { model: 'mini', background: true });
 });
 
 test('parseArgs supports inline values and boolean =false', () => {

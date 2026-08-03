@@ -15,16 +15,16 @@ test('normalizeRequestedModel resolves the documented aliases to exact models', 
   assert.equal(normalizeRequestedModel('sol'), 'gpt-5.6-sol');
   assert.equal(normalizeRequestedModel('terra'), 'gpt-5.6-terra');
   assert.equal(normalizeRequestedModel('luna'), 'gpt-5.6-luna');
-  assert.equal(normalizeRequestedModel('spark'), 'gpt-5.3-codex-spark');
+  assert.equal(normalizeRequestedModel('mini'), 'gpt-5.4-mini');
   assert.equal(normalizeRequestedModel('kimi'), 'kimi-k3');
   assert.equal(normalizeRequestedModel('qwen'), 'qwen3.7-plus');
   assert.equal(normalizeRequestedModel('deepseek'), 'deepseek-v4-pro');
-  assert.equal(normalizeRequestedModel('glm'), 'glm-5.1');
+  assert.equal(normalizeRequestedModel('glm'), 'glm-5.2');
 });
 
 test('normalizeRequestedModel strips one optional codex: runtime prefix', () => {
   assert.equal(normalizeRequestedModel('codex:sol'), 'gpt-5.6-sol');
-  assert.equal(normalizeRequestedModel('  CODEX:Glm  '), 'glm-5.1');
+  assert.equal(normalizeRequestedModel('  CODEX:Glm  '), 'glm-5.2');
   assert.equal(normalizeRequestedModel('codex:gpt-5.6-sol@azure'), 'gpt-5.6-sol@azure');
   assert.equal(normalizeRequestedModel('codex:my-local-model'), 'my-local-model');
   // Exactly one strip, which keeps a literal codex:-prefixed id addressable.
@@ -91,7 +91,7 @@ test('normalizeRequestedModel matches aliases case-insensitively and trims white
   assert.equal(normalizeRequestedModel('  SOL  '), 'gpt-5.6-sol');
   assert.equal(normalizeRequestedModel('Terra'), 'gpt-5.6-terra');
   assert.equal(normalizeRequestedModel('\tLuNa\n'), 'gpt-5.6-luna');
-  assert.equal(normalizeRequestedModel(' Spark'), 'gpt-5.3-codex-spark');
+  assert.equal(normalizeRequestedModel(' Mini'), 'gpt-5.4-mini');
   assert.equal(normalizeRequestedModel(' KiMi '), 'kimi-k3');
   assert.equal(normalizeRequestedModel('QWEN'), 'qwen3.7-plus');
 });
@@ -116,12 +116,12 @@ test('normalizeRequestedModel returns null for null and empty input', () => {
   assert.equal(normalizeRequestedModel('   '), null);
 });
 
-test('defaultPairEffort defaults every gpt-* model to max and omits unknown non-OpenAI effort', () => {
+test('defaultPairEffort honors registry overrides and defaults raw gpt-* models to max', () => {
   assert.equal(defaultPairEffort('gpt-5.6'), 'max');
   assert.equal(defaultPairEffort('gpt-5.6-sol'), 'max');
   assert.equal(defaultPairEffort('gpt-5.6-terra'), 'max');
   assert.equal(defaultPairEffort('gpt-5.5'), 'max');
-  assert.equal(defaultPairEffort('gpt-5.3-codex-spark'), 'max');
+  assert.equal(defaultPairEffort('gpt-5.4-mini'), 'xhigh');
   assert.equal(defaultPairEffort('gpt-5.60'), 'max');
   assert.equal(defaultPairEffort('some-chat-model'), null);
   assert.equal(defaultPairEffort('gpt-5.6-custom@azure'), 'max');
@@ -173,7 +173,7 @@ test('provider models omit pair effort and route exact registered model ids', ()
     'kimi-k3': 'moonshot',
     'qwen3.7-plus': 'dashscope',
     'deepseek-v4-pro': 'deepseek',
-    'glm-5.1': 'zhipu',
+    'glm-5.2': 'zhipu',
   };
 
   for (const [model, provider] of Object.entries(expectedProviders)) {

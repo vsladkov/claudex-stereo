@@ -69,8 +69,10 @@ Resolve effort independently for each active Codex-routed role:
 1. Use that role's effort flag when present.
 2. Otherwise use the command-wide `--effort` when present.
 3. Otherwise use that role's valid stored workspace effort default when present.
-4. Otherwise preserve the command's stored-plan model/effort rule, when it has one, or use
-   `max` for every `gpt-*` model and omit `--effort` for non-OpenAI models.
+4. Otherwise preserve the command's stored-plan model/effort rule, when it has one, or use the
+   selected model's registry pair default when it is a registry row (`xhigh` for
+   `codex:mini`/`gpt-5.4-mini`; `max` for the other OpenAI rows), use `max` for an unregistered
+   raw `gpt-*` id, and omit `--effort` for non-OpenAI selections.
 
 A role effort flag is valid only when that role runs in the selected mode and is Codex-routed;
 reject it for an inactive or Claude-routed role. A role or command-wide effort override replaces

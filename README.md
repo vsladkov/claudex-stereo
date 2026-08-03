@@ -345,7 +345,7 @@ Examples:
 /stereo:plan --plan-reviewer claude:opus refactor the retry logic
 /stereo:plan --max-plan-rounds 3 refactor the retry logic
 /stereo:plan --plan-reviewer codex:terra --effort high migrate the config loader
-/stereo:plan --planner codex:spark --planner-effort high --plan-reviewer codex:sol --plan-reviewer-effort max migrate the config loader
+/stereo:plan --planner codex:mini --planner-effort high --plan-reviewer codex:sol --plan-reviewer-effort max migrate the config loader
 /stereo:plan --draft-only draft a migration plan
 /stereo:plan --slot api-rate-limit add rate limiting to the public API
 /stereo:plan --review-only --plan-reviewer claude:opus
@@ -449,7 +449,7 @@ Examples:
 /stereo:implement --implementation-reviewer codex:sol
 /stereo:implement --implementation-reviewer claude:session
 /stereo:implement --implementer codex:sol --implementation-reviewer claude:opus --effort high
-/stereo:implement --implementer codex:spark --implementer-effort xhigh --implementation-reviewer codex:sol --implementation-reviewer-effort max
+/stereo:implement --implementer codex:mini --implementer-effort xhigh --implementation-reviewer codex:sol --implementation-reviewer-effort max
 /stereo:implement --max-fix-rounds 3
 /stereo:implement --fresh
 /stereo:implement --implement-only
@@ -551,7 +551,7 @@ are stored before quick transitions or stops, so later `/stereo:implement` gates
 /stereo:quick --planner claude:haiku --plan-reviewer codex:terra --effort high add a validation check
 /stereo:quick --plan-reviewer claude:sonnet --implementation-reviewer claude:opus fix a small bug
 /stereo:quick --plan-reviewer codex:sol fix a small bug
-/stereo:quick --plan-reviewer codex:spark --plan-reviewer-effort xhigh --implementer codex:sol --implementer-effort high fix a small bug
+/stereo:quick --plan-reviewer codex:mini --plan-reviewer-effort xhigh --implementer codex:sol --implementer-effort high fix a small bug
 ```
 
 The latest reviewed plan is stored normally, so an interrupted approved run can resume with
@@ -613,7 +613,7 @@ contestant, so check both providers' usage limits before racing expensive models
 ```bash
 /stereo:tournament
 /stereo:tournament --implementer codex:sol --implementer claude:opus
-/stereo:tournament --implementer codex:sol --implementer codex:spark
+/stereo:tournament --implementer codex:sol --implementer codex:mini
 /stereo:tournament --implementer codex:sol --implementer codex:sol --implementer-effort high --implementer-effort max
 /stereo:tournament --slot api-rate-limit --implementer codex:sol --implementer codex:terra --implementation-reviewer claude:opus
 ```
@@ -644,8 +644,8 @@ Examples:
 /stereo:rescue investigate why the tests started failing
 /stereo:rescue fix the failing test with the smallest safe patch
 /stereo:rescue --resume apply the top fix from the last run
-/stereo:rescue --model codex:spark --effort medium investigate the flaky integration test
-/stereo:rescue --model codex:spark fix the issue quickly
+/stereo:rescue --model codex:mini --effort medium investigate the flaky integration test
+/stereo:rescue --model codex:mini fix the issue quickly
 /stereo:rescue --background investigate the regression
 ```
 
@@ -662,7 +662,7 @@ Ask Codex to redesign the database connection to be more resilient.
   `/stereo:quick` with `--implementer claude:<alias>`,
   `/stereo:implement --implementer claude:<alias>`, or
   `/stereo:adversarial-review --model claude:<alias>`.
-- built-in aliases such as `codex:spark` are listed in the [Codex alias table](#codex-model-aliases);
+- built-in aliases such as `codex:mini` are listed in the [Codex alias table](#codex-model-aliases);
   third-party aliases are listed under [Other model providers](#other-model-providers)
 - follow-up rescue requests can continue this session's latest Codex task
 
@@ -901,12 +901,12 @@ a model id. Stored state, status output, and reports carry those resolved ids �
 
 ### Codex model aliases
 
-| Alias         | Model id              | Pair-role effort default |
-| ------------- | --------------------- | ------------------------ |
-| `codex:spark` | `gpt-5.3-codex-spark` | `max`                    |
-| `codex:sol`   | `gpt-5.6-sol`         | `max`                    |
-| `codex:terra` | `gpt-5.6-terra`       | `max`                    |
-| `codex:luna`  | `gpt-5.6-luna`        | `max`                    |
+| Alias         | Model id        | Pair-role effort default |
+| ------------- | --------------- | ------------------------ |
+| `codex:mini`  | `gpt-5.4-mini`  | `xhigh`                  |
+| `codex:sol`   | `gpt-5.6-sol`   | `max`                    |
+| `codex:terra` | `gpt-5.6-terra` | `max`                    |
+| `codex:luna`  | `gpt-5.6-luna`  | `max`                    |
 
 Third-party aliases (`codex:kimi`, `codex:qwen`, `codex:deepseek`, and `codex:glm`) omit the effort default and are listed
 under [Other model providers](#other-model-providers).
@@ -919,9 +919,10 @@ role flags: `--planner-effort`, `--plan-reviewer-effort`, `--implementer-effort`
 `--effort`, which wins over the stored workspace role effort, then any applicable stored-plan
 effort, then the model-pair default. Stored-plan effort applies to implementation only when the
 stored-plan model also supplied the implementer model; an explicit or workspace-supplied model
-drops it. Every pair-role `gpt-*` selection defaults to `max`, while non-OpenAI selections omit an
-effort override. A role effort flag is rejected when its selected role is Claude-routed, and a
-stored effort under a Claude-routed model is reported as inert.
+drops it. The model-pair default comes from the alias table: `max` for `codex:sol`, `codex:terra`,
+and `codex:luna`, `xhigh` for `codex:mini`, and `max` for unregistered raw `gpt-*` ids. Non-OpenAI
+selections omit an effort override. A role effort flag is rejected when its selected role is
+Claude-routed, and a stored effort under a Claude-routed model is reported as inert.
 Stored plans record Codex `model`/`effort` only. The durable Claude-side equivalent is
 `/stereo:config --implementer claude:<alias>`, whose workspace default outranks the stored-plan
 model.
@@ -1016,10 +1017,10 @@ encounter and their remedies are listed under [Troubleshooting](#troubleshooting
 
 ### Common configurations
 
-If you want to change the default reasoning effort or the default model that gets used by the plugin, you can define that inside your user-level or project-level `config.toml`. For example to always use `gpt-5.3-codex-spark` on `high` for a specific project you can add the following to a `.codex/config.toml` file at the root of the directory you started Claude in:
+If you want to change the default reasoning effort or the default model that gets used by the plugin, you can define that inside your user-level or project-level `config.toml`. For example to always use `gpt-5.4-mini` on `high` for a specific project you can add the following to a `.codex/config.toml` file at the root of the directory you started Claude in:
 
 ```toml
-model = "gpt-5.3-codex-spark"
+model = "gpt-5.4-mini"
 model_reasoning_effort = "high"
 ```
 
@@ -1052,7 +1053,7 @@ Use the provider id from the table below in place of `example`. The URLs in the 
 | `codex:kimi`     | `kimi-k3`         | `[model_providers.moonshot]`  | `MOONSHOT_API_KEY`  | [Kimi API](https://platform.kimi.ai/docs/overview)                                           |
 | `codex:qwen`     | `qwen3.7-plus`    | `[model_providers.dashscope]` | `DASHSCOPE_API_KEY` | [Alibaba Cloud Model Studio](https://help.aliyun.com/en/model-studio/text-generation-model/) |
 | `codex:deepseek` | `deepseek-v4-pro` | `[model_providers.deepseek]`  | `DEEPSEEK_API_KEY`  | [DeepSeek API](https://api-docs.deepseek.com/quick_start/pricing/)                           |
-| `codex:glm`      | `glm-5.1`         | `[model_providers.zhipu]`     | `ZAI_API_KEY`       | [Z.AI API](https://docs.z.ai/guides/overview/migrate-to-glm-new)                             |
+| `codex:glm`      | `glm-5.2`         | `[model_providers.zhipu]`     | `ZAI_API_KEY`       | [Z.AI API](https://docs.z.ai/guides/overview/migrate-to-glm-new)                             |
 
 Aliases and their exact registered model ids select the listed provider per thread. For example, both `--model codex:kimi` and `--model codex:kimi-k3` route to `model_providers.moonshot`. An unregistered raw model id is passed through unchanged with no provider override, so it uses your config's default `model_provider`. These provider models are not Codex models—they execute through the Codex CLI runtime, which is what the `codex:` prefix names—and because the prefix is optional, `--model codex:kimi` and the bare `--model kimi` are the same request.
 

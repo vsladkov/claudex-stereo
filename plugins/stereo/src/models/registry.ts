@@ -21,14 +21,16 @@ export const PAIR_DEFAULT_MODEL = 'sol';
 export const PAIR_DEFAULT_EFFORT: ReasoningEffort = 'max'; // every OpenAI `gpt-*` pair role
 
 export const MODEL_REGISTRY = {
-  spark: { model: 'gpt-5.3-codex-spark', defaultPairEffort: PAIR_DEFAULT_EFFORT },
+  // gpt-5.4-mini rejects 'max' (accepted set tops out at xhigh; probed live 2026-08-03),
+  // so this row pins its own strongest accepted effort instead of PAIR_DEFAULT_EFFORT.
+  mini: { model: 'gpt-5.4-mini', defaultPairEffort: 'xhigh' },
   sol: { model: 'gpt-5.6-sol', defaultPairEffort: PAIR_DEFAULT_EFFORT },
   terra: { model: 'gpt-5.6-terra', defaultPairEffort: PAIR_DEFAULT_EFFORT },
   luna: { model: 'gpt-5.6-luna', defaultPairEffort: PAIR_DEFAULT_EFFORT },
   kimi: { model: 'kimi-k3', modelProvider: 'moonshot', defaultPairEffort: null },
   qwen: { model: 'qwen3.7-plus', modelProvider: 'dashscope', defaultPairEffort: null },
   deepseek: { model: 'deepseek-v4-pro', modelProvider: 'deepseek', defaultPairEffort: null },
-  glm: { model: 'glm-5.1', modelProvider: 'zhipu', defaultPairEffort: null },
+  glm: { model: 'glm-5.2', modelProvider: 'zhipu', defaultPairEffort: null },
 } satisfies Record<string, ModelEntry>;
 
 // Alias lookup stays a Map keyed by the lowercased alias so exotic inputs

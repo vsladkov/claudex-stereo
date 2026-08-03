@@ -744,7 +744,7 @@ test('task forwards model selection and reasoning effort to app-server turn/star
 
   const result = run(
     'node',
-    [SCRIPT, 'task', '--model', 'spark', '--effort', 'low', 'diagnose the failing test'],
+    [SCRIPT, 'task', '--model', 'mini', '--effort', 'low', 'diagnose the failing test'],
     {
       cwd: repo,
       env: buildEnv(binDir),
@@ -753,14 +753,14 @@ test('task forwards model selection and reasoning effort to app-server turn/star
 
   assert.equal(result.status, 0, result.stderr);
   const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(fakeState.lastThreadStart.model, 'gpt-5.3-codex-spark');
+  assert.equal(fakeState.lastThreadStart.model, 'gpt-5.4-mini');
   assert.equal(fakeState.lastThreadStart.modelProvider, 'openai');
-  assert.equal(fakeState.lastTurnStart.model, 'gpt-5.3-codex-spark');
+  assert.equal(fakeState.lastTurnStart.model, 'gpt-5.4-mini');
   assert.equal(fakeState.lastTurnStart.effort, 'low');
 
   const maxResult = run(
     'node',
-    [SCRIPT, 'task', '--model', 'spark', '--effort', 'max', 'investigate the parser regression'],
+    [SCRIPT, 'task', '--model', 'mini', '--effort', 'max', 'investigate the parser regression'],
     {
       cwd: repo,
       env: buildEnv(binDir),
@@ -769,7 +769,7 @@ test('task forwards model selection and reasoning effort to app-server turn/star
 
   assert.equal(maxResult.status, 0, maxResult.stderr);
   const maxState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(maxState.lastTurnStart.model, 'gpt-5.3-codex-spark');
+  assert.equal(maxState.lastTurnStart.model, 'gpt-5.4-mini');
   assert.equal(maxState.lastTurnStart.effort, 'max');
 });
 
