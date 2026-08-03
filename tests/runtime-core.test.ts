@@ -259,7 +259,7 @@ test('setup treats custom providers with app-server-ready config as ready', () =
 
 test('setup preserves configured providers when OpenAI auth is logged out', () => {
   const binDir = makeTempDir();
-  installFakeCodex(binDir, 'refreshable-auth');
+  installFakeCodex(binDir, 'logged-out');
   const env = {
     ...buildEnv(binDir),
     MOONSHOT_API_KEY: 'test-key',

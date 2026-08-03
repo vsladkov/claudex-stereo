@@ -7,12 +7,15 @@ import { EventEmitter } from 'node:events';
 import type { TestContext } from 'node:test';
 
 import {
+  CODEX_NOT_AUTHENTICATED_ERROR,
   cleanupCompanionJobForSignal,
   createCompanionJob,
   enqueueBackgroundTask,
+  ensureCodexLaunchReady,
   installSignalCleanup,
   terminalizeJobForSignal,
 } from '../plugins/stereo/src/workflows/companion-jobs.ts';
+import type { CodexAuthStatus } from '../plugins/stereo/src/runtime/index.ts';
 import {
   acquireThreadReservation,
   markLiveReservationPhase,
@@ -46,6 +49,34 @@ function useTempCodexHome(t: TestContext): void {
     }
   });
 }
+
+function launchAuthStatus(requiresOpenaiAuth: boolean | null): CodexAuthStatus {
+  return {
+    available: true,
+    loggedIn: false,
+    detail: 'fixture auth status',
+    source: 'app-server',
+    authMethod: null,
+    verified: null,
+    requiresOpenaiAuth,
+    provider: requiresOpenaiAuth === false ? 'custom' : 'openai',
+    configuredProviders: [],
+  };
+}
+
+test('launch readiness blocks only a definite unmet OpenAI auth requirement', async () => {
+  const deps = (requiresOpenaiAuth: boolean | null) => ({
+    ensureAvailable: () => {},
+    getAuthStatus: async () => launchAuthStatus(requiresOpenaiAuth),
+  });
+
+  await assert.rejects(
+    ensureCodexLaunchReady('/fixture', deps(true)),
+    new RegExp(CODEX_NOT_AUTHENTICATED_ERROR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+  );
+  await assert.doesNotReject(ensureCodexLaunchReady('/fixture', deps(false)));
+  await assert.doesNotReject(ensureCodexLaunchReady('/fixture', deps(null)));
+});
 
 test('signal cleanup handlers dispose without outliving their job', (t) => {
   const beforeTerm = process.listenerCount('SIGTERM');

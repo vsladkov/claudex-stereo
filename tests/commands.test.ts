@@ -17,12 +17,13 @@ function read(relativePath: string): string {
 // sentences preserved stale text (a pinned README example once asserted a
 // model name that no longer existed) while taxing every legitimate edit.
 
-test('the command surface is exactly the fourteen stereo commands', () => {
+test('the command surface is exactly the fifteen stereo commands', () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, 'commands')).sort();
   assert.deepEqual(commandFiles, [
     'adversarial-review.md',
     'cancel.md',
     'config.md',
+    'doctor.md',
     'implement.md',
     'plan-state.md',
     'plan.md',
@@ -42,6 +43,7 @@ test('every command wires the companion entry point it documents', () => {
     'adversarial-review.md': /codex-companion\.ts" adversarial-review "\$ARGUMENTS"/,
     'cancel.md': /codex-companion\.ts" cancel "\$ARGUMENTS"/,
     'config.md': /codex-companion\.ts" config "\$ARGUMENTS"/,
+    'doctor.md': /codex-companion\.ts" doctor "\$ARGUMENTS --json"/,
     'implement.md': /task --background --json --write --thread/,
     'plan-state.md': [
       /codex-companion\.ts" plan-state\b/,
@@ -92,6 +94,7 @@ test('directly-wired commands disable model invocation of the command file', () 
     'adversarial-review.md',
     'cancel.md',
     'config.md',
+    'doctor.md',
     'implement.md',
     'plan-state.md',
     'plan.md',
@@ -633,8 +636,8 @@ test('hooks keep session-end cleanup and stop gating enabled', () => {
   const source = read('hooks/hooks.json');
   assert.match(source, /SessionStart/);
   assert.match(source, /SessionEnd/);
-  assert.match(source, /stop-review-gate-hook\.ts/);
-  assert.match(source, /session-lifecycle-hook\.ts/);
+  assert.match(source, /stop-review-gate-hook\.cjs/);
+  assert.match(source, /session-lifecycle-hook\.cjs/);
 
   const hooks = JSON.parse(source) as {
     hooks: {

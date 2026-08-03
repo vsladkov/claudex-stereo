@@ -83,7 +83,9 @@ export interface ReviewRunRequest {
 }
 
 export async function executeReviewRun(request: ReviewRunRequest): Promise<CompanionExecution> {
-  // Fail before collectReviewContext does potentially heavy git work.
+  // The CLI preflight runs before job creation. Keep this availability-only
+  // defense for detached workers and direct programmatic callers, before
+  // collectReviewContext does potentially heavy git work.
   ensureCodexAvailable(request.cwd);
   ensureGitRepository(request.cwd);
 

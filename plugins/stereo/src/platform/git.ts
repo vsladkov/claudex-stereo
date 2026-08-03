@@ -101,9 +101,81 @@ export type ReviewContext = {
   collectionGuidance: string;
 } & (WorkingTreeReviewDetails | BranchReviewDetails);
 
+export interface WorktreeEntry {
+  path: string;
+  head: string | null;
+  detached: boolean;
+  branch: string | null;
+}
+
+export interface WorktreeListing {
+  available: boolean;
+  entries: WorktreeEntry[];
+  detail: string | null;
+}
+
 // Git is directly executable on Windows. Repository-derived arguments must never pass through a shell.
 function git(cwd: string, args: readonly string[], options: RunCommandOptions = {}): CommandResult {
   return runCommand('git', args, { cwd, ...options, shell: false });
+}
+
+export function parseWorktreePorcelain(stdout: string): WorktreeEntry[] {
+  const entries: WorktreeEntry[] = [];
+  let current: WorktreeEntry | null = null;
+  const finishRecord = (): void => {
+    if (current) {
+      entries.push(current);
+      current = null;
+    }
+  };
+
+  for (const line of stdout.split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) {
+      finishRecord();
+      current = {
+        path: line.slice('worktree '.length),
+        head: null,
+        detached: false,
+        branch: null,
+      };
+      continue;
+    }
+    if (!current) {
+      continue;
+    }
+    if (line.startsWith('HEAD ')) {
+      current.head = line.slice('HEAD '.length) || null;
+    } else if (line.startsWith('branch ')) {
+      current.branch = line.slice('branch '.length) || null;
+    } else if (line === 'detached') {
+      current.detached = true;
+    }
+    // Unknown porcelain attributes (bare, locked, prunable, and future
+    // additions) belong to the current record and are intentionally ignored.
+  }
+  finishRecord();
+
+  return entries;
+}
+
+export function listWorktrees(cwd: string): WorktreeListing {
+  const result = git(cwd, ['worktree', 'list', '--porcelain']);
+  if (result.error) {
+    return {
+      available: false,
+      entries: [],
+      detail: result.error.message,
+    };
+  }
+  if (result.status !== 0) {
+    return {
+      available: false,
+      entries: [],
+      detail: formatCommandFailure(result),
+    };
+  }
+
+  return { available: true, entries: parseWorktreePorcelain(result.stdout), detail: null };
 }
 
 function gitChecked(

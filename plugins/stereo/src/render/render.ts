@@ -4,6 +4,7 @@ import { formatJobModel, resolveJobModel } from '../jobs/job-control.ts';
 import type { UsageGroup, UsageSnapshot } from '../jobs/job-control.ts';
 import type { SessionJobAnnouncement } from '../jobs/job-announcements.ts';
 import type { RoleDefaultEntry } from '../models/role-defaults.ts';
+import type { CatalogDriftReport } from '../models/catalog-cache.ts';
 import { shorten } from '../shared/text.ts';
 
 // Renderer inputs are typed from usage: jobs and stored payloads come from
@@ -162,6 +163,63 @@ export interface SetupRenderReport {
   strandedReservations?: StrandedReservationEntry[] | null;
   reviewGateEnabled?: boolean | null;
   roleDefaults?: RoleDefaultEntry[] | null;
+  actionsTaken: string[];
+  nextSteps: string[];
+}
+
+export interface DoctorRenderReport {
+  workspaceRoot: string;
+  setup: SetupRenderReport;
+  broker: {
+    recorded: boolean;
+    path: string;
+    endpoint: string | null;
+    pid: number | null;
+    pidAlive: boolean | null;
+    endpointReachable: boolean | null;
+    logFile: string | null;
+    sessionDir: string | null;
+  };
+  state: {
+    codexHome: string;
+    durableStateDir: string;
+    stateFile: string;
+    jobsDir: string;
+    exists: {
+      codexHome: boolean;
+      durableStateDir: boolean;
+      stateFile: boolean;
+      jobsDir: boolean;
+    };
+  };
+  implementRecord: {
+    path: string;
+    present: boolean;
+    unreadable: boolean;
+    parseError: string | null;
+    status: string | null;
+    baselineCommit: string | null;
+    round: unknown;
+    worktree: string | null;
+  };
+  worktrees: {
+    available: boolean;
+    detail: string | null;
+    entries: Array<{
+      path: string;
+      head: string | null;
+      detached: boolean;
+      branch: string | null;
+      removeCommand: string;
+    }>;
+  };
+  jobAnnouncements: {
+    lastJobAnnouncementAt: string | null;
+    parsed: boolean;
+    future: boolean;
+    resetCommand: string;
+  };
+  modelCatalog: CatalogDriftReport;
   actionsTaken: string[];
   nextSteps: string[];
 }
@@ -1063,6 +1121,125 @@ export function renderSetupReport(report: SetupRenderReport): string {
   ];
 
   appendRateLimits(lines, report.rateLimits);
+
+  if (report.actionsTaken.length > 0) {
+    lines.push('Actions taken:');
+    for (const action of report.actionsTaken) {
+      lines.push(`- ${action}`);
+    }
+    lines.push('');
+  }
+
+  if (report.nextSteps.length > 0) {
+    lines.push('Next steps:');
+    for (const step of report.nextSteps) {
+      lines.push(`- ${step}`);
+    }
+  }
+
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
+export function renderDoctorReport(report: DoctorRenderReport): string {
+  const brokerStatus = report.broker.recorded ? 'recorded' : 'not recorded';
+  const brokerEndpoint = report.broker.endpoint
+    ? `${report.broker.endpoint} (${
+        report.broker.endpointReachable === true
+          ? 'reachable'
+          : report.broker.endpointReachable === false
+            ? 'unreachable'
+            : 'not checked'
+      })`
+    : 'none';
+  const brokerPid = report.broker.pid
+    ? `${report.broker.pid} (${
+        report.broker.pidAlive === true
+          ? 'alive'
+          : report.broker.pidAlive === false
+            ? 'exited'
+            : 'not checked'
+      })`
+    : 'none';
+  const implementDetails = [
+    report.implementRecord.status ? `status ${report.implementRecord.status}` : null,
+    report.implementRecord.baselineCommit
+      ? `baseline ${report.implementRecord.baselineCommit}`
+      : null,
+    report.implementRecord.round != null ? `round ${String(report.implementRecord.round)}` : null,
+    report.implementRecord.worktree ? `worktree ${report.implementRecord.worktree}` : null,
+  ].filter((value): value is string => Boolean(value));
+  const implementStatus = report.implementRecord.unreadable
+    ? `unreadable at ${report.implementRecord.path} (${report.implementRecord.parseError ?? 'unknown parse error'})`
+    : report.implementRecord.present
+      ? `${report.implementRecord.path}${
+          implementDetails.length > 0 ? ` (${implementDetails.join(', ')})` : ''
+        }`
+      : `not present (${report.implementRecord.path})`;
+  const watermarkStatus = report.jobAnnouncements.lastJobAnnouncementAt
+    ? `${report.jobAnnouncements.lastJobAnnouncementAt} (${
+        !report.jobAnnouncements.parsed
+          ? 'unparseable; self-heals on the next announcement scan'
+          : report.jobAnnouncements.future
+            ? 'future value; announcements are suppressed'
+            : 'valid'
+      })`
+    : 'not set';
+  const catalogStatus = report.modelCatalog.available
+    ? `${report.modelCatalog.path} (${report.modelCatalog.entries.length} registry models checked)`
+    : `${report.modelCatalog.path} (not checked: ${report.modelCatalog.reason ?? 'unavailable'})`;
+
+  const lines = [
+    renderSetupReport(report.setup).trimEnd(),
+    '',
+    '# Stereo Diagnostics',
+    '',
+    `Workspace: ${report.workspaceRoot}`,
+    `Broker record: ${report.broker.path} (${brokerStatus})`,
+    `Broker endpoint: ${brokerEndpoint}`,
+    `Broker process: ${brokerPid}`,
+    `Broker log: ${report.broker.logFile ?? 'none'}`,
+    `Broker session directory: ${report.broker.sessionDir ?? 'none'}`,
+    `Codex home: ${report.state.codexHome} (${report.state.exists.codexHome ? 'present' : 'missing'})`,
+    `Durable state directory: ${report.state.durableStateDir} (${
+      report.state.exists.durableStateDir ? 'present' : 'missing'
+    })`,
+    `State file: ${report.state.stateFile} (${report.state.exists.stateFile ? 'present' : 'missing'})`,
+    `Jobs directory: ${report.state.jobsDir} (${report.state.exists.jobsDir ? 'present' : 'missing'})`,
+    `Implementation record: ${implementStatus}`,
+    `Stereo worktrees: ${
+      report.worktrees.available
+        ? report.worktrees.entries.length === 0
+          ? 'none'
+          : `${report.worktrees.entries.length} found`
+        : `not checked (${report.worktrees.detail ?? 'unavailable'})`
+    }`,
+  ];
+
+  for (const entry of report.worktrees.entries) {
+    lines.push(`- ${entry.path}`);
+    lines.push(`  Remove: ${entry.removeCommand}`);
+  }
+
+  lines.push(
+    `SessionStart announcement watermark: ${watermarkStatus}`,
+    `Announcement reset: ${report.jobAnnouncements.resetCommand}`,
+    `Model catalog: ${catalogStatus}`,
+  );
+  for (const entry of report.modelCatalog.entries) {
+    lines.push(
+      `- codex:${entry.alias} → ${entry.model}: ${
+        !entry.present
+          ? 'missing'
+          : entry.supportedInApi === true
+            ? 'supported in API'
+            : 'not supported in API'
+      }`,
+    );
+  }
+  for (const warning of report.modelCatalog.warnings) {
+    lines.push(`- Warning: ${warning}`);
+  }
+  lines.push('');
 
   if (report.actionsTaken.length > 0) {
     lines.push('Actions taken:');

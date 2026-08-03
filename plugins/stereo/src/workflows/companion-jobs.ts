@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import process from 'node:process';
 
-import { getCodexAvailability } from '../runtime/index.ts';
+import { getCodexAuthStatus, getCodexAvailability } from '../runtime/index.ts';
 import type { ProgressReporter } from '../runtime/index.ts';
 import { releaseEligibleLiveReservations } from '../runtime/reservations.ts';
 import {
@@ -172,6 +172,31 @@ export function ensureCodexAvailable(cwd: string): void {
     throw new Error(
       'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
     );
+  }
+}
+
+export const CODEX_NOT_AUTHENTICATED_ERROR =
+  'Codex is installed but not authenticated. Run `!codex login`, then rerun `/stereo:setup` to confirm.';
+
+export interface LaunchReadyDeps {
+  ensureAvailable: typeof ensureCodexAvailable;
+  getAuthStatus: typeof getCodexAuthStatus;
+}
+
+export async function ensureCodexLaunchReady(
+  cwd: string,
+  deps: LaunchReadyDeps = {
+    ensureAvailable: ensureCodexAvailable,
+    getAuthStatus: getCodexAuthStatus,
+  },
+): Promise<void> {
+  deps.ensureAvailable(cwd);
+  const auth = await deps.getAuthStatus(cwd);
+  // Only a positive OpenAI-auth requirement is launch-blocking. Custom
+  // providers explicitly return false, while broker-busy and transport
+  // failures leave the requirement null and must not become false positives.
+  if (auth.loggedIn === false && auth.requiresOpenaiAuth === true) {
+    throw new Error(CODEX_NOT_AUTHENTICATED_ERROR);
   }
 }
 

@@ -23,7 +23,7 @@ import {
 } from '../../workspace/state.ts';
 import {
   createCompanionJob,
-  ensureCodexAvailable,
+  ensureCodexLaunchReady,
   enqueueBackgroundTask,
   renderQueuedTaskLaunch,
   runForegroundCommand,
@@ -165,6 +165,9 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
     throw new Error('Provide the plan via --plan-file, piped stdin, or positional text.');
   }
 
+  // Validate availability and auth before creating either a foreground or a
+  // detached job record, so launch failures never appear as failed jobs.
+  await ensureCodexLaunchReady(cwd);
   const job = createCompanionJob({
     prefix: 'plan',
     kind: 'plan-review',
@@ -176,7 +179,6 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
   });
 
   if (options.background) {
-    ensureCodexAvailable(cwd);
     const request = {
       kind: 'plan-review',
       cwd,

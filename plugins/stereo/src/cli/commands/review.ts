@@ -8,7 +8,7 @@ import {
 import {
   buildReviewJobMetadata,
   createCompanionJob,
-  ensureCodexAvailable,
+  ensureCodexLaunchReady,
   enqueueBackgroundTask,
   renderQueuedTaskLaunch,
   runForegroundCommand,
@@ -70,6 +70,9 @@ export async function handleReviewCommand(
       }
     : {};
   const metadata = buildReviewJobMetadata(config.reviewName, target);
+  // Validate availability and auth before creating either a foreground or a
+  // detached job record, so launch failures never appear as failed jobs.
+  await ensureCodexLaunchReady(cwd);
   const job = createCompanionJob({
     prefix: 'review',
     kind: metadata.kind,
@@ -80,7 +83,6 @@ export async function handleReviewCommand(
     model,
   });
   if (options.background) {
-    ensureCodexAvailable(cwd);
     const request = {
       kind: 'review',
       cwd,

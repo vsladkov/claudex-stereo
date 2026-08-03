@@ -3,6 +3,7 @@ import process from 'node:process';
 import { wasJsonRequested } from './io.ts';
 import { printUsage } from './usage.ts';
 import { handleSetup } from './commands/setup.ts';
+import { handleDoctor } from './commands/doctor.ts';
 import { handleAdversarialReview, handleReview } from './commands/review.ts';
 import { handleTask, handleTaskResumeCandidate, handleTaskWorker } from './commands/task.ts';
 import { handlePlanReview, handlePlanState, handlePlanStore } from './commands/plan.ts';
@@ -26,6 +27,9 @@ async function main(fullArgv: string[]): Promise<void> {
       break;
     case 'setup':
       await handleSetup(argv);
+      break;
+    case 'doctor':
+      await handleDoctor(argv);
       break;
     case 'review':
       await handleReview(argv);

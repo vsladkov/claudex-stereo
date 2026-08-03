@@ -15,8 +15,11 @@ function resolveEntryPath(argvPath: string): string {
 }
 
 // True when the module at entryUrl is the file Node was asked to execute.
-// INVARIANT: this comparison works only because there is no emit — the .ts
-// entry shim passing its own import.meta.url is the very file in process.argv[1].
+// INVARIANT: this comparison works only because there is no emit — a directly
+// executed .ts entry passing its own import.meta.url is the file in
+// process.argv[1]. The .cjs Node-version guards make process.argv[1] name the
+// guard instead, so they delegate by calling the .ts module's exported main()
+// and never rely on this comparison.
 export function isMainModule(entryUrl: string): boolean {
   const argvPath = process.argv[1];
   return Boolean(argvPath && resolveEntryPath(argvPath) === fileURLToPath(entryUrl));

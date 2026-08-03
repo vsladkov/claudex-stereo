@@ -39,6 +39,8 @@ thread reservations, plus an optional stop-time review gate.
   `/stereo:cancel`](#background-jobs) to manage background jobs
 - [`/stereo:setup`](#stereosetup) to check readiness, provider configuration, and review-gate
   state
+- [`/stereo:doctor`](#stereodoctor) to inspect workspace broker, durable state, worktrees,
+  announcement watermark, and model-catalog drift
 
 ## Requirements
 
@@ -767,6 +769,25 @@ When the review gate is enabled, the plugin uses a `Stop` hook to run a targeted
 
 > [!WARNING]
 > The review gate can create a long-running Claude/Codex loop and may drain usage limits quickly. Only enable it when you plan to actively monitor the session.
+
+### `/stereo:doctor`
+
+Inspects the current workspace's runtime and durable state after setup is healthy. The report embeds
+the normal `/stereo:setup` checks, then shows the broker record and `broker.log`, the resolved
+`$CODEX_HOME/companion-state/<workspaceKey>/` directory, implementation-resume state, stranded
+`stereo-worktrees` entries, the SessionStart job-announcement watermark, and drift between Stereo's
+OpenAI model registry and Codex's cached model catalog.
+
+The command is read-only unless you explicitly reset the announcement watermark:
+
+```bash
+/stereo:doctor
+/stereo:doctor --reset-job-announcements
+```
+
+An unavailable Codex model cache is reported as not checked, not as a failure. Doctor prints exact
+paths and cleanup commands but does not remove worktrees, restart brokers, or clear implementation
+records automatically.
 
 ## Typical flows
 

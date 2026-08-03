@@ -4,6 +4,7 @@ export function printUsage(): void {
       'Usage:',
       '  node scripts/codex-companion.ts config [--planner <selection>] [--planner-effort <effort>] [--plan-reviewer <selection>] [--plan-reviewer-effort <effort>] [--implementer <selection>] [--implementer-effort <effort>] [--implementation-reviewer <selection>] [--implementation-reviewer-effort <effort>] [--clear <key>]... [--json]',
       '  node scripts/codex-companion.ts setup [--enable-review-gate|--disable-review-gate] [--json]',
+      '  node scripts/codex-companion.ts doctor [--reset-job-announcements] [--json]',
       '  node scripts/codex-companion.ts review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model-or-alias>]',
       '  node scripts/codex-companion.ts adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [focus text]',
       '  node scripts/codex-companion.ts task [--background] [--write] [--resume-last|--resume|--fresh|--thread <id>] [--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--output-schema <path>] [--prompt-file <path>] [prompt]',

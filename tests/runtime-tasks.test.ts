@@ -38,6 +38,7 @@ import {
   DEFAULT_MAX_PROGRESS_LINES,
 } from '../plugins/stereo/src/jobs/job-control.ts';
 import { resolveDurableStateDir, resolveStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { CODEX_NOT_AUTHENTICATED_ERROR } from '../plugins/stereo/src/workflows/companion-jobs.ts';
 
 registerBrokerReaping();
 
@@ -122,7 +123,7 @@ test('task runs when the active provider does not require OpenAI login', () => {
   assert.match(result.stdout, /Handled the requested task/);
 });
 
-test('task runs without auth preflight so Codex can refresh an expired session', () => {
+test('a stale CLI login status with a healthy app-server account passes the launch preflight', () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir, 'refreshable-auth');
@@ -138,6 +139,51 @@ test('task runs without auth preflight so Codex can refresh an expired session',
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Handled the requested task/);
+});
+
+test('task, background review, and plan review reject logged-out launches without job records', () => {
+  const cases = [
+    ['task', '--json', 'blocked task'],
+    ['review', '--background', '--json', '--scope', 'working-tree'],
+    ['plan-review', '--json', 'Blocked plan review'],
+  ];
+
+  for (const argv of cases) {
+    const repo = initializeBasicRepo();
+    const binDir = makeTempDir();
+    installFakeCodex(binDir, 'logged-out');
+    fs.appendFileSync(path.join(repo, 'README.md'), 'dirty\n', 'utf8');
+    const env = buildEnv(binDir);
+
+    const result = run(process.execPath, [SCRIPT, ...argv], { cwd: repo, env });
+
+    assert.notEqual(result.status, 0, `${argv[0]} unexpectedly launched`);
+    assert.match(
+      result.stderr,
+      new RegExp(CODEX_NOT_AUTHENTICATED_ERROR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+    assert.deepEqual(JSON.parse(result.stdout), { error: CODEX_NOT_AUTHENTICATED_ERROR });
+    const state = readCompanionState(repo, env);
+    assert.equal(state === null || state.jobs.length === 0, true, `${argv[0]} wrote a job record`);
+  }
+});
+
+test('foreground review and plan review availability failures leave no job record', () => {
+  for (const argv of [
+    ['review', '--scope', 'working-tree'],
+    ['plan-review', 'Unavailable plan review'],
+  ]) {
+    const repo = initializeBasicRepo();
+    fs.appendFileSync(path.join(repo, 'README.md'), 'dirty\n', 'utf8');
+    const codexHome = makeTempDir();
+    const env = { ...process.env, PATH: '', CODEX_HOME: codexHome };
+
+    const result = run(process.execPath, [SCRIPT, ...argv], { cwd: repo, env });
+
+    assert.notEqual(result.status, 0);
+    const state = readCompanionState(repo, env);
+    assert.equal(state === null || state.jobs.length === 0, true, `${argv[0]} wrote a job record`);
+  }
 });
 
 test('task --prompt-file delivers delimiter-bearing content intact', () => {
@@ -1215,7 +1261,7 @@ test('commands lazily start and reuse one shared app-server after first use', as
   assert.equal(adversarial.status, 0, adversarial.stderr);
 
   const fakeState = JSON.parse(fs.readFileSync(fakeStatePath, 'utf8'));
-  assert.equal(fakeState.appServerStarts, 1);
+  assert.equal(fakeState.appServerStarts, 2);
 
   const cleanup = run('node', [SESSION_HOOK, 'SessionEnd'], {
     cwd: repo,
@@ -1353,7 +1399,7 @@ test('task --write --thread retries privately when the shared runtime ignores es
   assert.match(log, /Drained the stale shared Codex runtime/);
   assert.equal(fs.existsSync(path.join(binDir, 'fake-codex-state.json')), true);
   const fakeStateAfterRetry = readFakeState(binDir);
-  assert.equal(fakeStateAfterRetry.appServerStarts, 2);
+  assert.equal(fakeStateAfterRetry.appServerStarts, 3);
   assert.equal(fakeStateAfterRetry.lastResume?.sandbox, 'workspace-write');
   assert.equal(await brokerEndpointConnectable(staleBroker.endpoint), false);
   assert.deepEqual(loadBrokerSession(repo), staleBroker);
@@ -1363,7 +1409,7 @@ test('task --write --thread retries privately when the shared runtime ignores es
     env,
   });
   assert.equal(followUp.status, 0, followUp.stderr);
-  assert.equal(readFakeState(binDir).appServerStarts, 3);
+  assert.equal(readFakeState(binDir).appServerStarts, 4);
   assert.notEqual(loadBrokerSession(repo)?.endpoint, staleBroker.endpoint);
 });
 
@@ -1392,7 +1438,7 @@ test('task --write --thread fails clearly when write escalation is refused', (t)
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /resumed thread .* read-only despite the workspace-write request/i);
-  assert.equal(readFakeState(binDir).appServerStarts, 2);
+  assert.equal(readFakeState(binDir).appServerStarts, 3);
 });
 
 test('a direct fallback write does not disturb a busy shared runtime', async (t) => {
@@ -1441,7 +1487,7 @@ test('a direct fallback write does not disturb a busy shared runtime', async (t)
   assert.equal(waited.status, 0, waited.stderr);
   assert.equal(JSON.parse(waited.stdout).job.status, 'completed');
   assert.equal(fs.existsSync(path.join(binDir, 'fake-codex-state.json')), true);
-  assert.equal(readFakeState(binDir).appServerStarts, 2);
+  assert.equal(readFakeState(binDir).appServerStarts, 3);
   assert.equal(await brokerEndpointConnectable(broker.endpoint), true);
   assert.equal(loadBrokerSession(repo)?.endpoint, broker.endpoint);
 });

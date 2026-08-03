@@ -5,7 +5,7 @@ import process from 'node:process';
 import { runStopReviewGateHook } from '../src/hooks/stop-review-gate.ts';
 import { isMainModule } from '../src/shared/is-main.ts';
 
-if (isMainModule(import.meta.url)) {
+export function main(): void {
   try {
     runStopReviewGateHook();
   } catch (error) {
@@ -13,4 +13,8 @@ if (isMainModule(import.meta.url)) {
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
   }
+}
+
+if (isMainModule(import.meta.url)) {
+  main();
 }

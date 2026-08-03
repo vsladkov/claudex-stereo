@@ -18,6 +18,9 @@ Happy path:
    none are configured.
 6. Verify the workspace with `/stereo:status` after the `- codex:` and `- auth:` checks are ready.
 
+Use `/stereo:doctor` when install readiness is healthy but workspace runtime or durable state needs
+inspection.
+
 Run:
 
 ```bash

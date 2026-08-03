@@ -50,6 +50,9 @@ export default tseslint.config(
         __dirname: 'readonly',
       },
     },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
   },
   eslintConfigPrettier,
 );

@@ -17,7 +17,7 @@ import type { JobRecord } from '../../workspace/state.ts';
 import {
   createCompanionJob,
   createTrackedProgress,
-  ensureCodexAvailable,
+  ensureCodexLaunchReady,
   enqueueBackgroundTask,
   installSignalCleanup,
   renderQueuedTaskLaunch,
@@ -156,10 +156,10 @@ export async function handleTask(argv: string[]): Promise<void> {
     resumeLast,
   });
 
-  // Validate before any job record exists: a foreground invocation with no
-  // prompt/resume target must fast-fail like the background path instead of
-  // leaving a spurious running->failed job in /stereo:status.
-  ensureCodexAvailable(cwd);
+  // Validate availability and auth before any job record exists: foreground
+  // failures must fast-fail like the background path instead of leaving a
+  // spurious running->failed job in /stereo:status.
+  await ensureCodexLaunchReady(cwd);
   requireTaskRequest(prompt, resumeLast || Boolean(threadId));
 
   if (options.background) {

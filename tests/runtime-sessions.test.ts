@@ -33,6 +33,9 @@ import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts
 
 registerBrokerReaping();
 
+const SESSION_HOOK_GUARD = path.join(path.dirname(SESSION_HOOK), 'session-lifecycle-hook.cjs');
+const STOP_HOOK_GUARD = path.join(path.dirname(STOP_HOOK), 'stop-review-gate-hook.cjs');
+
 async function waitForChildExit<T>(exitPromise: Promise<T>, timeoutMs = 10000): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -51,6 +54,25 @@ async function waitForChildExit<T>(exitPromise: Promise<T>, timeoutMs = 10000): 
     }
   }
 }
+
+test('CommonJS hook guards delegate to the TypeScript entries on supported Node', () => {
+  const workspace = makeTempDir();
+  const sessionStart = run(process.execPath, [SESSION_HOOK_GUARD, 'SessionStart'], {
+    cwd: workspace,
+    input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: workspace }),
+  });
+  assert.equal(sessionStart.status, 0, sessionStart.stderr);
+  assert.equal(sessionStart.stdout, '');
+  assert.equal(sessionStart.stderr, '');
+
+  const stop = run(process.execPath, [STOP_HOOK_GUARD], {
+    cwd: workspace,
+    input: JSON.stringify({ cwd: workspace }),
+  });
+  assert.equal(stop.status, 0, stop.stderr);
+  assert.equal(stop.stdout, '');
+  assert.equal(stop.stderr, '');
+});
 
 test('setup and status surface stranded thread reservations on every route', (t) => {
   const repo = initializeBasicRepo();
@@ -1334,7 +1356,10 @@ test('the same thread is exclusive across workspaces and plugin state roots', ()
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /already being used by another Codex run \(job workspace-a-job\)/);
-  assert.equal(fs.existsSync(path.join(binDir, 'fake-codex-state.json')), false);
+  const fakeState = readFakeState(binDir);
+  assert.equal(fakeState.lastResume, undefined);
+  assert.equal(fakeState.lastThreadStart, undefined);
+  assert.deepEqual(fakeState.turnStarts ?? [], []);
   assert.equal(path.dirname(reservation.path), path.join(codexHome, 'companion-thread-locks'));
   releaseThreadReservation(reservation);
 

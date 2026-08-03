@@ -196,8 +196,7 @@ function sandboxPolicy(requested) {
 
 function buildAccountReadResult() {
   switch (BEHAVIOR) {
-    case "refreshable-auth":
-    case "auth-run-fails":
+    case "logged-out":
       return { account: null, requiresOpenaiAuth: true };
     case "provider-no-auth":
     case "env-key-provider":
@@ -242,6 +241,7 @@ function buildConfigReadResult() {
         origins: {}
       };
     case "refreshable-auth":
+    case "logged-out":
       return {
         config: {
           model_provider: "openai",
@@ -467,7 +467,7 @@ if (args[0] === "app-server" && args[1] === "--help") {
   process.exit(0);
 }
 if (args[0] === "login" && args[1] === "status") {
-  if (BEHAVIOR === "refreshable-auth" || BEHAVIOR === "auth-run-fails" || BEHAVIOR === "provider-no-auth" || BEHAVIOR === "env-key-provider" || BEHAVIOR === "api-key-account-only") {
+  if (BEHAVIOR === "refreshable-auth" || BEHAVIOR === "auth-run-fails" || BEHAVIOR === "logged-out" || BEHAVIOR === "provider-no-auth" || BEHAVIOR === "env-key-provider" || BEHAVIOR === "api-key-account-only") {
     console.error("not authenticated");
     process.exit(1);
   }
@@ -611,10 +611,17 @@ rl.on("line", (line) => {
           modelProvider: requestedProvider,
           sandbox: message.params.sandbox ?? null
         };
+        // Auth preflights change app-server start counts but never resume a
+        // thread, so the write-resume attempt is the scenario-invariant signal.
+        const staleWriteResume =
+          BEHAVIOR === "stale-write-escalation" && message.params.sandbox === "workspace-write";
+        if (staleWriteResume) {
+          state.writeSandboxResumeAttempts = (state.writeSandboxResumeAttempts || 0) + 1;
+        }
         saveState(state);
         const reportedSandbox =
           BEHAVIOR === "resume-never-escalates" ||
-          (BEHAVIOR === "stale-write-escalation" && state.appServerStarts < 2)
+          (staleWriteResume && state.writeSandboxResumeAttempts === 1)
             ? sandboxPolicy("read-only")
             : sandboxPolicy(message.params.sandbox);
         send({ id: message.id, result: { thread: buildThread(thread), model: message.params.model || "gpt-5.4", modelProvider: requestedProvider, serviceTier: null, cwd: thread.cwd, approvalPolicy: "never", sandbox: reportedSandbox, reasoningEffort: null } });
