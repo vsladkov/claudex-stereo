@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.38.0
+
+- Add `/stereo:doctor`, a diagnostics command for workspace state that previously had no
+  inspection surface: the broker record with pid/endpoint liveness probes and the `broker.log`
+  path, the resolved durable state directory, an in-progress implementation record with its
+  `/stereo:implement --resume` pointer, stranded `stereo-worktrees` entries with exact removal
+  commands, the SessionStart announcement watermark with a `--reset-job-announcements` repair,
+  and a model-catalog drift check comparing the registry's OpenAI rows against the Codex CLI's
+  local catalog cache (the check that would have caught the retired spark model months earlier)
+- Fail fast at job launch: a shared preflight verifies Codex availability and authentication
+  before any job record is created on `task`, `review`, and `plan-review` alike, replacing the
+  raw mid-job auth error with a pinned "run `codex login`" message and ending the spurious
+  running-then-failed records the foreground review paths could write
+- Guard the session hooks against Node older than 24: CommonJS shims explain the requirement
+  (SessionStart relays it into the session; Stop fails open) instead of failing with a raw
+  `.ts` loader error, delegating to the TypeScript entries via an exported `main()`; the fake
+  Codex fixture now keys stale-write-escalation on write-sandbox resume attempts so the scenario
+  stays meaningful across broker-backed and endpoint-pinned flows
+
 ## 1.37.0
 
 - Rename the `spark` alias to `mini`, now resolving to `gpt-5.4-mini`: the previous
