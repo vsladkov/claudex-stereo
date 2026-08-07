@@ -47,9 +47,9 @@ The remaining one-runtime surfaces and route asymmetries are deliberate:
   in `/stereo:status`.
 - `--effort` and `--*-effort` are Codex runtime controls. Model selection is the Claude strength
   control; the detailed Claude-side controls are described below.
-- Stored-plan `model`/`effort` record the last Codex pair values only. The Claude analogue is the
-  durable workspace default (`/stereo:config --implementer claude:<alias>`), which outranks the
-  stored-plan model.
+- Stored-plan `model`/`effort` record the last Codex pair values only; they never resolve the
+  implementer, whose selection is the role flag, the durable workspace default
+  (`/stereo:config --implementer <model>`), or the built-in `claude:opus`.
 
 `claude:inherit` requests the platform's model inheritance. With the Agent `model` parameter
 omitted, `CLAUDE_CODE_SUBAGENT_MODEL` wins when that environment variable is set; otherwise the
@@ -114,14 +114,12 @@ warning with the exact role and stored value, ignore the whole entry, and use th
 for that role. A stored `claude:*` value is a routing selection resolved by the command; it is
 never passed to the companion's `--model` flag.
 
-The implementer has one additional fallback. Its model is explicit flag > workspace implementer
-default > stored-plan `model` > `codex:sol`. A workspace default is durable repository intent, so
-it outranks the incidental model recorded by the last Codex plan review. When either an explicit
-flag or workspace default supplies the implementer model, discard the stored-plan effort because
-it belongs to a different model. The effective effort is then role flag > command-wide effort >
-workspace implementer effort default > that model's pair default. Only when the stored-plan model
-itself supplies the model may its stored effort appear below the workspace effort default and
-above the model pair default. Stored review-thread resumption is independent of these choices.
+The implementer resolves as explicit flag > workspace implementer default > `claude:opus`.
+Stored-plan `model`/`effort` record the last Codex pair values for the plan and never resolve the
+implementer; stored-plan effort belongs to the stored model and is never borrowed by a different
+selection. A Codex-routed implementer's effective effort is role flag > command-wide effort >
+workspace implementer effort default > that model's pair default. Stored review-thread resumption
+is independent of these choices.
 
 ## Foreground agents
 

@@ -28,13 +28,15 @@ After reading the routing skill, parse all arguments before repository work:
   `codex:sol`.
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
-- `--implementer <model>` resolves as explicit flag > workspace `implementer` default > the
-  model/effort resolved by the latest Codex plan-review payload > `codex:sol`.
+- `--implementer <model>` resolves as explicit flag > workspace `implementer` default >
+  `claude:opus`. The latest Codex plan-review payload's model and effort never resolve the
+  implementer; per the implementation routing below, a Codex-routed selection resumes
+  `planReviewThreadId` only when it is the plan reviewer's resolved model.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
-  Codex-routed implementer, including the effort from a Codex plan-review payload.
+  Codex-routed implementer.
 - `--implementation-reviewer <model>` resolves as explicit flag > workspace
-  `implementationReviewer` default > `claude:fable`; the contained reviewer is independent of
-  this orchestrating session.
+  `implementationReviewer` default > `codex:sol`; the cross-ecosystem reviewer is independent of
+  this orchestrating session and of the Claude-routed default implementer.
 - `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
   for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
@@ -57,11 +59,15 @@ unknown flags, unknown `claude:*` values, and `claude:session` as implementer. A
 `claude:inherit` alongside `claude:session` and the four explicit Claude aliases. Accept a Codex
 selection with or without the `codex:` prefix and reject `codex:claude:*`. Reject a role effort
 flag when its selected role is Claude-routed. Resolve every Codex role through role effort >
-command-wide effort > workspace role effort > the routing skill's pair default. For the
-implementer, use plan-review payload effort only when that payload also supplied the model. Either
-`--implementer-effort` or `--effort` overrides that payload effort. An explicit or
-workspace-supplied implementer model drops payload effort and uses workspace effort or that model's
-pair default. The removed `--model` flag is unknown; report the role-named alternatives. The renamed
+command-wide effort > workspace role effort > the routing skill's pair default. Plan-review
+payload effort belongs to the payload model and is never borrowed by the resolved implementer.
+A delta is never gated by the model that produced it: when the resolved implementer and
+implementation reviewer are the same model and the reviewer came from the built-in default rather
+than a flag or workspace default, substitute the other ecosystem's review default (`codex:sol`
+for a Claude-routed implementer, `claude:fable` for a Codex-routed one) and report the
+substitution; a same-model reviewer selected by flag or workspace default is honored but called
+out as self-review.
+The removed `--model` flag is unknown; report the role-named alternatives. The renamed
 `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
 `--implementation-reviewer` and `--implementation-reviewer-effort` as their replacements. Reject
 `--max-plan-rounds` above 6 and point at `/stereo:plan` for a longer plan-review loop; Quick's
@@ -112,8 +118,7 @@ Read `roleDefaults`. If the command fails, report the failure and continue with 
 Ignore an entry with a non-null `invalidReason`, report its warning, and use the built-in default
 for that role. Report a stored effort for a Claude-routed role as inert. Resolve stored `claude:*`
 selections as Claude routes and never pass them to the companion's `--model` flag. When a
-workspace implementer default supplies the model, say so and drop the latest plan-review payload's
-effort because it belongs to the payload model.
+workspace default supplies a role's model, say so in the effective-role recap.
 
 ## Scope gate and draft
 
@@ -256,8 +261,8 @@ worktree mode** instead of asking twice. Mention an enabled stop-review gate.
 
 If the selected implementer is Claude, scan for command-requiring work beyond host verification:
 version bumps, dependency installation, code generation, migrations, or interactive/long-running
-processes. If found, ask whether to switch to the canonical `codex:sol` implementer, leave each command user-owned,
-or stop. Never execute shell text on a Claude agent's behalf.
+processes. If found, ask whether to switch to the command-capable `codex:sol` implementer, leave
+each command step user-owned, or stop. Never execute shell text on a Claude agent's behalf.
 
 ## Isolated worktree mode
 
@@ -363,8 +368,9 @@ review, and fixes run in the worktree.
 
 ### Codex implementer
 
-If `planReviewThreadId` exists, resume it. Otherwise launch fresh without `--thread`. Always pass
-the effective implementer model and optional effort.
+If `planReviewThreadId` exists and the effective implementer is the plan reviewer's resolved
+model, resume it. Otherwise launch fresh without `--thread` — a different model never resumes
+another model's review thread. Always pass the effective implementer model and optional effort.
 
 Approved, resumed. Write this complete payload to `<payloadFile>` under the routing skill's
 temporary-directory rule:

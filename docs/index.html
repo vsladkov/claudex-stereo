@@ -25,7 +25,7 @@
     <meta property="og:title" content="Claudex Stereo — Code in stereo. Ship with confidence." />
     <meta
       property="og:description"
-      content="Claude plans. A second model challenges. Codex builds. A fresh reviewer gates the diff. You decide what ships."
+      content="Claude plans. Codex challenges. Claude builds. Codex gates the diff. You decide what ships."
     />
     <meta property="og:url" content="https://claudex-stereo.com/" />
     <meta property="og:type" content="website" />
@@ -44,7 +44,7 @@
     <meta name="twitter:title" content="Claudex Stereo — Code in stereo. Ship with confidence." />
     <meta
       name="twitter:description"
-      content="Claude plans. A second model challenges. Codex builds. A fresh reviewer gates the diff. You decide what ships."
+      content="Claude plans. Codex challenges. Claude builds. Codex gates the diff. You decide what ships."
     />
     <link
       rel="icon"
@@ -1277,8 +1277,8 @@
           </p>
           <h1>Code in <em>stereo.</em><br />Ship with <em>confidence.</em></h1>
           <p class="hero-copy">
-            Claude plans. A second model challenges. Codex builds. A fresh reviewer gates the diff.
-            You decide what ships.
+            Claude plans. Codex challenges. Claude builds. Codex gates the diff. You decide what
+            ships.
           </p>
           <div class="cta-row">
             <a class="btn btn-lg" href="#install">
@@ -1420,7 +1420,7 @@
                 <p>Adversarial review through bounded revision rounds. <code>codex:sol</code></p>
               </div>
             </li>
-            <li class="side-x">
+            <li class="side-c">
               <span class="med" aria-hidden="true">
                 <svg
                   width="16"
@@ -1437,14 +1437,14 @@
               </span>
               <div class="duo-card">
                 <span class="stepnum">03 · BUILD</span>
-                <h3>Codex builds in a workspace-write task</h3>
+                <h3>Claude builds in a contained file-edit agent</h3>
                 <p>
                   Repository checks run before the review gate.
-                  <code>codex:sol</code>
+                  <code>claude:opus</code>
                 </p>
               </div>
             </li>
-            <li class="side-c">
+            <li class="side-x">
               <span class="med" aria-hidden="true">
                 <svg
                   width="16"
@@ -1463,7 +1463,7 @@
               <div class="duo-card">
                 <span class="stepnum">04 · GATE</span>
                 <h3>A fresh reviewer gates the diff</h3>
-                <p>The gate runs outside the session. <code>claude:fable</code></p>
+                <p>The gate runs outside the session. <code>codex:sol</code></p>
               </div>
             </li>
           </ol>
@@ -1556,9 +1556,9 @@
 <span class="ok">✓</span> plan stored <span class="d">— run /stereo:implement</span>
 
 <span class="d">&gt;</span> /stereo:implement
-<span class="x">◆ implementer codex:sol</span> <span class="d">— 14 files changed</span>
+<span class="c">◆ implementer claude:opus</span> <span class="d">— 14 files changed</span>
 <span class="d">◆ host checks — tests</span> <span class="ok">✓</span> <span class="d">lint</span> <span class="ok">✓</span> <span class="d">typecheck</span> <span class="ok">✓</span>
-<span class="c">◆ implementation-reviewer claude:fable</span> <span class="d">— acceptable · 0 fixes</span>
+<span class="x">◆ implementation-reviewer codex:sol</span> <span class="d">— acceptable · 0 fixes</span>
 <span class="ok">✓</span> done <span class="d">— nothing committed; review and commit yourself</span></pre>
           </div>
           <figcaption>
@@ -1902,17 +1902,17 @@
           </fieldset>
           <fieldset>
             <legend>Implementer</legend>
+            <label class="lc">
+              <input type="radio" name="implementer" value="claude:opus" checked />
+              <span>claude:opus</span>
+            </label>
             <label class="lx">
-              <input type="radio" name="implementer" value="codex:sol" checked />
+              <input type="radio" name="implementer" value="codex:sol" />
               <span>codex:sol</span>
             </label>
             <label class="lx">
               <input type="radio" name="implementer" value="codex:mini" />
               <span>codex:mini</span>
-            </label>
-            <label class="lc">
-              <input type="radio" name="implementer" value="claude:sonnet" />
-              <span>claude:sonnet</span>
             </label>
             <label class="lx">
               <input type="radio" name="implementer" value="codex:kimi" />
@@ -1921,8 +1921,12 @@
           </fieldset>
           <fieldset>
             <legend>Implementation reviewer</legend>
+            <label class="lx">
+              <input type="radio" name="implementation-reviewer" value="codex:sol" checked />
+              <span>codex:sol</span>
+            </label>
             <label class="lc">
-              <input type="radio" name="implementation-reviewer" value="claude:fable" checked />
+              <input type="radio" name="implementation-reviewer" value="claude:fable" />
               <span>claude:fable</span>
             </label>
             <label class="lc">
@@ -1932,10 +1936,6 @@
             <label class="lc">
               <input type="radio" name="implementation-reviewer" value="claude:opus" />
               <span>claude:opus</span>
-            </label>
-            <label class="lx">
-              <input type="radio" name="implementation-reviewer" value="codex:sol" />
-              <span>codex:sol</span>
             </label>
           </fieldset>
         </form>
@@ -1961,11 +1961,12 @@
           Amber chips route to Claude, cyan to the Codex runtime. The <code>codex:</code> prefix is
           optional in commands, and tool output prints resolved model ids (<code>codex:sol</code>
           runs <code>gpt-5.6-sol</code>). Flags matching the defaults are omitted, so the default
-          selection is just the two bare commands. A Codex plan reviewer becomes the stored
-          implementer default, while Claude-reviewed plans fall back to <code>codex:sol</code>.
-          <code>claude:session</code> is not offered for the implementer — Claude writes always run
-          in the contained file-edit agent. Trust a third-party provider with implementation work
-          only after a small <code>--plan-reviewer codex:&lt;alias&gt;</code> round.
+          selection is just the two bare commands. The implementer defaults to the contained
+          <code>claude:opus</code> file-edit agent; a Codex implementer instead builds inside the
+          stored plan-review thread when one exists. <code>claude:session</code> is not offered for
+          the implementer — Claude writes always run in a contained agent. Trust a third-party
+          provider with implementation work only after a small
+          <code>--plan-reviewer codex:&lt;alias&gt;</code> round.
         </p>
         <details class="routing-defaults">
           <summary>View the default model matrix</summary>
@@ -1994,16 +1995,13 @@
                 </tr>
                 <tr>
                   <td>Implementer</td>
-                  <td>stored model, else <code class="cx">codex:sol</code></td>
-                  <td>
-                    the plan-review model and effort; <code class="cx">codex:sol</code> after a
-                    Claude-routed review
-                  </td>
+                  <td><code class="cc">claude:opus</code></td>
+                  <td><code class="cc">claude:opus</code></td>
                 </tr>
                 <tr>
                   <td>Implementation reviewer</td>
-                  <td><code class="cc">claude:fable</code></td>
-                  <td><code class="cc">claude:fable</code></td>
+                  <td><code class="cx">codex:sol</code></td>
+                  <td><code class="cx">codex:sol</code></td>
                 </tr>
               </tbody>
             </table>
@@ -2239,7 +2237,8 @@
         const defaults = {
           planner: 'claude:fable',
           'plan-reviewer': 'codex:sol',
-          'implementation-reviewer': 'claude:fable',
+          implementer: 'claude:opus',
+          'implementation-reviewer': 'codex:sol',
         };
         const planOut = document.getElementById('rc-plan');
         const implOut = document.getElementById('rc-impl');
@@ -2250,15 +2249,8 @@
             const value = data.get(name);
             return value === defaults[name] ? '' : ` --${name} ${value}`;
           };
-          // A Codex plan reviewer stores its model as the implementation default;
-          // Claude-reviewed plans store none, so /stereo:implement falls back to sol.
-          const planReviewer = data.get('plan-reviewer');
-          const implementer = data.get('implementer');
-          const storedDefault = planReviewer.startsWith('claude:') ? 'codex:sol' : planReviewer;
-          const implementerFlag =
-            implementer === storedDefault ? '' : ` --implementer ${implementer}`;
           const plan = `/stereo:plan${flag('planner')}${flag('plan-reviewer')} <task>`;
-          const impl = `/stereo:implement${implementerFlag}${flag('implementation-reviewer')}`;
+          const impl = `/stereo:implement${flag('implementer')}${flag('implementation-reviewer')}`;
           planOut.textContent = plan;
           implOut.textContent = impl;
           copyBtn.dataset.copy = `${plan}\n${impl}`;

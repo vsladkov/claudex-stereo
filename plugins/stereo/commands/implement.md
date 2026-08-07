@@ -19,13 +19,14 @@ Raw slash-command arguments:
 After reading the routing skill, parse all arguments before loading state:
 
 - `--implementer <model>` selects the implementer. Resolve it as explicit flag > workspace
-  `implementer` default > stored-plan Codex model > `codex:sol`.
+  `implementer` default > `claude:opus`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer.
 - `--implementation-reviewer <model>` selects the implementation reviewer. Resolve it as explicit
-  flag > workspace `implementationReviewer` default > `claude:fable`: the implementation review
-  is the last gate before commit, and a contained reviewer is independent of the orchestrator that
-  produced and fixed the delta. `claude:session` remains valid and is the cheaper inline choice.
+  flag > workspace `implementationReviewer` default > `codex:sol`: the implementation review is
+  the last gate before commit, and the cross-ecosystem reviewer is independent of both the
+  orchestrator and the Claude-routed default implementer that produced the delta.
+  `claude:session` remains valid and is the cheaper inline choice.
 - `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
   for a Codex-routed implementation reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
@@ -34,7 +35,8 @@ After reading the routing skill, parse all arguments before loading state:
   inert, and never translate it into a Claude-side control.
 - `--max-fix-rounds <n>` defaults to 4.
 - `--slot <name>` selects the stored plan to implement and defaults to `default`.
-- `--fresh` skips a reusable stored Codex plan-review thread.
+- `--fresh` skips a reusable stored Codex plan-review thread; it only affects a Codex-routed
+  implementer and is accepted but reported as inert for a Claude-routed one.
 - `--implement-only` implements and verifies once, then stops before review.
 - `--review-only` reviews the current dirty/untracked implementation delta once without fixing.
 - `--resume` re-enters a recorded incomplete implementation phase after a crashed, compacted, or
@@ -84,16 +86,24 @@ reviewer for this command run.
 
 Reject `claude:session` as the implementer; Claude writes must use the contained named agent.
 
-For Codex implementation, treat stored-plan `model`/`effort` as the last Codex pair values recorded
-for the plan; they survive a Claude-side persist. Resolve the model as `--implementer` > workspace
-`implementer` default > stored-plan `model` > `codex:sol`. The durable workspace default outranks
-the incidental model recorded by whichever Codex model last reviewed the plan. Resolve effort as
-`--implementer-effort` > command-wide `--effort` > workspace implementer effort default >
-stored-plan `effort` only when the stored plan also supplied the model > selected model's pair
-default. An explicit or workspace-supplied model drops stored-plan effort because that effort
-belonged to another model. Omit a null effort. Thread resumption remains orthogonal. For a Codex
-implementation reviewer, resolve `--implementation-reviewer-effort` > command-wide `--effort` >
-workspace implementation-reviewer effort > the routing skill's pair default.
+Stored-plan `model`/`effort` are the last Codex pair values recorded for the plan; they survive a
+Claude-side persist and never resolve the implementer. Resolve the model as `--implementer` >
+workspace `implementer` default > `claude:opus`. For a Codex-routed implementer, resolve effort as
+`--implementer-effort` > command-wide `--effort` > workspace implementer effort default > the
+selected model's pair default; stored-plan effort belongs to the stored model and is never
+borrowed by a different selection. Omit a null effort. A Codex-routed implementer resumes
+`storedPlanReviewThreadId` per the implementation-routing rules below only when it is the model
+that produced that thread. For a Codex implementation reviewer, resolve `--implementation-reviewer-effort` >
+command-wide `--effort` > workspace implementation-reviewer effort > the routing skill's pair
+default.
+
+A delta is never gated by the model that produced it: when the resolved implementer and
+implementation reviewer are the same model and the reviewer came from the built-in default
+rather than a flag or workspace default, substitute the other ecosystem's review default —
+`codex:sol` for a Claude-routed implementer, `claude:fable` for a Codex-routed one — and report
+the substitution. A same-model reviewer selected by an explicit
+`--implementation-reviewer` flag or a stored workspace default is honored but called out as
+self-review in the recap and the final report.
 
 Inside the full fix loop, act on findings automatically. The stop-after-review rule applies to
 `--review-only` and explicit safeguard decisions.
@@ -291,7 +301,8 @@ If the selected implementer is Claude, scan the stored plan's `## Step-by-step c
 edit for commands beyond the fixed host verification gates: version bumps, package installation,
 code generation, migrations, or interactive/long-running processes. If present, ask:
 
-- Switch to the canonical `codex:sol` implementer with the user's effort or `max` (recommended).
+- Switch to the command-capable `codex:sol` implementer with the user's effort or `max`
+  (recommended).
 - Continue with file edits only and leave each command step user-owned.
 - Stop.
 
@@ -402,8 +413,11 @@ temporary; no command in this flow creates a branch or commit.
 
 ### Codex implementer
 
-When `storedPlanReviewThreadId` is non-null and `--fresh` was not passed, resume it. Otherwise
-start a fresh write thread. Embed the complete stored plan verbatim in every fresh prompt.
+When `storedPlanReviewThreadId` is non-null, `--fresh` was not passed, and the effective
+implementer is the stored plan-review model, resume it. Otherwise start a fresh write thread — a
+different model never resumes another model's review thread, because the resumed prompt tells the
+implementer it reviewed the plan itself. Embed the complete stored plan verbatim in every fresh
+prompt.
 
 Approved, resumed. Write this complete payload to `<payloadFile>` under the routing skill's
 temporary-directory rule:
