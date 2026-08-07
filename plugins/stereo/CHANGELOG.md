@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.42.0
+
+- Flip the built-in role defaults to alternate vendors at every handoff: `claude:fable` drafts
+  the plan, `codex:sol` reviews it, `codex:sol` implements on the stored review thread, and
+  `claude:fable` gates the diff — for `/stereo:plan`, `/stereo:implement`, and `/stereo:quick`
+  alike (quick's scope gate stays inline). Driven by a five-combo planning benchmark on identical
+  drafts: the Codex reviewer verified plan claims empirically — running boundary cases instead of
+  reading past them — and found defects every same-family reviewer missed, while `claude:fable`
+  produced the judged-best draft
+- The default plan review now stores each parsed round durably with a resumable `plan-review`
+  thread, so implementation resumes the approval context instead of starting fresh; one flag
+  (`--plan-reviewer claude:fable`) restores the faster all-Claude plan loop
+- Update every consequence claim to the new mechanics — budget split, thread resumption, escape
+  hatches, the strategy rationale, the marketing site's step cards, schematic, configurator, and
+  model matrix — and drop effort annotations on defaults wherever the effort is just the model's
+  pair default
+
 ## 1.41.0
 
 - Bring `/stereo:quick` to flag parity with the phase commands: `--slot <name>` targets a named
