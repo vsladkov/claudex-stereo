@@ -87,12 +87,19 @@ test('plugin manifests expose the display name without changing install identiti
   assert.equal(typeof marketplace.description, 'string');
 });
 
-test('marketing site has no external subresources', () => {
-  const html = read('docs/index.html');
+test('marketing site has no external subresources beyond the analytics loader', () => {
+  for (const page of ['docs/index.html', 'docs/404.html']) {
+    const html = read(page);
 
-  assert.doesNotMatch(html, /<link\b(?=[^>]*\brel=["'][^"']*\bstylesheet\b)[^>]*>/i);
-  assert.doesNotMatch(html, /<script\b[^>]*\bsrc=/i);
-  assert.doesNotMatch(html, /<img\b[^>]*\bsrc=["']https?:/i);
-  assert.doesNotMatch(html, /@import\s+(?:url\()?\s*["']?https?:/i);
-  assert.doesNotMatch(html, /url\(\s*["']?https?:/i);
+    assert.doesNotMatch(html, /<link\b(?=[^>]*\brel=["'][^"']*\bstylesheet\b)[^>]*>/i, page);
+    for (const match of html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
+      assert.ok(
+        (match[1] ?? '').startsWith('https://www.googletagmanager.com/gtag/js'),
+        `${page}: unexpected external script ${match[1]}`,
+      );
+    }
+    assert.doesNotMatch(html, /<img\b[^>]*\bsrc=["']https?:/i, page);
+    assert.doesNotMatch(html, /@import\s+(?:url\()?\s*["']?https?:/i, page);
+    assert.doesNotMatch(html, /url\(\s*["']?https?:/i, page);
+  }
 });
