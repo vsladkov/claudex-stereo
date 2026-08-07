@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.43.0
+
+- Compare two stored plan slots: `plan-state --compare <slotA> <slotB>` (surfaced through
+  `/stereo:plan-state`) renders both slots' review metadata side by side plus a unified line diff
+  of the stored plan texts from a new dependency-free capped LCS — per-side preflights (2000
+  effective lines, one million UTF-16 code units) run before any allocation-scale work, an empty
+  side normalizes to zero lines, and the hunk format is pinned byte-exactly by tests. The JSON
+  payload is metadata-only; each full plan stays reachable per slot via `--json --slot` or
+  `--open`
+- Complete the alternating-vendor defaults at the build seats: `claude:opus` implements in the
+  contained file-edit agent and `codex:sol` gates the diff, so every handoff crosses ecosystems —
+  Claude plans and builds, Codex challenges the plan and gates the diff
+- Make the implementer resolution honest under any model mix: stored-plan and plan-review payload
+  models never resolve the implementer (explicit flag > workspace default > built-in), a Codex
+  implementer resumes the stored review thread only when it is the model that produced it, a
+  same-model implementer/reviewer pairing from the built-in default substitutes the other
+  ecosystem's review gate (explicit or workspace-configured self-review is honored but called
+  out), and `--fresh` is reported as inert for a Claude-routed implementer
+
 ## 1.42.0
 
 - Flip the built-in role defaults to alternate vendors at every handoff: `claude:fable` drafts
