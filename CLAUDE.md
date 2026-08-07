@@ -1,7 +1,8 @@
 # Claudex Stereo — contributor notes
 
 Claude Code plugin pairing Claude with the OpenAI Codex CLI: Claude plans and
-reviews, Codex implements (`/stereo:*` commands). Published at
+gates the diff, Codex challenges the plan and implements (`/stereo:*`
+commands). Published at
 github.com/vsladkov/claudex-stereo with the site at claudex-stereo.com;
 development is dogfooded — the plugin under development is also the tool in use.
 

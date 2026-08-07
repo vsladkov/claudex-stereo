@@ -20,16 +20,16 @@ Raw slash-command arguments:
 After reading the routing skill, parse every argument before inspecting the repository or starting
 a routed step:
 
-- `--planner <model>` selects the drafter and defaults to `claude:opus`.
+- `--planner <model>` selects the drafter and defaults to `claude:fable`.
 - `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed planner.
-- `--plan-reviewer <model>` selects the plan reviewer and defaults to `claude:fable`.
+- `--plan-reviewer <model>` selects the plan reviewer and defaults to `codex:sol`.
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
-  When no active role is Codex-routed, as under the command defaults, accept `--effort` but report
-  that it is inert rather than silently dropping it.
+  When no active role is Codex-routed, accept `--effort` but report that it is inert rather than
+  silently dropping it.
 - `--max-plan-rounds <n>` defaults to 6.
 - `--slot <name>` selects the durable plan slot this run stores into and defaults to `default`.
   Slot names are trimmed, lowercased, may contain only letters, digits, hyphens, and underscores,
@@ -81,8 +81,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
 
 Read `roleDefaults`. If the command fails, report that failure and continue with built-in
 defaults. If an entry has a non-null `invalidReason`, report it and use the built-in default for
-that role. Resolve the planner as `--planner` > stored `planner` > `claude:opus`, and the plan
-reviewer as `--plan-reviewer` > stored `planReviewer` > `claude:fable`. For each Codex-routed role,
+that role. Resolve the planner as `--planner` > stored `planner` > `claude:fable`, and the plan
+reviewer as `--plan-reviewer` > stored `planReviewer` > `codex:sol`. For each Codex-routed role,
 resolve effort as role effort flag > command-wide `--effort` > stored role effort > model pair
 default. Report a stored effort for a Claude-routed role as inert. Resolve stored `claude:*`
 selections as Claude routes and never pass them to the companion's `--model` flag.

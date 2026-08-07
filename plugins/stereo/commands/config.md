@@ -11,7 +11,7 @@ Present the command output verbatim. Relay every warning with the exact role and
 names.
 
 Explicit role flags take precedence over stored workspace defaults, which take precedence over
-built-in defaults. The built-in defaults are `claude:opus` for the planner, `claude:fable` for the
+built-in defaults. The built-in defaults are `claude:fable` for the planner, `codex:sol` for the
 plan reviewer, `codex:sol` for the implementer, and `claude:fable` for the implementation
-reviewer in the two phase commands. `/stereo:quick` instead uses `claude:session` for its planner;
-its other three built-ins are the same. An unset role uses that command's built-in default.
+reviewer, shared by the two phase commands and `/stereo:quick` alike. An unset role uses that
+command's built-in default.

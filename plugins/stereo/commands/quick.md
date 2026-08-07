@@ -21,11 +21,11 @@ Raw slash-command arguments:
 After reading the routing skill, parse all arguments before repository work:
 
 - `--planner <model>` resolves as explicit flag > workspace `planner` default >
-  `claude:session`; the scope gate already grounds the task in this session.
+  `claude:fable`; the scope gate still runs inline in this session before any routed draft.
 - `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed planner.
 - `--plan-reviewer <model>` resolves as explicit flag > workspace `planReviewer` default >
-  `claude:fable`.
+  `codex:sol`.
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
 - `--implementer <model>` resolves as explicit flag > workspace `implementer` default > the

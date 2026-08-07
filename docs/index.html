@@ -1394,11 +1394,11 @@
                 <span class="stepnum">01 · PLAN</span>
                 <h3>Claude drafts the plan</h3>
                 <p>
-                  A contained planner explores the repository read-only. <code>claude:opus</code>
+                  A contained planner explores the repository read-only. <code>claude:fable</code>
                 </p>
               </div>
             </li>
-            <li class="side-c">
+            <li class="side-x">
               <span class="med" aria-hidden="true">
                 <svg
                   width="16"
@@ -1417,7 +1417,7 @@
               <div class="duo-card">
                 <span class="stepnum">02 · CHALLENGE</span>
                 <h3>A second model challenges assumptions</h3>
-                <p>Adversarial review through bounded revision rounds. <code>claude:fable</code></p>
+                <p>Adversarial review through bounded revision rounds. <code>codex:sol</code></p>
               </div>
             </li>
             <li class="side-x">
@@ -1440,7 +1440,7 @@
                 <h3>Codex builds in a workspace-write task</h3>
                 <p>
                   Repository checks run before the review gate.
-                  <code>codex:sol @ max</code>
+                  <code>codex:sol</code>
                 </p>
               </div>
             </li>
@@ -1550,13 +1550,13 @@
           <div class="term">
             <div class="term-bar"><i></i><i></i><i></i>&nbsp; claude — ~/dev/api</div>
             <pre><span class="d">&gt;</span> /stereo:plan add rate limiting to the public API
-<span class="c">◆ planner claude:opus</span> <span class="d">— drafting (read-only)…</span>
-<span class="c">◆ plan-reviewer claude:fable</span> <span class="d">— round 1: needs-revision · 3 findings</span>
-<span class="c">◆ plan-reviewer claude:fable</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
+<span class="c">◆ planner claude:fable</span> <span class="d">— drafting (read-only)…</span>
+<span class="x">◆ plan-reviewer codex:sol</span> <span class="d">— round 1: needs-revision · 3 findings</span>
+<span class="x">◆ plan-reviewer codex:sol</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
 <span class="ok">✓</span> plan stored <span class="d">— run /stereo:implement</span>
 
 <span class="d">&gt;</span> /stereo:implement
-<span class="x">◆ implementer codex:sol @ max</span> <span class="d">— 14 files changed</span>
+<span class="x">◆ implementer codex:sol</span> <span class="d">— 14 files changed</span>
 <span class="d">◆ host checks — tests</span> <span class="ok">✓</span> <span class="d">lint</span> <span class="ok">✓</span> <span class="d">typecheck</span> <span class="ok">✓</span>
 <span class="c">◆ implementation-reviewer claude:fable</span> <span class="d">— acceptable · 0 fixes</span>
 <span class="ok">✓</span> done <span class="d">— nothing committed; review and commit yourself</span></pre>
@@ -1865,16 +1865,16 @@
           <fieldset>
             <legend>Planner</legend>
             <label class="lc">
-              <input type="radio" name="planner" value="claude:opus" checked />
-              <span>claude:opus</span>
+              <input type="radio" name="planner" value="claude:fable" checked />
+              <span>claude:fable</span>
             </label>
             <label class="lc">
               <input type="radio" name="planner" value="claude:session" />
               <span>claude:session</span>
             </label>
             <label class="lc">
-              <input type="radio" name="planner" value="claude:fable" />
-              <span>claude:fable</span>
+              <input type="radio" name="planner" value="claude:opus" />
+              <span>claude:opus</span>
             </label>
             <label class="lx">
               <input type="radio" name="planner" value="codex:sol" />
@@ -1883,17 +1883,17 @@
           </fieldset>
           <fieldset>
             <legend>Plan reviewer</legend>
+            <label class="lx">
+              <input type="radio" name="plan-reviewer" value="codex:sol" checked />
+              <span>codex:sol</span>
+            </label>
             <label class="lc">
-              <input type="radio" name="plan-reviewer" value="claude:fable" checked />
+              <input type="radio" name="plan-reviewer" value="claude:fable" />
               <span>claude:fable</span>
             </label>
             <label class="lc">
               <input type="radio" name="plan-reviewer" value="claude:opus" />
               <span>claude:opus</span>
-            </label>
-            <label class="lx">
-              <input type="radio" name="plan-reviewer" value="codex:sol" />
-              <span>codex:sol</span>
             </label>
             <label class="lx">
               <input type="radio" name="plan-reviewer" value="codex:glm" />
@@ -1984,20 +1984,20 @@
               <tbody>
                 <tr>
                   <td>Planner</td>
-                  <td><code class="cc">claude:opus</code></td>
-                  <td><code class="cc">claude:session</code></td>
+                  <td><code class="cc">claude:fable</code></td>
+                  <td><code class="cc">claude:fable</code></td>
                 </tr>
                 <tr>
                   <td>Plan reviewer</td>
-                  <td><code class="cc">claude:fable</code></td>
-                  <td><code class="cc">claude:fable</code></td>
+                  <td><code class="cx">codex:sol</code></td>
+                  <td><code class="cx">codex:sol</code></td>
                 </tr>
                 <tr>
                   <td>Implementer</td>
-                  <td>stored model, else <code class="cx">codex:sol</code> at <code>max</code></td>
+                  <td>stored model, else <code class="cx">codex:sol</code></td>
                   <td>
-                    <code class="cx">codex:sol</code> at <code>max</code> after a Claude review;
-                    otherwise the stored Codex plan-review model and effort
+                    the plan-review model and effort; <code class="cx">codex:sol</code> after a
+                    Claude-routed review
                   </td>
                 </tr>
                 <tr>
@@ -2237,8 +2237,8 @@
       const rcForm = document.getElementById('rc');
       if (rcForm) {
         const defaults = {
-          planner: 'claude:opus',
-          'plan-reviewer': 'claude:fable',
+          planner: 'claude:fable',
+          'plan-reviewer': 'codex:sol',
           'implementation-reviewer': 'claude:fable',
         };
         const planOut = document.getElementById('rc-plan');
