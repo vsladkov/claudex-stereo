@@ -48,6 +48,7 @@ test('every command wires the companion entry point it documents', () => {
     'plan-state.md': [
       /codex-companion\.ts" plan-state\b/,
       /plan-state --list/,
+      /plan-state --compare/,
       /plan-state --clear/,
       /plan-state --mark-implemented/,
     ],

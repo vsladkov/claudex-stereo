@@ -1246,6 +1246,140 @@ test('plan-state --list inventories two slots without inventing an implementatio
   assert.match(textOutput, /Show one with \/stereo:plan-state --slot <name>\.\n$/);
 });
 
+test('plan-state --compare returns metadata-only JSON and renders the plan diff', async () => {
+  const workspace = makeTempDir();
+  savePairPlanState(
+    workspace,
+    storedPlan({ summary: 'Default plan summary.', plan: '# Plan\n\nStep one.\n' }),
+  );
+  savePairPlanState(
+    workspace,
+    storedPlan({
+      verdict: 'needs-revision',
+      round: 3,
+      summary: 'Windows plan summary.',
+      updatedAt: '2026-08-02T09:00:00.000Z',
+      plan: '# Plan\n\nStep one revised.\nStep two.\n',
+    }),
+    'windows-lane',
+  );
+
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--compare', 'default', 'windows-lane', '--json']),
+  );
+  const payload = JSON.parse(jsonOutput);
+  // The comparison never duplicates the plan bodies it just diffed; the full
+  // text stays reachable through --json --slot <name>.
+  assert.equal(Object.hasOwn(payload.a, 'plan'), false);
+  assert.equal(Object.hasOwn(payload.b, 'plan'), false);
+  assert.deepEqual(payload, {
+    slots: ['default', 'windows-lane'],
+    a: {
+      threadId: 'thr_plan_state',
+      model: 'gpt-5.6-sol',
+      effort: 'max',
+      round: 2,
+      verdict: 'approve',
+      updatedAt: '2026-07-25T12:00:00.000Z',
+      openQuestions: [],
+      residualRisks: ['Manual fallback remains available.'],
+      summary: 'Default plan summary.',
+      slot: 'default',
+    },
+    b: {
+      threadId: 'thr_plan_state',
+      model: 'gpt-5.6-sol',
+      effort: 'max',
+      round: 3,
+      verdict: 'needs-revision',
+      updatedAt: '2026-08-02T09:00:00.000Z',
+      openQuestions: [],
+      residualRisks: ['Manual fallback remains available.'],
+      summary: 'Windows plan summary.',
+      slot: 'windows-lane',
+    },
+    planIdentical: false,
+    planDiffSuppressed: false,
+    planDiff: '@@ -1,3 +1,4 @@\n # Plan\n \n-Step one.\n+Step one revised.\n+Step two.',
+  });
+
+  const textOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--compare', 'default', 'windows-lane']),
+  );
+  assert.match(textOutput, /^Stored plan comparison \(default vs windows-lane\)\n/);
+  assert.match(textOutput, /\nSummary: Default plan summary\.\n/);
+  assert.match(textOutput, /\nSummary: Windows plan summary\.\n/);
+  assert.match(textOutput, /\nPlan diff \(default -> windows-lane\):\n@@ -1,3 \+1,4 @@\n/);
+  assert.match(textOutput, /\n-Step one\.\n\+Step one revised\.\n\+Step two\.\n$/);
+});
+
+test('plan-state --compare reports identical plan text across two slots', async () => {
+  const workspace = makeTempDir();
+  savePairPlanState(workspace, storedPlan());
+  savePairPlanState(workspace, storedPlan({ round: 4 }), 'windows-lane');
+
+  const jsonOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--compare', 'default', 'windows-lane', '--json']),
+  );
+  const payload = JSON.parse(jsonOutput);
+  assert.equal(payload.planIdentical, true);
+  assert.equal(payload.planDiffSuppressed, false);
+  assert.equal(payload.planDiff, '');
+  assert.equal(payload.a.round, 2);
+  assert.equal(payload.b.round, 4);
+
+  const textOutput = await captureStdout(() =>
+    handlePlanState(['--cwd', workspace, '--compare', 'default', 'windows-lane']),
+  );
+  assert.match(textOutput, /\nPlan text: identical\.\n$/);
+});
+
+test('plan-state --compare rejects missing, duplicate, and conflicting slot arguments', async () => {
+  const workspace = makeTempDir();
+
+  const bothMissing = run(
+    process.execPath,
+    [SCRIPT, 'plan-state', '--cwd', workspace, '--compare', 'left', 'right', '--json'],
+    { cwd: workspace },
+  );
+  assert.notEqual(bothMissing.status, 0);
+  assert.deepEqual(JSON.parse(bothMissing.stdout), {
+    error:
+      'No stored plans in slots "left" and "right" to compare. Run /stereo:plan --slot <name> first.',
+  });
+  assert.match(bothMissing.stderr, /No stored plans in slots "left" and "right" to compare/);
+
+  savePairPlanState(workspace, storedPlan(), 'left');
+  const oneMissing = run(
+    process.execPath,
+    [SCRIPT, 'plan-state', '--cwd', workspace, '--compare', 'left', 'right', '--json'],
+    { cwd: workspace },
+  );
+  assert.notEqual(oneMissing.status, 0);
+  assert.deepEqual(JSON.parse(oneMissing.stdout), {
+    error: 'No stored plan in slot "right" to compare. Run /stereo:plan --slot right first.',
+  });
+  assert.match(oneMissing.stderr, /No stored plan in slot "right" to compare/);
+
+  // Slot names are lowercased, so a case-only difference is the same slot.
+  await assert.rejects(
+    () => handlePlanState(['--cwd', workspace, '--compare', 'left', 'LEFT']),
+    /Provide two different slot names to compare\./,
+  );
+  await assert.rejects(
+    () => handlePlanState(['--cwd', workspace, '--compare', 'left']),
+    /Provide exactly two slot names: --compare <slotA> <slotB>\./,
+  );
+  await assert.rejects(
+    () => handlePlanState(['--cwd', workspace, '--compare', 'left', 'right', '--slot', 'left']),
+    /--compare names both slots; drop --slot\./,
+  );
+  await assert.rejects(
+    () => handlePlanState(['--cwd', workspace, '--compare', '--list', 'left', 'right']),
+    /Choose one of --list, --open, --clear, --mark-implemented, or --compare\./,
+  );
+});
+
 test('plan-state --open materializes and refreshes the exact rendered plan', async () => {
   const workspace = makeTempDir();
   const record = storedPlan();
@@ -1543,7 +1677,7 @@ test('plan-state mutations reject missing plans and conflicting actions', async 
 
   await assert.rejects(
     () => handlePlanState(['--cwd', workspace, '--open', '--clear']),
-    /Choose one of --list, --open, --clear, or --mark-implemented\./,
+    /Choose one of --list, --open, --clear, --mark-implemented, or --compare\./,
   );
   await assert.rejects(
     () => handlePlanState(['--cwd', workspace, '--list', '--slot', 'named']),

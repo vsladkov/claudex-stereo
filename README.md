@@ -495,6 +495,7 @@ committed or merged. Findings are rendered as a compact severity-and-title list;
 ```bash
 /stereo:plan-state
 /stereo:plan-state --list
+/stereo:plan-state --compare rate-limit-opus rate-limit-fable
 /stereo:plan-state --slot api-rate-limit
 /stereo:plan-state --open
 /stereo:plan-state --slot api-rate-limit --open
@@ -503,11 +504,21 @@ committed or merged. Findings are rendered as a compact severity-and-title list;
 ```
 
 Without flags, the command only renders the default plan in the terminal. Use `--list` to inventory
-all slots and see which one owns the current implementation record. Use `--slot <name>` to select a
-named slot for showing, opening, clearing, or marking it implemented. `--open` refreshes
-`pair-plan.md` for the default slot or `pair-plan-<slot>.md` for a named slot in the durable state
-directory, then opens it in VS Code through the `code` CLI. The command always prints the exported
-path, so you can open the file manually when `code` is unavailable.
+all slots and see which one owns the current implementation record.
+
+`--compare <slotA> <slotB>` renders both slots' review metadata side by side, followed by a
+unified-style line diff of the two plan texts (or `Plan text: identical.`). It names both slots
+itself, so it does not combine with `--slot` or another action, and both slots must hold a stored
+plan. Oversized plans suppress the diff and point at `--open` for an external comparison. `--json`
+returns `planIdentical`, `planDiffSuppressed`, and `planDiff` alongside metadata-only `a` and `b`
+objects; neither carries its `plan` text, so read a full plan with
+`/stereo:plan-state --json --slot <name>` or export it with `--open`.
+
+Use `--slot <name>` to select a named slot for showing, opening, clearing, or marking it
+implemented. `--open` refreshes `pair-plan.md` for the default slot or `pair-plan-<slot>.md` for a
+named slot in the durable state directory, then opens it in VS Code through the `code` CLI. The
+command always prints the exported path, so you can open the file manually when `code` is
+unavailable.
 
 `--clear` asks for confirmation and removes both artifacts for the selected slot. It removes the
 single implementation record only when that record belongs to the cleared slot. `--mark-implemented`
@@ -873,12 +884,15 @@ automated revision loop.
 /stereo:plan --draft-only --slot rate-limit-opus add rate limiting to the public API
 /stereo:plan --draft-only --slot rate-limit-fable --planner claude:fable add rate limiting to the public API
 /stereo:plan-state --list
+/stereo:plan-state --compare rate-limit-opus rate-limit-fable
 /stereo:plan-state --slot rate-limit-opus --open
 /stereo:plan-state --slot rate-limit-fable --open
 ```
 
-Run two independent `--draft-only` passes with different planners, compare and merge their
-discoveries at the findings level, then plan once and review normally. Each draft remains in its
+Run two independent `--draft-only` passes with different planners, then merge their discoveries at
+the findings level and plan once, reviewing normally. `--compare` puts both slots' review metadata
+and a line diff of the two plan texts in one output, so the differences are visible without an
+external tool; `--open` remains for reading each plan in full side by side. Each draft stays in its
 own durable slot, and each `--open` writes a separate `pair-plan-<slot>.md` export, so no manual
 copy is needed between passes.
 

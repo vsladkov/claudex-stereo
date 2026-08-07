@@ -5,6 +5,8 @@ import type { UsageGroup, UsageSnapshot } from '../jobs/job-control.ts';
 import type { SessionJobAnnouncement } from '../jobs/job-announcements.ts';
 import type { RoleDefaultEntry } from '../models/role-defaults.ts';
 import type { CatalogDriftReport } from '../models/catalog-cache.ts';
+import { MAX_COMPARE_PLAN_CHARS, MAX_COMPARE_PLAN_LINES } from '../shared/diff.ts';
+import type { PlanTextDiff } from '../shared/diff.ts';
 import { shorten } from '../shared/text.ts';
 
 // Renderer inputs are typed from usage: jobs and stored payloads come from
@@ -748,17 +750,13 @@ function storedPlanFindings(value: unknown): NormalizedPlanReviewFinding[] {
     : [];
 }
 
-export function renderStoredPlanState(
-  record: StoredPairPlanState | null,
-  slotLabel: string | null = null,
-): string {
-  if (!record) {
-    if (slotLabel !== null) {
-      return `No stored plan in slot "${slotLabel}" for this repository. Run /stereo:plan --slot ${slotLabel} first.\n`;
-    }
-    return 'No stored plan for this repository. Run /stereo:plan first.\n';
-  }
-
+// Shared by the single-slot view and the two-slot comparison so both stay
+// byte-consistent; the single-slot outputs are pinned byte-exactly in tests.
+function storedPlanMetadataLines(
+  record: StoredPairPlanState,
+  slotLabel: string | null,
+  includeSummary = false,
+): string[] {
   const verdict = storedPlanMetadataValue(record.verdict) ?? 'unknown';
   const round = storedPlanMetadataValue(record.round);
   const updatedAt = storedPlanMetadataValue(record.updatedAt);
@@ -771,6 +769,10 @@ export function renderStoredPlanState(
   }
 
   const lines = [`Stored plan (${headerParts.join(', ')})`];
+  const summary = storedPlanMetadataValue(record.summary);
+  if (includeSummary && summary) {
+    lines.push(`Summary: ${shorten(summary)}`);
+  }
   const model = storedPlanMetadataValue(record.model);
   const effort = storedPlanMetadataValue(record.effort);
   const threadId = storedPlanMetadataValue(record.threadId);
@@ -813,6 +815,21 @@ export function renderStoredPlanState(
     lines.push('Residual risks:', ...residualRisks.map((risk) => `- ${risk}`));
   }
 
+  return lines;
+}
+
+export function renderStoredPlanState(
+  record: StoredPairPlanState | null,
+  slotLabel: string | null = null,
+): string {
+  if (!record) {
+    if (slotLabel !== null) {
+      return `No stored plan in slot "${slotLabel}" for this repository. Run /stereo:plan --slot ${slotLabel} first.\n`;
+    }
+    return 'No stored plan for this repository. Run /stereo:plan first.\n';
+  }
+
+  const lines = storedPlanMetadataLines(record, slotLabel);
   const plan = typeof record.plan === 'string' ? record.plan : '(plan text missing)';
   const output = `${lines.join('\n')}\n\n---\n\n${plan}`;
   return output.endsWith('\n') ? output : `${output}\n`;
@@ -852,6 +869,40 @@ export function renderPlanSlotList(
     }
   }
   lines.push('Show one with /stereo:plan-state --slot <name>.');
+  return `${lines.join('\n')}\n`;
+}
+
+export interface PlanComparisonInput {
+  slot: string;
+  record: StoredPairPlanState;
+}
+
+export function renderPlanSlotComparison(
+  a: PlanComparisonInput,
+  b: PlanComparisonInput,
+  planDiff: PlanTextDiff,
+): string {
+  // Both slots are labeled, including `default`, so neither block can be
+  // mistaken for the other.
+  const lines = [
+    `Stored plan comparison (${a.slot} vs ${b.slot})`,
+    '',
+    ...storedPlanMetadataLines(a.record, a.slot, true),
+    '',
+    ...storedPlanMetadataLines(b.record, b.slot, true),
+    '',
+  ];
+
+  if (planDiff.identical) {
+    lines.push('Plan text: identical.');
+  } else if (planDiff.suppressed) {
+    lines.push(
+      `Plan diff (${a.slot} -> ${b.slot}): suppressed (a plan exceeds ${MAX_COMPARE_PLAN_LINES} lines or ${MAX_COMPARE_PLAN_CHARS} characters). Export each slot with /stereo:plan-state --slot <name> --open and diff externally.`,
+    );
+  } else {
+    lines.push(`Plan diff (${a.slot} -> ${b.slot}):`, planDiff.diff);
+  }
+
   return `${lines.join('\n')}\n`;
 }
 

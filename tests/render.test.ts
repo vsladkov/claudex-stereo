@@ -7,6 +7,7 @@ import {
   renderConfigReport,
   renderImplementState,
   renderJobStatusReport,
+  renderPlanSlotComparison,
   renderPlanSlotList,
   renderPlanReviewResult,
   renderReviewResult,
@@ -653,6 +654,72 @@ test('renderPlanSlotList renders empty and populated inventories byte-exactly', 
       'windows-lane',
     ),
     'Stored plans (3):\n- default | verdict: approve | round 2 | updated 2026-08-02T08:00:00.000Z | implemented 2026-08-02T08:30:00.000Z\n  Summary: Default implementation plan\n- windows-lane | verdict: needs-revision | round 3 | updated 2026-08-02T09:00:00.000Z | implementation record\n  Summary: Port the runtime state path behavior to Windows.\n- broken | unreadable\nShow one with /stereo:plan-state --slot <name>.\n',
+  );
+});
+
+test('renderPlanSlotComparison renders both metadata blocks and the plan diff byte-exactly', () => {
+  assert.equal(
+    renderPlanSlotComparison(
+      {
+        slot: 'rate-limit-opus',
+        record: {
+          verdict: 'approve',
+          round: 2,
+          updatedAt: '2026-08-02T08:00:00.000Z',
+          model: 'gpt-5.6-sol',
+          effort: 'max',
+          threadId: 'thr_opus',
+          summary: 'Draft the rate limiter with a token bucket.',
+          implementedAt: '2026-08-02T09:30:00.000Z',
+          openQuestions: [],
+          residualRisks: ['Burst traffic still needs a load test.'],
+          plan: '# Plan A\n',
+        },
+      },
+      {
+        slot: 'rate-limit-fable',
+        record: {
+          verdict: 'needs-revision',
+          round: 1,
+          updatedAt: '2026-08-02T08:15:00.000Z',
+          findings: [
+            { severity: 'high', title: 'The limiter shares one bucket across tenants' },
+            { severity: 'low', title: 'Document the retry-after header' },
+          ],
+          openQuestions: ['Per-tenant or global budget?'],
+          residualRisks: [],
+          plan: '# Plan B\n',
+        },
+      },
+      {
+        identical: false,
+        suppressed: false,
+        diff: '@@ -1,1 +1,1 @@\n-# Plan A\n+# Plan B',
+      },
+    ),
+    'Stored plan comparison (rate-limit-opus vs rate-limit-fable)\n\nStored plan (slot rate-limit-opus, verdict: approve, round 2, updated 2026-08-02T08:00:00.000Z)\nSummary: Draft the rate limiter with a token bucket.\nModel: gpt-5.6-sol@max · Thread: thr_opus\nImplemented: 2026-08-02T09:30:00.000Z\nOpen questions: none\nResidual risks:\n- Burst traffic still needs a load test.\n\nStored plan (slot rate-limit-fable, verdict: needs-revision, round 1, updated 2026-08-02T08:15:00.000Z)\nFindings (2):\n- high: The limiter shares one bucket across tenants\n- low: Document the retry-after header\nOpen questions:\n- Per-tenant or global budget?\nResidual risks: none\n\nPlan diff (rate-limit-opus -> rate-limit-fable):\n@@ -1,1 +1,1 @@\n-# Plan A\n+# Plan B\n',
+  );
+});
+
+test('renderPlanSlotComparison labels the default slot and reports identical plan text', () => {
+  assert.equal(
+    renderPlanSlotComparison(
+      { slot: 'default', record: { verdict: 'approve', plan: '# Same\n' } },
+      { slot: 'copy', record: { verdict: 'approve', plan: '# Same\n' } },
+      { identical: true, suppressed: false, diff: '' },
+    ),
+    'Stored plan comparison (default vs copy)\n\nStored plan (slot default, verdict: approve)\nOpen questions: none\nResidual risks: none\n\nStored plan (slot copy, verdict: approve)\nOpen questions: none\nResidual risks: none\n\nPlan text: identical.\n',
+  );
+});
+
+test('renderPlanSlotComparison reports a suppressed diff with the per-slot export hint', () => {
+  assert.equal(
+    renderPlanSlotComparison(
+      { slot: 'huge', record: { verdict: 'approve' } },
+      { slot: 'small', record: { verdict: 'approve' } },
+      { identical: false, suppressed: true, diff: '' },
+    ),
+    'Stored plan comparison (huge vs small)\n\nStored plan (slot huge, verdict: approve)\nOpen questions: none\nResidual risks: none\n\nStored plan (slot small, verdict: approve)\nOpen questions: none\nResidual risks: none\n\nPlan diff (huge -> small): suppressed (a plan exceeds 2000 lines or 1000000 characters). Export each slot with /stereo:plan-state --slot <name> --open and diff externally.\n',
   );
 });
 

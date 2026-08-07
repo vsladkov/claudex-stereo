@@ -6,6 +6,7 @@ import {
   normalizeRequestedModel,
   PAIR_DEFAULT_MODEL,
 } from '../../models/registry.ts';
+import { diffPlanTexts } from '../../shared/diff.ts';
 import { readStdinTextIfPiped } from '../../shared/fs.ts';
 import { optionalString, recordLike } from '../../shared/json.ts';
 import {
@@ -15,6 +16,7 @@ import {
   ensureStateDir,
   listPairPlanSlots,
   loadPairPlanState,
+  normalizePlanSlot,
   nowIso,
   planSlotOrDefault,
   readImplementStateFile,
@@ -34,7 +36,11 @@ import {
   executePlanReviewRun,
   normalizePlanReviewRound,
 } from '../../workflows/plan-review.ts';
-import { renderPlanSlotList, renderStoredPlanState } from '../../render/render.ts';
+import {
+  renderPlanSlotComparison,
+  renderPlanSlotList,
+  renderStoredPlanState,
+} from '../../render/render.ts';
 import type { PlanSlotSummary, StoredPairPlanState } from '../../render/render.ts';
 import {
   outputCommandResult,
@@ -208,17 +214,22 @@ export async function handlePlanState(
   argv: string[],
   deps: PlanStateDeps = defaultPlanStateDeps,
 ): Promise<void> {
-  const { options } = parseCommandInput(argv, {
+  const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ['cwd', 'slot'],
-    booleanOptions: ['json', 'list', 'open', 'clear', 'mark-implemented'],
+    booleanOptions: ['json', 'list', 'open', 'clear', 'mark-implemented', 'compare'],
   });
 
-  const actions = ['list', 'open', 'clear', 'mark-implemented'].filter((key) => options[key]);
+  const actions = ['list', 'open', 'clear', 'mark-implemented', 'compare'].filter(
+    (key) => options[key],
+  );
   if (actions.length > 1) {
-    throw new Error('Choose one of --list, --open, --clear, or --mark-implemented.');
+    throw new Error('Choose one of --list, --open, --clear, --mark-implemented, or --compare.');
   }
   if (options.list && Object.hasOwn(options, 'slot')) {
     throw new Error('--list covers every slot; drop --slot.');
+  }
+  if (options.compare && Object.hasOwn(options, 'slot')) {
+    throw new Error('--compare names both slots; drop --slot.');
   }
 
   const workspaceRoot = resolveCommandWorkspace(options);
@@ -248,6 +259,57 @@ export async function handlePlanState(
     outputCommandResult(
       { slots, implementStateSlot },
       renderPlanSlotList(slots, implementStateSlot),
+      options.json,
+    );
+    return;
+  }
+
+  if (options.compare) {
+    if (positionals.length !== 2) {
+      throw new Error('Provide exactly two slot names: --compare <slotA> <slotB>.');
+    }
+    const slotA = normalizePlanSlot(positionals[0]);
+    const slotB = normalizePlanSlot(positionals[1]);
+    if (slotA === slotB) {
+      throw new Error('Provide two different slot names to compare.');
+    }
+
+    const recordA = loadPairPlanState(workspaceRoot, slotA) as StoredPairPlanState | null;
+    const recordB = loadPairPlanState(workspaceRoot, slotB) as StoredPairPlanState | null;
+    if (!recordA || !recordB) {
+      if (!recordA && !recordB) {
+        throw new Error(
+          `No stored plans in slots "${slotA}" and "${slotB}" to compare. Run /stereo:plan --slot <name> first.`,
+        );
+      }
+      const missing = recordA ? slotB : slotA;
+      throw new Error(
+        `No stored plan in slot "${missing}" to compare. Run /stereo:plan --slot ${missing} first.`,
+      );
+    }
+
+    const planA = typeof recordA.plan === 'string' ? recordA.plan : '(plan text missing)';
+    const planB = typeof recordB.plan === 'string' ? recordB.plan : '(plan text missing)';
+    const planDiff = diffPlanTexts(planA, planB);
+    // Metadata only: shipping both plan bodies alongside the diff would put two
+    // 32 MiB-bounded texts in one document, including when the diff is
+    // suppressed. Each full plan stays reachable via --json --slot <name>.
+    const { plan: _planA, ...metadataA } = recordA;
+    const { plan: _planB, ...metadataB } = recordB;
+    outputCommandResult(
+      {
+        slots: [slotA, slotB],
+        a: { ...metadataA, slot: slotA },
+        b: { ...metadataB, slot: slotB },
+        planIdentical: planDiff.identical,
+        planDiffSuppressed: planDiff.suppressed,
+        planDiff: planDiff.diff,
+      },
+      renderPlanSlotComparison(
+        { slot: slotA, record: recordA },
+        { slot: slotB, record: recordB },
+        planDiff,
+      ),
       options.json,
     );
     return;
