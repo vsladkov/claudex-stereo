@@ -165,12 +165,17 @@ subagent_type: "stereo:implementer"
 model: "<sonnet|opus|haiku|fable>"
 run_in_background: false
 prompt: |
-  Apply only the requested file edits. Never request command execution.
-  [full plan, baseline dirty paths, and optional numbered fixes]
+  Implement the plan below. Your shell exists only to build the repository and run its tests
+  and static checks: fix the build and unit-test failures your changes introduced before
+  reporting, report suspected pre-existing failures instead of fixing them, and never claim a
+  result from a command you did not run. The orchestrator remains the authority for anything
+  not run on this host.
+  [full plan, baseline dirty paths, known pre-existing baseline failures, worktree target when
+  isolated, and optional numbered fixes]
 ```
 
-Validate that the report contains `Files touched`, `Plan steps completed`, and `Deviations`.
-Inspect the actual worktree rather than trusting the report's file list.
+Validate that the report contains `Files touched`, `Plan steps completed`, `Verification`, and
+`Deviations`. Inspect the actual worktree rather than trusting the report's file list.
 
 Implementation reviewer:
 
@@ -227,6 +232,12 @@ Agent result. If the harness omits either metric, record `usage unavailable` for
 metric instead of dropping it. Include these per-invocation metrics in the command's round note
 and final report wherever Codex per-invocation usage is reported.
 
+If a foreground agent is killed mid-turn — a session limit, a transport failure, an interrupted
+harness — resume it through its agent handle first: a resumed agent keeps its progress, and every
+edit it completed is already on disk, so never discard or redo that work. Re-invoke the role
+fresh only when resumption itself fails, and tell the fresh agent what the killed run already
+changed.
+
 For malformed agent output, retry the same selected agent once with the exact validation error and
 the full original input. If the retry is also malformed, ask whether to perform the step inline or
 stop without inferring a verdict. For an Agent tool or selected-model availability error, report
@@ -243,6 +254,17 @@ must carry the fully filled `implementationReviewBrief` either way, so resuming 
 history without removing payload cost and would weaken the cross-ecosystem reviewer's per-round
 fresh-task independence. A mode that runs exactly one review round, such as
 `/stereo:plan --review-only` or `/stereo:implement --review-only`, keeps no continuation handle.
+
+The same mechanics extend to the contained `stereo:implementer` across fix turns within one
+command run: keep its continuation handle from the implementation turn and continue it for a
+gate-fix or review-driven fix turn with a compact message carrying only the numbered fixes or
+attributed gate failures (with exit statuses and output tails) — the plan, baseline context, and
+conduct rules are already in its context and are not resent. Validate the same four-label report
+either way. When continuation is unsupported, errors, or stays malformed after one continued
+retry, re-invoke a fresh implementer with the complete brief — full plan, baseline-dirty paths,
+known pre-existing baseline failures, the worktree target and provisioning status when isolated,
+and the fixes — and keep its handle for later turns. A
+Codex implementer needs none of this: its fix turns already resume `implementationThreadId`.
 
 Round 1 always invokes the role's agent: `stereo:plan-reviewer` with the complete filled
 `planReviewBrief`, or `stereo:implementation-reviewer` with the complete filled

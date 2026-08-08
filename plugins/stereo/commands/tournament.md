@@ -2,7 +2,7 @@
 description: Race Claude and Codex implementers on an approved plan; hand back the winning delta
 argument-hint: '[--implementer <model>]... [--implementer-effort <none|minimal|low|medium|high|xhigh|max>]... [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--resume] [--slot <name>]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(npm:*), Bash(git:*), AskUserQuestion, Agent
+allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(npm:*), Bash(git:*), Bash(npx:*), Bash(pnpm:*), Bash(yarn:*), Bash(dotnet:*), Bash(cargo:*), Bash(go:*), Bash(make:*), Bash(python3:*), Bash(pytest:*), Bash(mvn:*), Bash(gradle:*), AskUserQuestion, Agent
 ---
 
 First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
@@ -120,8 +120,10 @@ Before launching anything, announce the lineup source as `explicit`,
 `default (workspace implementer default)`, or `default (built-in)`. Name the workspace selection
 when it supplied `c1` or was inert. State each contestant's label, route, selection, and effective
 effort (`not applicable` for Claude), plus the reviewer's final effective model and effort. State
-that Claude contestants are file-edits-only with no shell, name any obviously shell-requiring plan
-steps that will appear as deviations, and say that multiple Claude contestants run sequentially.
+each Claude contestant's conduct — file edits plus a build/test-scoped shell targeted at its own
+worktree, with unprovisioned worktrees reporting checks as not run — name any plan steps outside
+that scope that will appear as deviations, and say that multiple Claude contestants run
+sequentially.
 
 ## Preflight
 
@@ -222,6 +224,15 @@ Save the resulting absolute path as that contestant's `<worktreePath>`. Never pl
 worktree inside `<mainRoot>`. If any creation fails, remove every worktree already created with
 `git -C "<mainRoot>" worktree remove --force "<worktreePath>"`, report the exact creation or cleanup
 failure, and stop without launching a contestant.
+
+Provision each worktree the same symlink-first way as `/stereo:implement`'s isolated mode
+(orchestrator-executed `node -e "fs.symlinkSync(process.argv[1], process.argv[2], 'junction')"`
+from the main checkout's `node_modules` for npm-family repositories). A documented install is
+per-contestant cost: run one only when the plan builds or tests artifacts and symlinking is
+impossible; otherwise the worktree stays unprovisioned. Record each contestant's provisioning
+status in its state entry (`provisioning`: `symlink`, `install`, or `unprovisioned`) and state it
+in that contestant's prompt; on resume, a legacy entry without the field re-derives it by testing
+for `<worktreePath>/node_modules`.
 
 Immediately after every contestant worktree has been created and before the first launch, use the
 record action with every contestant at `status: pending`.
@@ -362,10 +373,12 @@ For each Claude contestant, in label order:
 
 2. Compose the complete contestant prompt in this order:
 
-   - Begin with the routing skill's fixed lead line:
+   - Begin with this fixed lead:
 
      ```text
-     Apply only the requested file edits. Never request command execution.
+     Implement the plan below in the worktree this prompt names. Your shell exists only to build
+     the repository and run its tests and static checks against that worktree; fix failures
+     before reporting, and never claim a result from a command you did not run.
      ```
 
    - Include the same `<task>` block written for the Codex contestants above, verbatim: use the
@@ -376,25 +389,34 @@ For each Claude contestant, in label order:
 
      ```text
      <verification_loop>
-     You have no shell and cannot run tests, builds, or any other gate. Never claim verification.
-     List every shell-requiring plan step under `Deviations`.
+     Build the repository and run the unit tests and static checks that exercise your changes
+     inside the worktree named in this task — target it explicitly with --prefix, directory
+     flags, or cd in the same command; fix the failures your changes introduced before reporting,
+     and report a failure you cannot attribute to your edits under Verification as suspected
+     pre-existing instead of fixing it. The worktree is a fresh
+     checkout, so dependencies may be absent; if a check cannot run, say so explicitly and never
+     report unverified work as verified. The orchestrator's staged gates remain authoritative.
      </verification_loop>
      ```
 
-   - Include this worktree-paths block, reusing `/stereo:implement`'s isolated-mode containment:
+   - Include this worktree-paths block, reusing `/stereo:implement`'s isolated-mode containment,
+     with the contestant's recorded provisioning status filled in:
 
      ```text
      <worktree_paths>
-     Use absolute paths under <worktreePath> for every Read, Glob, Grep, Edit, and Write operation.
-     Never read or write anything under <mainRoot>. The worktree is a clean checkout at
-     <baselineCommit>, so every change in it is this contestant's delta.
+     Use absolute paths under <worktreePath> for every Read, Glob, Grep, Edit, and Write
+     operation, and target every build or test command at the worktree explicitly. Never read,
+     write, or run anything against <mainRoot>. The worktree is a clean checkout at
+     <baselineCommit>, so every change in it is this contestant's delta. Provisioning status:
+     [provisioned (symlinked or installed dependencies) | unprovisioned — dependencies are
+     absent; report each check you cannot run as `- nothing ran` with the reason].
      </worktree_paths>
      ```
 
    - In place of `<compact_output_contract>`, require a compact plain-text agent report with the
-     exact labels `Files touched`, `Plan steps completed`, and `Deviations`.
+     exact labels `Files touched`, `Plan steps completed`, `Verification`, and `Deviations`.
 
-3. Validate those three labels through the routing skill. Record the Agent result's per-invocation
+3. Validate those four labels through the routing skill. Record the Agent result's per-invocation
    usage and duration, or `usage unavailable`. For `claude:inherit`, record the effective model
    reported by the Agent result, or `unavailable`. As soon as the invocation returns, use the
    tournament state update action with the complete contestant entry and `status: completed` or
@@ -488,22 +510,31 @@ It preserves every completed contestant's full delta after a losing worktree is 
 contestant with an empty patch as producing no delta and exclude it from review and selection. If
 every completed contestant is empty, report that result, remove all completed contestants'
 worktrees, print every patch path, retain and report any withdrawn contestant worktrees, and stop.
-Use the tournament state update action to save each contestant's `patchFile`; set `status: empty` for
-an empty delta.
+Use one tournament state update action carrying every completed contestant's `patchFile` (and
+`status: empty` where the delta is empty): updates merge `contestants[]` by label, so a single
+batched write covers the whole evidence pass.
 
 Detect byte-identical patch files and say so in the comparison instead of implying their deltas
 differ.
 
-Do not run host gates per contestant. Fresh worktrees commonly lack gitignored dependencies and
-generated artifacts, and paying the full suite cost for every candidate is not useful when the
-isolated result would only say `not runnable in the isolated worktree`. For every contestant set
-`{{HOST_RESULTS}}` to: host verification was not run in this worktree, and the reviewer must not
-treat the delta as verified. Run the complete gate set once in the main tree only after a successful
+Do not run host gates per contestant: paying the orchestrator's full battery for every candidate
+multiplies its cost by the field size to verify deltas that will mostly be discarded, and the one
+delta that survives gets the authoritative main-tree run after hand-back. For every contestant
+set `{{HOST_RESULTS}}` to: the orchestrator ran no gates in this worktree and the reviewer must
+not treat the delta as host-verified, plus the contestant's own reported checks labeled
+`contestant-reported checks` with the contestant's route stated beside the label — tournament
+never applies the implement/quick orchestrator labels to contestant self-reports. Run the
+complete gate set once in the main tree only after a successful
 hand-back.
 
 ## Per-contestant implementation review
 
-Review every non-empty completed contestant exactly once, strictly sequentially in contestant
+Review every non-empty completed contestant exactly once. With a Codex-routed reviewer, launch
+every per-contestant review task in label order — each with its own payload file and a fresh
+independent thread, exactly as below — then rotate-poll them to terminal like contestant jobs;
+the per-contestant briefs never mention another contestant, so concurrent execution changes
+nothing about their independence. With `claude:session` or a named-Claude reviewer, review
+strictly sequentially in contestant
 order. Read `${CLAUDE_PLUGIN_ROOT}/prompts/implementation-review.md` and fill it for that contestant
 without changing any other text:
 
@@ -517,7 +548,8 @@ without changing any other text:
   applied. Include the contestant's implementer report verbatim. Include `storedPlanFindings`
   verbatim when non-empty, labeled advisory when the stored verdict is `approve` and as known
   unapproved findings otherwise.
-- `{{HOST_RESULTS}}` = the not-run statement in **Evidence**.
+- `{{HOST_RESULTS}}` = the per-contestant statement defined in **Evidence** (orchestrator gates
+  not run; `contestant-reported checks` with the route stated).
 
 The review path is identical for both contestant routes because the delta is always the worktree
 diff computed above, so all four placeholder fills remain unchanged. The verbatim implementer
@@ -584,8 +616,10 @@ Present one comparison-table row per non-empty completed contestant. Include:
 
 For Codex use `storedJob.tokenUsage.job`; for named Claude use the Agent result. This applies to
 both contestants and reviewers. Print `usage unavailable` rather than omitting an unavailable
-metric. State beside the table that no candidate has passed host gates. A Claude contestant could
-not run any command at all, so its shell-requiring plan steps appear as deviations. Also flag
+metric. State beside the table that no candidate has passed the orchestrator's authoritative
+main-tree gates: contestant self-reports are `contestant-reported checks` only, never
+orchestrator-verified, and plan steps outside a contestant's build/test scope
+appear as deviations. Also flag
 byte-identical deltas.
 
 Print the comparison table before making or asking for any decision. Define the selectable
@@ -777,7 +811,9 @@ cleaning up retained paths.
 ## Post-hand-back verification and final report
 
 After any successful apply, whether user-confirmed or decisive and automatic, run the repository's
-identifiable host gates once in the main tree. For this repository run and record every command's
+identifiable host gates once in the main tree — the `authoritative host gates` for the applied
+delta, regardless of what any contestant reported. For this repository run and record every
+command's
 exact exit result:
 
 ```text
@@ -827,7 +863,10 @@ The final report includes:
   for an automatic success, the applied path list plus the tracked-path and newly-added-file revert
   instructions above
 - every retained worktree, every patch path, every cleanup failure, and the exact recovery commands
-- every main-tree gate command and exit result, or that gates did not run without a successful apply
+- every main-tree gate command and exit result labeled `authoritative host gates`, or that gates
+  did not run without a successful apply; contestant self-reports keep their
+  `contestant-reported checks` label and
+  never merge into the main-tree results
 - every implementer and reviewer invocation's usage and duration, using `usage unavailable` when
   omitted
 

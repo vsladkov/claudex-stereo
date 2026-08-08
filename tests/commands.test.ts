@@ -628,8 +628,10 @@ test('pair agents keep their role-specific tool and output contracts', () => {
   assert.deepEqual(fs.readdirSync(path.join(PLUGIN_ROOT, 'agents')).sort(), expectedAgents);
 
   const implementer = read('agents/implementer.md');
-  assert.match(implementer, /^tools:\s*Read, Glob, Grep, Edit, Write$/m);
-  assert.doesNotMatch(implementer.match(/^---\n[\s\S]*?\n---/)?.[0] ?? '', /\bBash\b/);
+  assert.match(implementer, /^tools:\s*Read, Glob, Grep, Edit, Write, Bash$/m);
+  const implementerFrontmatter = implementer.match(/^---\n[\s\S]*?\n---/)?.[0] ?? '';
+  assert.match(implementerFrontmatter, /\bBash\b/);
+  assert.doesNotMatch(implementerFrontmatter, /WebFetch|WebSearch/);
 
   const planReviewer = read('agents/plan-reviewer.md');
   assert.match(planReviewer, /schemas\/plan-review-output\.schema\.json/);

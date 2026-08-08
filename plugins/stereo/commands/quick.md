@@ -2,7 +2,7 @@
 description: Plan, review, implement, and verify one small task with independently routed Claude or Codex roles
 argument-hint: '[--isolated] [--slot <name>] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [--max-fix-rounds <n>] [small task description]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), AskUserQuestion, Agent
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), Bash(npx:*), Bash(pnpm:*), Bash(yarn:*), Bash(dotnet:*), Bash(cargo:*), Bash(go:*), Bash(make:*), Bash(python3:*), Bash(pytest:*), Bash(mvn:*), Bash(gradle:*), AskUserQuestion, Agent
 ---
 
 First Read `${CLAUDE_PLUGIN_ROOT}/skills/model-routing/SKILL.md` and apply its routing, foreground
@@ -47,7 +47,9 @@ After reading the routing skill, parse all arguments before repository work:
   Slot names are trimmed, lowercased, may contain only letters, digits, hyphens, and underscores,
   and must start with a letter or digit. Relay the CLI's validation error verbatim.
 - `--max-plan-rounds <n>` defaults to 2 and must be an integer from 1 to 6.
-- `--max-fix-rounds <n>` defaults to 2 and must be a positive integer.
+- `--max-fix-rounds <n>` defaults to 2 and must be a positive integer. Direct gate-fix turns and
+  review-driven fix turns both count toward it; the implementer's own inner-loop iterations never
+  do.
 - `--isolated` runs implementation, implementation review, and fixes in a throwaway detached git
   worktree outside the repository and hands the delta back as a user-confirmed patch. It never
   commits and never writes in the main working tree. The plan draft and every plan-review round
@@ -122,10 +124,13 @@ workspace default supplies a role's model, say so in the effective-role recap.
 
 ## Scope gate and draft
 
-Explore the repository read-only until the task can be grounded in exact files, symbols, callers,
-configuration, registration, and tests. Quick is for one small feature whose honest plan fits
+Explore the repository read-only just enough to judge the task's size and boundaries — which
+feature or subsystem it touches and roughly how many files. The routed planner performs the full
+grounding itself; do not duplicate it here. Quick is for one small feature whose honest plan fits
 roughly 120 lines. If it crosses features/subsystems or exceeds that bound, stop before review and
-direct the user to `/stereo:plan`.
+direct the user to `/stereo:plan`. When the size check did surface concrete grounding (files,
+symbols, tests), append it to `planDraftBrief` after the filled template as clearly labeled
+advisory context the planner must verify before relying on.
 
 Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-draft.md` and fill it without changing any other text:
 
@@ -259,10 +264,26 @@ Record `baselineCommit`, status, and all already-dirty paths. If dirty, ask whet
 commit/stash (recommended) or continue. In isolated mode, use the expanded question in **Isolated
 worktree mode** instead of asking twice. Mention an enabled stop-review gate.
 
-If the selected implementer is Claude, scan for command-requiring work beyond host verification:
-version bumps, dependency installation, code generation, migrations, or interactive/long-running
+Resolve the implementer next, before any paid preflight work, so its free filter can gate what
+follows. If the selected implementer is Claude, scan for command-requiring work outside the
+implementer's
+build/test/static-check scope: version bumps, dependency installation, code generation the
+repository's gates do not already run, migrations, network access, or interactive/long-running
 processes. If found, ask whether to switch to the command-capable `codex:sol` implementer, leave
-each command step user-owned, or stop. Never execute shell text on a Claude agent's behalf.
+each out-of-scope command step user-owned, or stop. The Claude implementer builds and tests inside
+its own turn but never runs the excluded command classes; never execute shell text on a Claude
+agent's behalf. A switch chosen here resolves the implementer before the snapshot or any worktree
+work runs, so neither is wasted on a stopped run.
+
+Then take the baseline gate snapshot, risk-matched to what it protects: always run the fast
+stage's static checks (for this repository `npm run typecheck`, `npm run lint`,
+`npm run format:check`, and `npm run check-version`), run the unit suite only when the baseline is
+dirty, and never run the heavy stage. Snapshot gates may run concurrently where the host affords
+it, like the fast stage. Record each gate's command, exit status, and a bounded
+output tail. Quick keeps the snapshot and all fix accounting in-session only — it writes no
+durable state, and an interrupted run restarts clean with a fresh snapshot. In isolated mode, the
+snapshot must describe the tree the pre-loop will classify: take it in the worktree after
+provisioning, per **Isolated worktree mode**, not on the main tree.
 
 ## Isolated worktree mode
 
@@ -292,7 +313,29 @@ review, and fixes run in the worktree.
    `<mainRoot>`. If creation fails, report the exact failure and stop without launching an
    implementer.
 
-3. **Companion routing.** Define `<isolationArgs>` as empty in every non-isolated run. In isolated
+3. **Dependency provisioning.** Provision the fresh worktree immediately after creation,
+   orchestrator-executed. Symlink the main checkout's installed dependencies when linkable — for
+   npm-family repositories:
+
+   ```bash
+   node -e "fs.symlinkSync(process.argv[1], process.argv[2], 'junction')" "<mainRoot>/node_modules" "<worktreePath>/node_modules"
+   ```
+
+   (`'junction'` degrades to a plain symlink off-Windows; this takes seconds and needs no
+   network, but shares the main checkout's mutable caches). If symlink creation fails or sharing
+   is unsafe for this repository, fall through to the repository's documented install command
+   with worktree-targeted flags — and run it only when the plan actually builds or tests
+   artifacts, never speculatively for a document-only plan. Otherwise the worktree stays
+   unprovisioned. Record which path was taken and state the worktree's provisioning status in
+   every implementer prompt.
+
+   After provisioning, take the baseline gate snapshot here — in the worktree, using the
+   worktree-gates step's native or fallback recipes — instead of on the main tree: static gates
+   only, since a fresh checkout at `HEAD` is never dirty and the unit suite is therefore never
+   snapshotted. A gate the recipes cannot run stays unsnapshotted, so its reds are unattributable,
+   consistent with its recorded provenance.
+
+4. **Companion routing.** Define `<isolationArgs>` as empty in every non-isolated run. In isolated
    mode it is:
 
    ```text
@@ -304,12 +347,12 @@ review, and fixes run in the worktree.
    `/stereo:status`, `/stereo:result`, and `/stereo:cancel` continue to work unchanged from the
    main repository, and no second worktree-keyed broker is started.
 
-4. **Post-turn containment guard.** After every implementation or fix turn, run
+5. **Post-turn containment guard.** After every implementation or fix turn, run
    `git -C "<mainRoot>" status --porcelain=v1 --untracked-files=all` and compare its exact path set
    with the recorded baseline-dirty set. Any new main-tree path means the implementer wrote outside
    the worktree: stop, report the paths verbatim, and do not continue the loop. Codex-reported
    `touchedFiles` are absolute to the worktree; do not mistake them for main-tree writes.
-5. **Review and verification target.** Use `git -C "<worktreePath>" ...` for every diff, status,
+6. **Review and verification target.** Use `git -C "<worktreePath>" ...` for every diff, status,
    and file inspection. `{{BASELINE_CONTEXT}}` must say that the delta lives in the isolated
    worktree at `<worktreePath>`, provide its `baselineCommit`, and say that fix `file` values remain
    repository-relative and are identical in both trees. For a named-Claude or `claude:session`
@@ -319,13 +362,24 @@ review, and fixes run in the worktree.
    that limitation in the round note. A contained `stereo:implementer` also receives absolute
    worktree paths for every Edit, Write, and Read operation. If its Edit or Write is denied outside
    the main workspace, stop and report the denial instead of falling back to the main tree.
-6. **Host gates.** Run repository gates with the worktree as their working directory. For npm
-   projects use `npm --prefix "<worktreePath>" test`, and the corresponding `npm --prefix` form for
-   every other script. If a gate cannot run because gitignored dependencies or generated artifacts
-   are absent, record its exact result as `not runnable in the isolated worktree`, carry it into
-   `{{HOST_RESULTS}}` and the final report, and do not call it passed. After a confirmed hand-back,
-   rerun the complete gate set in the main tree before the final report.
-7. **Delta hand-back.** At every terminal exit—accepted full phase, safeguard stop, or max-rounds
+7. **Worktree gates.** Run repository gates with the worktree as their working directory. A
+   provisioned worktree runs the inner loop and the fast stage natively: for npm projects use
+   `npm --prefix "<worktreePath>" test`, and the corresponding `npm --prefix` form for every other
+   script. An unprovisioned worktree falls back to the main checkout's toolchain per gate,
+   expressed through command forms the frontmatter grants cover — for this repository: run the
+   format check as
+   `node "<mainRoot>/node_modules/prettier/bin/prettier.cjs" --check --ignore-path "<worktreePath>/.gitignore" "<worktreePath>"`;
+   run the typecheck by
+   generating the codegen output into the worktree and then
+   `node "<mainRoot>/node_modules/typescript/bin/tsc" --noEmit -p "<worktreePath>/tsconfig.json" --typeRoots "<mainRoot>/node_modules/@types"`;
+   record `lint` as not runnable (its flat config resolves plugins through a local
+   `node_modules`). A repo-specific codegen tool (here the `codex` CLI) may still prompt; that is
+   inherent to per-repository toolchains. Record per gate whether it ran natively, through the main toolchain, or not at
+   all; record anything that cannot run as `not runnable in the isolated worktree`, carry it into
+   `{{HOST_RESULTS}}` and the final report, and do not call it passed. Every pre-hand-back result
+   is a `provisional worktree check`; the post-hand-back main-tree rerun is authoritative. After a
+   confirmed hand-back, rerun the complete fast stage in the main tree before the final report.
+8. **Delta hand-back.** At every terminal exit—accepted full phase, safeguard stop, or max-rounds
    stop—create a patch under the routing skill's temporary-directory rule, never inside either
    repository tree:
 
@@ -359,7 +413,7 @@ review, and fixes run in the worktree.
    user-chosen `git reset -- <paths>` followed by `git checkout -- <paths>`; do not run that
    recovery automatically.
 
-8. **Cleanup.** Only after the user confirms the patch landed (or the patch was empty), run
+9. **Cleanup.** Only after the user confirms the patch landed (or the patch was empty), run
    `git -C "<mainRoot>" worktree remove --force "<worktreePath>"`. In every other case print
    `<worktreePath>`, `<patchFile>`, and that exact removal command, and say the worktree was
    intentionally left in place.
@@ -395,7 +449,21 @@ Only make changes the plan calls for. Do not commit, push, or touch unrelated fi
 Implement the whole plan before stopping. Report any impossible step explicitly.
 </completeness_contract>
 <verification_loop>
-Run the repository's relevant tests or build and fix regressions.
+[When not isolated: Build the repository and run the unit tests and static checks that exercise
+your changes; fix the failures your changes introduced before reporting, and report a failure you
+cannot attribute to your edits under Verification as suspected pre-existing instead of fixing it.
+Iterate with targeted tests and finish with one full
+unit pass when your runtime can execute it truthfully; skip anything needing subprocess, socket,
+network, or environment access your runtime lacks and say so. The orchestrator's staged gates are
+authoritative for anything you could not run; report exactly what ran, its results, and what
+could not run, and never report unverified work as verified.]
+[When isolated: Build the repository and run the unit tests and static checks that exercise your
+changes inside the worktree named in this task — target it explicitly with --prefix, directory
+flags, or cd in the same command; fix the failures your changes introduced before reporting, and
+report a failure you cannot attribute to your edits under Verification as suspected pre-existing
+instead of fixing it. The worktree is a fresh
+checkout, so dependencies may be absent; if a check cannot run, say so explicitly and never
+report unverified work as verified. The orchestrator's staged gates remain authoritative.]
 </verification_loop>
 <compact_output_contract>
 Report changes, touched files, verification results, and deviations with reasons.
@@ -431,7 +499,21 @@ Only make changes the plan calls for. Do not commit, push, or touch unrelated fi
 Implement the whole plan before stopping. Report any impossible step explicitly.
 </completeness_contract>
 <verification_loop>
-Run the repository's relevant tests or build and fix regressions.
+[When not isolated: Build the repository and run the unit tests and static checks that exercise
+your changes; fix the failures your changes introduced before reporting, and report a failure you
+cannot attribute to your edits under Verification as suspected pre-existing instead of fixing it.
+Iterate with targeted tests and finish with one full
+unit pass when your runtime can execute it truthfully; skip anything needing subprocess, socket,
+network, or environment access your runtime lacks and say so. The orchestrator's staged gates are
+authoritative for anything you could not run; report exactly what ran, its results, and what
+could not run, and never report unverified work as verified.]
+[When isolated: Build the repository and run the unit tests and static checks that exercise your
+changes inside the worktree named in this task — target it explicitly with --prefix, directory
+flags, or cd in the same command; fix the failures your changes introduced before reporting, and
+report a failure you cannot attribute to your edits under Verification as suspected pre-existing
+instead of fixing it. The worktree is a fresh
+checkout, so dependencies may be absent; if a check cannot run, say so explicitly and never
+report unverified work as verified. The orchestrator's staged gates remain authoritative.]
 </verification_loop>
 <compact_output_contract>
 Report changes, touched files, verification results, and deviations with reasons.
@@ -486,6 +568,10 @@ Latest unapproved review findings:
 
 Both variants retain all four safety/output contracts from the approved templates.
 
+When the baseline gate snapshot recorded any red gate, also append inside every variant's task
+block, filled per red gate and shared verbatim with `/stereo:implement`:
+`Known pre-existing baseline failures (not yours to fix; leave them and report them under Verification): [gate command, exit status, output tail]`.
+
 Poll and fetch through the routing skill. If resume fails, or claimed changes have neither
 `touchedFiles` nor an actual delta, retry once fresh with the same truthful full prompt. Adopt the
 latest implementation payload's thread only as `implementationThreadId`. Record every Codex
@@ -495,16 +581,86 @@ implementation or retry invocation's per-job usage from `storedJob.tokenUsage.jo
 ### Claude implementer
 
 Use the routing skill's foreground `stereo:implementer` template with the plan, baseline-dirty
-paths, `latestPlanFindings` when non-empty, and user-owned steps. Frame those findings as original
+paths, the known-pre-existing-baseline-failures block when the snapshot recorded any red gate
+(same wording as the Codex variant), `latestPlanFindings` when non-empty, and user-owned steps. In isolated mode, the prompt
+also names `<worktreePath>`, its `baselineCommit`, and its provisioning status, and requires
+worktree-targeted command forms (`npm --prefix "<worktreePath>" ...`, directory flags, or `cd`
+within the same command) for every build and test run. Frame those findings as original
 unapproved findings after `Implement anyway`; otherwise use the same advisory findings heading the
 approved Codex payloads use. After every invocation, record the Agent result's token usage and
 duration (or `usage unavailable`), compare HEAD with `baselineCommit`, and inspect the actual
 delta. Stop and retract the never-commit claim if HEAD moved.
 
-After either implementer, run identifiable host tests/builds and record commands and results. In
-isolated mode, run them per **Isolated worktree mode**'s host-gates step.
+## Staged verification and gate-fix pre-loop
+
+Verification after either implementer is staged and route-dependent; in isolated mode run it per
+**Isolated worktree mode**'s worktree-gates step. The fast stage is build, unit tests, and static
+checks — for this repository `npm test`, `npm run typecheck`, `npm run lint`,
+`npm run format:check`, and `npm run check-version`; independent gates may run concurrently where
+the host affords it. The heavy stage is the repository's documented environment verification
+(this repository declares none) and runs strictly after the accepted implementation review, never
+before it and never concurrently with it; it never re-runs unit tests.
+
+Pre-review verification follows the implementer's route. After a Claude-routed turn, its shell
+ran on this host, so its per-command reported results are trusted as `host-run implementer
+verification`: re-run only the cheap static checks plus any gate its report marks not-run, and
+never re-run unit tests its report shows green with exit statuses. After a Codex-routed turn,
+in-sandbox results are `sandbox verification (advisory)` — sandbox greens have shipped host
+reds — so run the complete fast stage. Label orchestrator-run results `authoritative host gates`
+(`provisional worktree checks` when they ran in the worktree) and never merge
+implementer-reported checks into them.
+
+Classify each red fast-stage gate against the in-session baseline snapshot, at gate level:
+snapshotted green, now red — newly introduced and direct-fixable here; snapshotted red —
+pre-existing, never fixed and never a license to edit the listed baseline-dirty paths, both
+output tails carried to the reviewer; never snapshotted (the unit suite over a clean baseline,
+every heavy-stage red) — unattributable, never direct-fixed: a reviewer round diagnoses it first,
+and fix turns follow only for reviewer-confirmed delta-caused failures.
+
+Budgets for newly-introduced reds: mechanical failures (formatting, lint, type errors, version
+sync) get at most 2 direct fix turns; behavioral failures (failing test assertions) get exactly
+1; a mixed episode caps at 2 turns total. Verification between and after turns stays
+route-dependent — the trust rule is not suspended inside the pre-loop. After each direct turn,
+check only the previously red gates: trust a Claude-routed turn's report showing them green with
+exit statuses (re-running just the static ones among them plus anything reported not-run), and
+re-run them after a Codex-routed turn. Once they are clear, finish with the route-dependent
+pre-review verification — the complete fast stage after a Codex-routed turn, the static checks
+plus not-run items after a Claude-routed one — before any review round. If reds
+persist at the episode cap, ask the gate-specific question: one more direct turn, reviewer
+diagnosis now, or stop and report. The cap blocks only fix turns — a green delta always proceeds
+to review. Every direct turn counts toward `--max-fix-rounds`, tracked in-session.
+
+A direct fix turn reuses the implementation fix launch unchanged. For a Codex-routed implementer,
+write the same fix payload with its task block swapped for this shared gate-fix task block, then
+use the Codex fix launch below with the same thread, model, effort, and `<isolationArgs>`:
+
+```text
+<task>
+Fix the newly-introduced gate failures below in this repository. Each entry names the gate
+command, its exit status, and its output tail. Change only what fixing them requires, keep all
+other behavior unchanged, and never edit the listed baseline-dirty paths.
+
+[attributed failing gates with command, exit status, and output tail]
+
+Baseline-dirty paths (never edit):
+[baseline-dirty paths, or `none`]
+
+[When isolated: The working root for this task is <worktreePath>, a detached worktree at
+<baselineCommit>. Do not modify any other directory.]
+</task>
+```
+
+For a Claude-routed implementer, apply the routing skill's implementer continuation rule:
+continue the same implementation agent with only the attributed failures as numbered findings;
+re-invoke it fresh with the routing skill's complete brief only when
+continuation is unsupported or fails, and report which happened. Escalation briefs to the
+reviewer carry the episode history and the pre-existing context tails.
 
 ## Implementation-review and fix loop
+
+The loop is entered through the gate-fix pre-loop: the reviewer receives a verified delta, an
+explicitly labeled escalation, or an unattributable-red diagnosis request — never raw compiler
+output the pre-loop could have attributed first.
 
 Build input from the plan, baseline, baseline-dirty paths, complete current delta, implementer
 report, host results, and `latestPlanFindings`. The canonical result is
@@ -535,8 +691,14 @@ Route each review:
     `<worktreePath>`, provide its `baselineCommit`, and say that fix `file` values remain
     repository-relative and identical in both trees.
   - `{{REVIEW_CONTEXT}}` = the current `implementationReviewHistory`.
-  - `{{HOST_RESULTS}}` = every named host-verification command and its exact exit result/output
-    summary for the latest delta.
+  - `{{HOST_RESULTS}}` = every named verification command and its exact exit result/output
+    summary for the latest delta, grouped under its route-specific label — `authoritative host
+gates`, `host-run implementer verification`, `sandbox verification (advisory)`, or
+    `provisional worktree checks` — plus the red-gate classifications, episode history, and
+    pre-existing baseline tails when any exist. The implementer-reported group may cite the
+    verbatim report's `Verification` section in `{{REVIEW_CONTEXT}}` instead of restating its
+    lines. Implementer-reported checks never merge into
+    orchestrator results.
     Use the resulting `implementationReviewBrief` verbatim for the selected route.
 - `claude:session`: apply `implementationReviewBrief` inline.
 - Named Claude round 1: use `implementationReviewBrief` as the routing skill's
@@ -575,15 +737,29 @@ Fix the review findings below in this repository. Keep all other behavior unchan
 [numbered fixes]
 </task>
 <verification_loop>
-Run the repository's relevant tests or build and fix regressions.
+[When not isolated: Build the repository and run the unit tests and static checks that exercise
+your changes; fix the failures your changes introduced before reporting, and report a failure you
+cannot attribute to your edits under Verification as suspected pre-existing instead of fixing it.
+Iterate with targeted tests and finish with one full
+unit pass when your runtime can execute it truthfully; skip anything needing subprocess, socket,
+network, or environment access your runtime lacks and say so. The orchestrator's staged gates are
+authoritative for anything you could not run; report exactly what ran, its results, and what
+could not run, and never report unverified work as verified.]
+[When isolated: Build the repository and run the unit tests and static checks that exercise your
+changes inside the worktree named in this task — target it explicitly with --prefix, directory
+flags, or cd in the same command; fix the failures your changes introduced before reporting, and
+report a failure you cannot attribute to your edits under Verification as suspected pre-existing
+instead of fixing it. The worktree is a fresh
+checkout, so dependencies may be absent; if a check cannot run, say so explicitly and never
+report unverified work as verified. The orchestrator's staged gates remain authoritative.]
 </verification_loop>
 <compact_output_contract>
 Report which findings were fixed, how, and what verification ran.
 </compact_output_contract>
 ```
 
-The four implementer contract bodies are shared verbatim across `/stereo:implement` and
-`/stereo:quick` and must be edited together.
+The four implementer contract bodies and the gate-fix task block are shared verbatim across
+`/stereo:implement` and `/stereo:quick` and must be edited together.
 
 Then launch:
 
@@ -591,17 +767,33 @@ Then launch:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json --write --thread <implementationThreadId> --model <effectiveModel> <effortArg> <isolationArgs> --prompt-file "<payloadFile>"
 ```
 
-For Claude fixes, use the same named implementer and model with the full plan and fixes. Recheck
-HEAD and delta. After every fix, rerun host checks, update every prior fix's
+For Claude fixes, apply the routing skill's implementer continuation rule: continue the same
+implementation agent with only the numbered fixes; re-invoke it fresh with the same named
+implementer and model and the routing skill's complete brief only when continuation is
+unsupported or fails, and
+report which happened. Recheck
+HEAD and delta. A review-driven fix turn counts toward `--max-fix-rounds` like a direct one.
+After every fix, route the delta back through the route-dependent pre-review verification, update
+every prior fix's
 `resolved`/`unresolved` status for the next `{{REVIEW_CONTEXT}}`, and invoke the selected reviewer.
 
-Quick pauses after <maxFixRounds> fix rounds. Show remaining fixes and ask whether to send one more
+Quick pauses when fix turns reach <maxFixRounds>. Show remaining fixes and ask whether to send one
+more
 implementer round, let Claude fix directly, or stop. Do not silently exceed the cap.
 
 For every original unapproved plan finding, track `resolved` only when delta/tests prove it;
 otherwise `unresolved`.
 
-After an accepted implementation review and before the final report, run:
+After the accepted implementation review, run the repository's documented heavy stage — strictly
+after acceptance, before the marker, with no unit re-run inside it; where the repository declares
+none (as here), the stage is a no-op. A heavy red is unattributable by construction: a further
+reviewer round — continued where the route supports it, fresh otherwise — diagnoses it first; a
+reviewer-confirmed delta-caused failure re-enters the fix
+chain (fix turn, route-dependent pre-review verification, further review round, heavy stage
+again), each turn counting toward the cap; a pre-existing or undiagnosable heavy red takes
+not-verified semantics — report it and skip the marker.
+
+After the accepted review and a green (or absent) heavy stage, and before the final report, run:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implemented --json <slotArg>
@@ -609,14 +801,20 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implem
 
 Report a marker failure but never fail Quick because of it. Do not mark the plan until the full
 implementation-review phase is accepted. In isolated mode, run the marker only after the hand-back
-resolves to an applied or empty patch; when the user discarded the delta, skip the marker and say
-so.
+resolves to an applied or empty patch AND the authoritative post-hand-back main-tree rerun is
+green; an empty patch skips that rerun (nothing was applied) and counts as applied-and-green
+here; when the rerun is red, report not-verified and skip the marker; when the user discarded
+the delta, skip the marker and say so.
 
 ## Final report
 
-Report selected roles, fix rounds, attributed files, host results, deviations, user-owned steps,
+Report selected roles, every fix turn (direct gate-fix and review-driven, with the gates or
+findings that drove it), attributed files, verification results itemized by stage under their
+route-specific labels, every pre-existing or unattributable red and its disposition, deviations,
+user-owned steps,
 open questions, residual risks, and per-invocation usage/duration for every draft, plan-review,
-implementer, fix, and implementation-review turn. Use `usage unavailable` when metrics were
+implementer, fix, and implementation-review turn. Never present an implementer-reported check as
+an orchestrator gate result. Use `usage unavailable` when metrics were
 omitted. For Codex turns use `storedJob.tokenUsage.job`; for named Claude turns use the Agent
 result's usage and duration. Label `storedJob.tokenUsage.thread` cumulative when shown and never
 compare it with one Claude invocation. If unapproved implementation was chosen, list every
@@ -626,10 +824,12 @@ original finding with status and evidence. Name the stored plan slot and, for a 
 Include `implementationThreadId` and `codex resume <implementationThreadId>` only when Codex
 implemented. Label all other thread ids by role.
 
-For an isolated run, also report the worktree path, patch file, hand-back decision and result,
+For an isolated run, also report the worktree path, its provisioning path (symlink, documented
+install, or unprovisioned), patch file, hand-back decision and result,
 including `staged, not committed` on success and every conflicted path on failure. Say whether the
-worktree was removed and list every gate recorded as `not runnable in the isolated worktree` plus
-the result of its post-hand-back main-tree rerun.
+worktree was removed and give each worktree gate's provenance — native, main toolchain, or
+`not runnable in the isolated worktree` — plus
+the result of its authoritative post-hand-back main-tree rerun.
 
 Give rollback guidance relative to the baseline without erasing pre-existing dirty paths. State
 nothing was committed or pushed only if HEAD is unchanged; otherwise retract that claim. Never
