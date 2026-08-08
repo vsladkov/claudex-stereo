@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.44.0
+
+- Give the Claude implementer a shell scoped to building and testing, with tool parity across
+  ecosystems: it builds the repository, runs the unit tests and static checks that exercise its
+  changes, and fixes the failures its changes introduced inside its own turn — failures it cannot
+  attribute to its edits are reported as suspected pre-existing instead of fixed — and its report
+  carries a new `Verification` section listing every command with its exit status. Later fix
+  turns continue the same agent with just the numbered findings instead of a full re-brief
+- Stage orchestrator verification and make it route-dependent: build and unit results an
+  implementer produced on the host are trusted without a redundant re-run (only the cheap static
+  checks repeat before review), sandbox results stay advisory and get the complete fast battery,
+  and a repository-declared heavy stage (integration, end-to-end, real runs) executes strictly
+  after an accepted implementation review, never re-running unit tests
+- Attribute red gates instead of blindly fixing them: a risk-matched baseline snapshot (static
+  checks always, the unit suite only over a dirty baseline, taken inside the worktree for
+  isolated runs) classifies each failure; a bounded gate-fix pre-loop repairs newly-introduced
+  reds before review, pre-existing and unattributable reds route to reviewer diagnosis, and
+  fix-turn accounting is durable across resumed sessions, including orphan-job detection and
+  explicit lifecycle states for every isolated hand-back outcome
+- Provision isolated worktrees symlink-first so their gates run natively, with main-toolchain
+  fallback recipes and per-gate provenance (native, main toolchain, or not run) when provisioning
+  is impossible
+- Extend tournament contestants with the same shell-capable, worktree-targeted conduct and
+  provisioning, label their self-reported checks distinctly from orchestrator gates, and review
+  contestants concurrently under a Codex-routed reviewer
+- Add common runner families (npx, pnpm, yarn, dotnet, cargo, go, make, python3, pytest, mvn,
+  gradle) to the implementation commands' allowed tools, and trim Quick's inline scope gate to a
+  size check so the routed planner no longer duplicates its exploration
+
 ## 1.43.0
 
 - Compare two stored plan slots: `plan-state --compare <slotA> <slotB>` (surfaced through
