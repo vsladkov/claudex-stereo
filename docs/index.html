@@ -1371,8 +1371,8 @@
         <div class="workflow-visual" role="group" aria-labelledby="pair-workflow-title">
           <h2 id="pair-workflow-title" class="visually-hidden">The pair workflow</h2>
           <div class="duo-heads" aria-hidden="true">
-            <div class="h c"><b>CLAUDE</b><span>Plan · Challenge · Gate</span></div>
-            <div class="h x"><b>CODEX</b><span>Build</span></div>
+            <div class="h c"><b>CLAUDE</b><span>Plan · Build</span></div>
+            <div class="h x"><b>CODEX</b><span>Challenge · Gate</span></div>
           </div>
           <ol class="duo-steps">
             <li class="side-c">
@@ -1437,9 +1437,9 @@
               </span>
               <div class="duo-card">
                 <span class="stepnum">03 · BUILD</span>
-                <h3>Claude builds in a contained file-edit agent</h3>
+                <h3>Claude builds and verifies in a contained agent</h3>
                 <p>
-                  Repository checks run before the review gate.
+                  The delta is built and tested before the review gate — in any-language repos.
                   <code>claude:opus</code>
                 </p>
               </div>
@@ -1557,7 +1557,7 @@
 
 <span class="d">&gt;</span> /stereo:implement
 <span class="c">◆ implementer claude:opus</span> <span class="d">— 14 files changed</span>
-<span class="d">◆ host checks — tests</span> <span class="ok">✓</span> <span class="d">lint</span> <span class="ok">✓</span> <span class="d">typecheck</span> <span class="ok">✓</span>
+<span class="d">◆ implementer-run tests</span> <span class="ok">✓</span> <span class="d">· static checks</span> <span class="ok">✓</span>
 <span class="x">◆ implementation-reviewer codex:sol</span> <span class="d">— acceptable · 0 fixes</span>
 <span class="ok">✓</span> done <span class="d">— nothing committed; review and commit yourself</span></pre>
           </div>
@@ -1962,11 +1962,11 @@
           optional in commands, and tool output prints resolved model ids (<code>codex:sol</code>
           runs <code>gpt-5.6-sol</code>). Flags matching the defaults are omitted, so the default
           selection is just the two bare commands. The implementer defaults to the contained
-          <code>claude:opus</code> file-edit agent; a Codex implementer instead builds inside the
-          stored plan-review thread when one exists. <code>claude:session</code> is not offered for
-          the implementer — Claude writes always run in a contained agent. Trust a third-party
-          provider with implementation work only after a small
-          <code>--plan-reviewer codex:&lt;alias&gt;</code> round.
+          <code>claude:opus</code> agent, which builds and tests its own changes; a Codex
+          implementer instead resumes the stored plan-review thread when it is the model that
+          produced it. <code>claude:session</code> is not offered for the implementer — Claude
+          writes always run in a contained agent. Trust a third-party provider with implementation
+          work only after a small <code>--plan-reviewer codex:&lt;alias&gt;</code> round.
         </p>
         <details class="routing-defaults">
           <summary>View the default model matrix</summary>
