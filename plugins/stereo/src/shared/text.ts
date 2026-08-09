@@ -28,7 +28,10 @@ export function firstMeaningfulLine(text: unknown, fallback: string): string {
 
 export function outputResult(value: unknown, asJson: unknown): void {
   if (asJson) {
-    console.log(JSON.stringify(value, null, 2));
+    // Compact on purpose: every consumer parses this (the orchestrating
+    // model, tests), and 2-space indentation taxed large payloads with
+    // ~15-30% pure-structure tokens. The error path is already compact.
+    console.log(JSON.stringify(value));
   } else {
     process.stdout.write(value as string);
   }

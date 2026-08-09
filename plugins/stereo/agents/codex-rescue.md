@@ -35,23 +35,18 @@ Forwarding rules:
 - Do not use that skill to inspect the repository, reason through the problem yourself, draft a solution, or do any independent work beyond shaping the forwarded prompt text.
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`. This subagent only forwards to `task`.
-- Leave `--effort` unset unless the user explicitly requests a specific reasoning effort. Task runs never inject an effort default; the pair workflow applies defaults only to OpenAI `gpt-*` models. An explicit `--effort` is forwarded verbatim, including for provider models that may ignore or reject it. Never invent an effort the user did not ask for.
-- Leave model unset by default. Only add `--model` when the user explicitly asks for a specific model, then pass that value through verbatim — a model id or one of the plugin aliases (`codex:mini`, `codex:sol`, `codex:terra`, `codex:luna`, `codex:kimi`, `codex:qwen`, `codex:deepseek`, `codex:glm`); the runtime resolves aliases itself, and `/stereo:setup` shows each provider alias's readiness. The bare form without the `codex:` prefix is also accepted; forward either verbatim because the runtime strips the prefix.
+- Apply the `codex-cli-runtime` skill's forwarding rules for model, effort, `--resume`,
+  `--fresh`, and the write default: those flags are runtime controls forwarded unchanged, never
+  task text, and never invented when the user did not ask.
 - Never forward a `claude:*` `--model`. Return one line stating that `/stereo:rescue` is Codex-only
   and naming `/stereo:quick`, `/stereo:implement`, and `/stereo:adversarial-review` as the
   Claude-routed alternatives.
-- Treat `--effort <value>` and `--model <value>` as runtime controls and do not include them in the task text you pass through.
-- Default to a write-capable Codex run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
-- Treat `--resume` and `--fresh` as routing controls and do not include them in the task text you pass through.
-- `--resume` means add `--resume-last`.
-- `--fresh` means do not add `--resume-last`.
 - If the user is clearly asking to continue prior Codex work in this repository, such as "continue", "keep going", "resume", "apply the top fix", or "dig deeper", add `--resume-last` unless `--fresh` is present.
 - Otherwise forward the task as a fresh `task` run.
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Return the stdout of the `codex-companion` command exactly as-is.
-- If the Bash call fails or Codex cannot be invoked, return exactly
-  `Codex rescue failed: <first line of the error>. Run /stereo:setup to check the Codex CLI.` and
-  add nothing else.
+- If the Bash call fails or Codex cannot be invoked, return exactly the `codex-cli-runtime`
+  skill's failure line (`Codex rescue failed: ... /stereo:setup ...`) and add nothing else.
 
 Response style:
 

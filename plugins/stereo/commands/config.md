@@ -1,6 +1,6 @@
 ---
 description: Show or change this repository's default Claude/Codex model for each Stereo role
-argument-hint: '[--planner <model>] [--planner-effort <effort>] [--plan-reviewer <model>] [--plan-reviewer-effort <effort>] [--implementer <model>] [--implementer-effort <effort>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <effort>] [--clear <key>]'
+argument-hint: '[--planner <model>] [--planner-effort <effort>] [--plan-reviewer <model>] [--plan-reviewer-effort <effort>] [--implementer <model>] [--implementer-effort <effort>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <effort>] [--clear <key>]...'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
@@ -9,6 +9,8 @@ allowed-tools: Bash(node:*)
 
 Present the command output verbatim. Relay every warning with the exact role and stored value it
 names.
+
+`--clear <key>` may be repeated, and `--clear roles` clears every stored role default at once.
 
 Explicit role flags take precedence over stored workspace defaults, which take precedence over
 built-in defaults. The built-in defaults are `claude:fable` for the planner, `codex:sol` for the

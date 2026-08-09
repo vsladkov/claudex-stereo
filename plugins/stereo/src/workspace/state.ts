@@ -146,7 +146,19 @@ function stripIndexOnlyFields(job: JobRecord): JobRecord {
   return indexJob;
 }
 
+// Every state-path resolver funnels through this key, and the raw resolution
+// costs a `git rev-parse` subprocess plus a realpath per call — multiplied to
+// ~15 spawns per progress tick and hundreds per status wait before this
+// cache. A cwd's workspace key is stable for the life of a process (moving a
+// repository out from under a live CLI/worker is not a supported operation),
+// so memoize per cwd.
+const workspaceStateKeyCache = new Map<string, string>();
+
 function resolveWorkspaceStateKey(cwd: string): string {
+  const cached = workspaceStateKeyCache.get(cwd);
+  if (cached !== undefined) {
+    return cached;
+  }
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   let canonicalWorkspaceRoot = workspaceRoot;
   try {
@@ -158,7 +170,9 @@ function resolveWorkspaceStateKey(cwd: string): string {
   const slugSource = path.basename(workspaceRoot) || 'workspace';
   const slug = slugSource.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
   const hash = createHash('sha256').update(canonicalWorkspaceRoot).digest('hex').slice(0, 16);
-  return `${slug}-${hash}`;
+  const key = `${slug}-${hash}`;
+  workspaceStateKeyCache.set(cwd, key);
+  return key;
 }
 
 // Ephemeral state must die with the plugin install. Only broker.json belongs
@@ -386,9 +400,24 @@ export function loadState(cwd: string): StereoState {
       },
       jobs: Array.isArray(parsed.jobs) ? parsed.jobs.map(stripIndexOnlyFields) : [],
     };
-  } catch {
+  } catch (error) {
+    // The file exists but is unreadable/corrupt: defaulting silently would
+    // reset the job ledger and config with no trace, so leave one breadcrumb.
+    // Hook entries disable this: hook stdio is a protocol surface and must
+    // stay silent on corrupt state (pinned by the session-hook tests).
+    if (stateFileWarningsEnabled) {
+      process.stderr.write(
+        `[stereo] Ignoring unreadable state file ${stateFile}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    }
     return defaultState();
   }
+}
+
+let stateFileWarningsEnabled = true;
+
+export function disableStateFileWarnings(): void {
+  stateFileWarningsEnabled = false;
 }
 
 function pruneJobs(jobs: JobRecord[]): JobRecord[] {

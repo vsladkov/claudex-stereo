@@ -59,6 +59,9 @@ export async function handleStatus(argv: string[]): Promise<void> {
     outputResult(options.json ? snapshot : renderUsageReport(snapshot), options.json);
     return;
   }
+  if (positionals.length > 1) {
+    throw new Error(`status takes at most one job id; got ${positionals.length}.`);
+  }
   const reference = positionals[0] ?? '';
   const verbose = Boolean(options.verbose);
   const maxProgressLines = verbose ? VERBOSE_MAX_PROGRESS_LINES : undefined;
@@ -102,6 +105,9 @@ export function handleResult(argv: string[]): void {
   const workspaceRoot = Object.hasOwn(options, 'workspace')
     ? resolveCommandWorkspace(options)
     : undefined;
+  if (positionals.length > 1) {
+    throw new Error(`result takes at most one job id; got ${positionals.length}.`);
+  }
   const reference = positionals[0] ?? '';
   const resolved = resolveResultJob(cwd, reference, { workspaceRoot });
   const jobFile = resolveJobFile(resolved.workspaceRoot, resolved.job.id);
@@ -133,7 +139,7 @@ export function handleResult(argv: string[]): void {
   }
   const payload = {
     job,
-    storedJob,
+    storedJob: slimStoredJobForOutput(storedJob),
     ...(storedJobWarning ? { storedJobWarning } : {}),
   };
 
@@ -142,4 +148,46 @@ export function handleResult(argv: string[]): void {
     renderStoredJobResult(job, storedJob, storedJobWarning),
     options.json,
   );
+}
+
+// The printed --json payload answers "what did the job produce", not "what
+// does the persistence layer hold": the job file keeps the caller's own
+// request and the pre-rendered report, and its codex envelope duplicates the
+// final message and reasoning that result.rawOutput/result.reasoningSummary
+// already carry. Re-printing those copies costs the orchestrating model
+// thousands of input tokens per fetch, so they are dropped here while the
+// on-disk record stays complete.
+function slimStoredJobForOutput(
+  storedJob: (JobRecord & StoredJobLike) | null,
+): (JobRecord & StoredJobLike) | null {
+  if (!storedJob) {
+    return storedJob;
+  }
+  const slimmed: JobRecord & StoredJobLike = { ...storedJob };
+  delete (slimmed as Record<string, unknown>).request;
+  delete (slimmed as Record<string, unknown>).rendered;
+  const result = slimmed.result;
+  if (result && typeof result === 'object') {
+    const resultRecord = result as Record<string, unknown>;
+    const codex = resultRecord.codex;
+    if (codex && typeof codex === 'object') {
+      const codexRecord = { ...(codex as Record<string, unknown>) };
+      if (
+        typeof resultRecord.rawOutput === 'string' &&
+        resultRecord.rawOutput &&
+        codexRecord.stdout === resultRecord.rawOutput
+      ) {
+        delete codexRecord.stdout;
+      }
+      if (
+        typeof resultRecord.reasoningSummary === 'string' &&
+        resultRecord.reasoningSummary &&
+        codexRecord.reasoning === resultRecord.reasoningSummary
+      ) {
+        delete codexRecord.reasoning;
+      }
+      slimmed.result = { ...resultRecord, codex: codexRecord } as typeof result;
+    }
+  }
+  return slimmed;
 }

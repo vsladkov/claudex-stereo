@@ -4,8 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { initGitRepo, makeTempDir } from './helpers.ts';
-import { registerBrokerReaping } from './runtime-helpers.ts';
-import { runCli } from '../plugins/stereo/src/cli/main.ts';
+import { registerBrokerReaping, runCliInProcess } from './runtime-helpers.ts';
 import {
   fingerprintPlanText,
   resolveDurableStateDir,
@@ -66,40 +65,9 @@ async function runImplementState(
   env: NodeJS.ProcessEnv,
   args: string[],
 ): Promise<{ status: number; stdout: string; stderr: string }> {
-  const previousCodexHome = process.env.CODEX_HOME;
-  const previousExitCode = process.exitCode;
-  const originalStdoutWrite = process.stdout.write;
-  const originalStderrWrite = process.stderr.write;
-  const originalLog = console.log;
-  let stdout = '';
-  let stderr = '';
-  process.env.CODEX_HOME = env.CODEX_HOME;
-  process.exitCode = undefined;
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    stdout += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: string | Uint8Array) => {
-    stderr += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
-    return true;
-  }) as typeof process.stderr.write;
-  console.log = (...values: unknown[]) => {
-    stdout += `${values.map(String).join(' ')}\n`;
-  };
-  try {
-    await runCli(['implement-state', ...args, '--cwd', repo]);
-    return { status: process.exitCode ?? 0, stdout, stderr };
-  } finally {
-    process.stdout.write = originalStdoutWrite;
-    process.stderr.write = originalStderrWrite;
-    console.log = originalLog;
-    process.exitCode = previousExitCode;
-    if (previousCodexHome === undefined) {
-      delete process.env.CODEX_HOME;
-    } else {
-      process.env.CODEX_HOME = previousCodexHome;
-    }
-  }
+  return runCliInProcess(['implement-state', ...args, '--cwd', repo], {
+    CODEX_HOME: env.CODEX_HOME,
+  });
 }
 
 async function assertJsonError(

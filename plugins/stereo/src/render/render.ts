@@ -302,6 +302,8 @@ interface JobDetailOptions {
   showDuration?: boolean;
   showTimestamps?: boolean;
   showLog?: boolean;
+  showModel?: boolean;
+  showThread?: boolean;
   showCancelHint?: boolean;
   showResultHint?: boolean;
   showReviewHint?: boolean;
@@ -652,7 +654,9 @@ function appendActiveJobsTable(lines: string[], jobs: RenderableJob[]): void {
 
 function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailOptions = {}): void {
   lines.push(`- ${formatJobLine(job)}`);
-  lines.push(`  Model: ${job.modelDisplay ?? '-'}`);
+  if (options.showModel ?? true) {
+    lines.push(`  Model: ${job.modelDisplay ?? '-'}`);
+  }
   if (job.summary) {
     lines.push(`  Summary: ${job.summary}`);
   }
@@ -676,15 +680,15 @@ function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailO
       lines.push(`  Completed: ${job.completedAt}`);
     }
   }
-  if (job.threadId) {
+  if (job.threadId && (options.showThread ?? true)) {
     lines.push(`  Codex session ID: ${job.threadId}`);
   }
   const tokenUsage = formatTokenUsage(job.tokenUsage);
-  if (tokenUsage) {
+  if (tokenUsage && (options.showThread ?? true)) {
     lines.push(`  ${tokenUsage}`);
   }
   const resumeCommand = formatCodexResumeCommand(job);
-  if (resumeCommand) {
+  if (resumeCommand && (options.showThread ?? true)) {
     lines.push(`  Resume in Codex: ${resumeCommand}`);
   }
   if (job.logFile && options.showLog) {
@@ -833,6 +837,22 @@ export function renderStoredPlanState(
   const plan = typeof record.plan === 'string' ? record.plan : '(plan text missing)';
   const output = `${lines.join('\n')}\n\n---\n\n${plan}`;
   return output.endsWith('\n') ? output : `${output}\n`;
+}
+
+// Metadata-only view: everything renderStoredPlanState shows except the plan
+// body itself, for callers that just stored the text or only need the
+// review/lifecycle state.
+export function renderStoredPlanMetadata(
+  record: StoredPairPlanState | null,
+  slotLabel: string | null = null,
+): string {
+  if (!record) {
+    return renderStoredPlanState(record, slotLabel);
+  }
+  const lines = storedPlanMetadataLines(record, slotLabel);
+  const planChars = typeof record.plan === 'string' ? record.plan.length : 0;
+  lines.push(`- Plan text: ${planChars} chars (view with /stereo:plan-state)`);
+  return `${lines.join('\n')}\n`;
 }
 
 export function renderPlanSlotList(
@@ -1704,12 +1724,18 @@ export function renderStatusReport(
   if (report.recent.length > 0) {
     lines.push('Recent jobs:');
     for (const job of report.recent) {
-      pushJobDetails(lines, job, {
-        showDuration: true,
-        showLog: options.verbose || job.status === 'failed',
-        showProgress: Boolean(options.verbose),
-        ...(options.verbose ? { showTimestamps: true } : {}),
-      });
+      if (options.verbose || job.status === 'failed') {
+        pushJobDetails(lines, job, {
+          showDuration: true,
+          showLog: options.verbose || job.status === 'failed',
+          showProgress: Boolean(options.verbose),
+          ...(options.verbose ? { showTimestamps: true } : {}),
+        });
+        continue;
+      }
+      // One line per finished job: the caller re-reads this list on every
+      // bare status call; /stereo:result has the detail.
+      lines.push(`- ${formatJobLine(job)}${job.duration ? ` | ${job.duration}` : ''}`);
     }
     lines.push('');
   } else if (report.running.length === 0 && !report.latestFinished) {
@@ -1731,10 +1757,16 @@ export function renderJobStatusReport(
   options: JobStatusRenderOptions = {},
 ): string {
   const lines = ['# Codex Job Status', ''];
+  // A waited/polled non-terminal report repeats every few seconds: static
+  // metadata (model, thread id, resume/log/result hints) only costs the
+  // polling model input tokens, so it appears once the job is terminal.
+  const nonTerminal = job.status === 'queued' || job.status === 'running';
   pushJobDetails(lines, job, {
-    showElapsed: job.status === 'queued' || job.status === 'running',
-    showDuration: job.status !== 'queued' && job.status !== 'running',
-    showLog: true,
+    showElapsed: nonTerminal,
+    showDuration: !nonTerminal,
+    showLog: !nonTerminal || Boolean(options.verbose),
+    showModel: !nonTerminal || Boolean(options.verbose),
+    showThread: !nonTerminal || Boolean(options.verbose),
     ...(options.verbose ? { showTimestamps: true } : {}),
     showCancelHint: true,
     showResultHint: true,
@@ -1869,9 +1901,16 @@ export function renderStoredJobResult(
   return renderWithFooter(`${lines.join('\n').trimEnd()}\n`);
 }
 
-export function renderCancelReport(job: RenderableJob, warning?: string | null): string {
+export function renderCancelReport(
+  job: RenderableJob,
+  warning?: string | null,
+  killWarning?: string | null,
+): string {
   const lines = ['# Codex Cancel', '', `Cancelled ${job.id}.`, ''];
 
+  if (killWarning) {
+    lines.push(`- Warning: ${killWarning} The worker process may still be running.`);
+  }
   if (job.title) {
     lines.push(`- Title: ${job.title}`);
   }

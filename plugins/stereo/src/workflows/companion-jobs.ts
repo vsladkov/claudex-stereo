@@ -305,7 +305,10 @@ export async function runForegroundCommand(
   });
   try {
     const execution = await runTrackedJob(job, () => runner(progress), { logFile });
-    outputResult(options.json ? execution.payload : execution.rendered, options.json);
+    outputResult(
+      options.json ? slimForegroundPayload(execution.payload) : execution.rendered,
+      options.json,
+    );
     if (execution.exitStatus !== 0) {
       process.exitCode = execution.exitStatus;
     }
@@ -313,6 +316,24 @@ export async function runForegroundCommand(
   } finally {
     disposeSignalCleanup();
   }
+}
+
+// The bounded command/file-change capture arrays are forensic detail: they
+// stay in the persisted job record for /stereo:result, but printing them in
+// the foreground --json answer costs the orchestrating model thousands of
+// input tokens it rarely consumes inline.
+function slimForegroundPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload;
+  }
+  const record = payload as Record<string, unknown>;
+  if (!('commandExecutions' in record) && !('fileChanges' in record)) {
+    return payload;
+  }
+  const slimmed = { ...record };
+  delete slimmed.commandExecutions;
+  delete slimmed.fileChanges;
+  return slimmed;
 }
 
 export interface SpawnDetachedTaskWorkerOptions {

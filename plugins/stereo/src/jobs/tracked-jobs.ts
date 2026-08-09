@@ -184,16 +184,34 @@ export function createProgressReporter({
     return null;
   }
 
+  // Foreground stderr is captured by the calling model's shell tool, so a
+  // busy turn's hundreds of per-command events become paid input tokens.
+  // Echo the first few for liveness, then sample; the log file keeps every
+  // event and the final render summarizes the run.
+  const STDERR_VERBATIM_EVENTS = 5;
+  const STDERR_SAMPLE_EVERY = 10;
+  let stderrEvents = 0;
   return (eventOrMessage) => {
     const event = normalizeProgressEvent(eventOrMessage);
     const stderrMessage = event.stderrMessage ?? event.message;
     if (stderr && stderrMessage) {
-      process.stderr.write(`[codex] ${stderrMessage}\n`);
+      stderrEvents += 1;
+      if (stderrEvents <= STDERR_VERBATIM_EVENTS || stderrEvents % STDERR_SAMPLE_EVERY === 0) {
+        process.stderr.write(`[codex] ${stderrMessage}\n`);
+      }
     }
     appendLogLine(logFile, event.message);
     appendLogBlock(logFile, event.logTitle, event.logBody);
     onEvent?.(event);
   };
+}
+
+function renderedDuplicatesRawOutput(rendered: string | undefined, payload: unknown): boolean {
+  if (typeof rendered !== 'string' || !payload || typeof payload !== 'object') {
+    return false;
+  }
+  const rawOutput = (payload as { rawOutput?: unknown }).rawOutput;
+  return typeof rawOutput === 'string' && rawOutput.trim() === rendered.trim();
 }
 
 function persistTerminalState(
@@ -259,7 +277,12 @@ export async function runTrackedJob(
         phase: completionStatus === 'completed' ? 'done' : 'failed',
         completedAt,
         result: execution.payload,
-        rendered: execution.rendered,
+        // Skip the pre-rendered copy when it adds nothing over rawOutput:
+        // renderers fall back to result.rawOutput, and duplicating the final
+        // message doubled the stored (and re-printed) size of text-only jobs.
+        ...(renderedDuplicatesRawOutput(execution.rendered, execution.payload)
+          ? {}
+          : { rendered: execution.rendered }),
         ...(execution.tokenUsage ? { tokenUsage: execution.tokenUsage } : {}),
       },
       {

@@ -281,6 +281,11 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
     this.proc.stdout.setEncoding('utf8');
     this.proc.stderr.setEncoding('utf8');
 
+    // A write racing child death fails asynchronously as an 'error' event on
+    // the stdin stream; without a listener that is an uncaught exception that
+    // kills the worker mid-bookkeeping. The exit handler owns the failure.
+    this.proc.stdin.on('error', () => {});
+
     this.proc.stderr.on('data', (chunk) => {
       // Keep only the tail: a chatty child must not grow client memory
       // unbounded over a long-lived direct session.
@@ -347,7 +352,31 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
       }, 50).unref?.();
     }
 
-    await this.exitPromise;
+    // A codex that ignores stdin-EOF and SIGTERM must not wedge close()
+    // forever (broker shutdown awaits it inside the SIGTERM handler):
+    // escalate to a tree kill after a bounded grace, then resolve.
+    const KILL_ESCALATION_MS = 3000;
+    await Promise.race([
+      this.exitPromise,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          if (this.proc && this.proc.exitCode === null) {
+            try {
+              terminateProcessTree(this.proc.pid as number);
+            } catch {
+              // Best-effort: the process may have just exited.
+            }
+          }
+          resolve();
+        }, KILL_ESCALATION_MS);
+        timer.unref?.();
+        // If the child exits first, do not hold the timer alive.
+        void this.exitPromise.then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      }),
+    ]);
   }
 
   override sendMessage(message: unknown): void {

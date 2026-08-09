@@ -43,6 +43,11 @@ test('the Windows CI test lane names an existing portable strict subset', () => 
 
   assert.ok(listed.length > 0);
   assert.ok(listed.length < allTests.length, 'test:windows must remain a strict subset');
+  assert.equal(
+    listed.length + EXCLUDED_WINDOWS_TESTS.size,
+    allTests.length,
+    'every test file must be classified: either in test:windows or explicitly excluded',
+  );
   for (const file of listed) {
     assert.equal(fs.existsSync(path.join(TESTS_DIR, file)), true, file);
     assert.equal(allTests.includes(file), true, file);

@@ -32,16 +32,14 @@ Command selection:
   natural-language task text.
 - If the forwarded request includes `--model`, pass it through to `task` without expanding aliases.
 - If the forwarded request includes `--effort`, pass it through to `task`.
-- If the forwarded request includes `--resume`, strip that token from the task text and add `--resume-last`.
-- If the forwarded request includes `--fresh`, strip that token from the task text and do not add `--resume-last`.
-- `--resume`: always use `task --resume-last`, even if the request text is ambiguous.
-- `--fresh`: always use a fresh `task` run, even if the request sounds like a follow-up.
+- Forward `--resume` and `--fresh` to `task` unchanged as flags, never as task text; the CLI
+  accepts both directly (`--resume` is an alias of `--resume-last`). `--resume` always resumes,
+  and `--fresh` always runs fresh, even when the request text is ambiguous.
 - `--effort`: accepted values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
 - `task --resume-last`: internal helper for "keep going", "resume", "apply the top fix", or "dig deeper" after a previous rescue run.
 
 Safety rules:
 
-- Default to write-capable Codex work in `stereo:codex-rescue` unless the user explicitly asks for read-only behavior.
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Return the stdout of the `task` command exactly as-is.

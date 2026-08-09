@@ -7,7 +7,7 @@ import type {
   TurnStartParams,
 } from '../protocol/app-server.ts';
 import { modelProviderFor, parseQualifiedModel } from '../models/registry.ts';
-import { BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
+import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
 import { CodexAppServerClient } from '../transport/app-server-client.ts';
 import { loadBrokerSession } from '../broker/lifecycle.ts';
 import { getCodexAvailability } from './availability.ts';
@@ -409,8 +409,25 @@ export async function runAppServerTurn(
     try {
       return await attempt();
     } catch (error) {
-      if (!(error instanceof WriteEscalationRetryError)) {
+      // A broker-busy rejection escaping the attempt means our turn never
+      // started (the broker rejects turn/start while another turn holds the
+      // slot; once a turn is accepted its own requests cannot be
+      // busy-rejected), so no side effects exist and a whole-attempt retry
+      // on a private direct app-server is safe — this is the documented
+      // busy fallback for concurrent sessions. withAppServer only handles
+      // the first-request case itself; this covers the busy that arrives
+      // after thread/start already dispatched.
+      const busy =
+        (error as { rpcCode?: number } | null | undefined)?.rpcCode === BROKER_BUSY_RPC_CODE;
+      if (!busy && !(error instanceof WriteEscalationRetryError)) {
         throw error;
+      }
+      if (busy) {
+        emitProgress(
+          options.onProgress,
+          'Shared Codex broker is busy; retrying on a private app-server.',
+          'starting',
+        );
       }
     }
 

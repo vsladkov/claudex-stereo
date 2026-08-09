@@ -36,7 +36,7 @@ export async function handleReviewCommand(
   config: ReviewCommandConfig,
 ): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['base', 'scope', 'model', 'effort', 'pr', 'cwd'],
+    valueOptions: ['base', 'scope', 'model', 'effort', 'pr', 'cwd', 'workspace'],
     booleanOptions: ['json', 'background', 'wait'],
     aliasMap: {
       m: 'model',

@@ -143,19 +143,30 @@ export async function waitForBrokerEndpoint(
   return false;
 }
 
-export async function sendBrokerShutdown(endpoint: string): Promise<void> {
+export async function sendBrokerShutdown(endpoint: string, timeoutMs = 2000): Promise<void> {
   await new Promise((resolve) => {
     const socket = connectToEndpoint(endpoint);
+    // A broker that accepts the connection but never replies must not hang
+    // the caller (the test reaper calls this unconditionally).
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      resolve(undefined);
+    }, timeoutMs);
+    timeout.unref?.();
+    const finish = () => {
+      clearTimeout(timeout);
+      resolve(undefined);
+    };
     socket.setEncoding('utf8');
     socket.on('connect', () => {
       socket.write(`${JSON.stringify({ id: 1, method: 'broker/shutdown', params: {} })}\n`);
     });
     socket.on('data', () => {
       socket.end();
-      resolve(undefined);
+      finish();
     });
-    socket.on('error', resolve);
-    socket.on('close', resolve);
+    socket.on('error', finish);
+    socket.on('close', finish);
   });
 }
 
@@ -192,6 +203,10 @@ export async function sendBrokerShutdownIfIdle(
   options: { timeoutMs?: number } = {},
 ): Promise<ShutdownOutcome> {
   const timeoutMs = options.timeoutMs ?? 4000;
+  // One deadline governs all three phases (response, process exit, endpoint
+  // close), so the worst case stays ~timeoutMs instead of the phases each
+  // spending their own copy of the budget.
+  const deadline = Date.now() + timeoutMs;
   const response = await new Promise<ShutdownOutcome>((resolve) => {
     const socket = connectToEndpoint(endpoint);
     let buffer = '';
@@ -271,15 +286,19 @@ export async function sendBrokerShutdownIfIdle(
     return response;
   }
 
-  const exited = await waitForProcessExit(response.pid, timeoutMs);
+  const exitBudget = Math.max(deadline - Date.now(), 250);
+  const exited = await waitForProcessExit(response.pid, exitBudget);
   if (!exited) {
     return {
       accepted: false,
-      detail: `Broker ${response.pid} accepted the drain but did not exit within ${timeoutMs}ms.`,
+      detail: `Broker ${response.pid} accepted the drain but did not exit within ${exitBudget}ms.`,
     };
   }
 
-  const endpointClosed = await waitForBrokerEndpointClosed(endpoint, Math.min(timeoutMs, 1000));
+  const endpointClosed = await waitForBrokerEndpointClosed(
+    endpoint,
+    Math.max(Math.min(deadline - Date.now(), 1000), 250),
+  );
   if (!endpointClosed) {
     return {
       accepted: false,

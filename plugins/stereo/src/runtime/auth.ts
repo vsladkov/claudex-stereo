@@ -184,11 +184,13 @@ async function getCodexAuthStatusFromClient(
   cwd: string,
 ): Promise<CodexAuthStatus> {
   try {
-    const accountResponse = await client.request('account/read', { refreshToken: false });
-    const configResponse = await client.request('config/read', {
-      includeLayers: false,
-      cwd,
-    });
+    const [accountResponse, configResponse] = await Promise.all([
+      client.request('account/read', { refreshToken: false }),
+      client.request('config/read', {
+        includeLayers: false,
+        cwd,
+      }),
+    ]);
 
     return buildAppServerAuthStatus(accountResponse, configResponse);
   } catch (error) {

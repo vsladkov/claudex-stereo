@@ -3,11 +3,14 @@ import path from 'node:path';
 import { renderImplementState } from '../../render/render.ts';
 import { recordLike } from '../../shared/json.ts';
 import {
+  currentPlanSummary,
+  readStatePayload,
+  recordedPlanFingerprint,
+  recordedPlanSlot,
+} from './state-helpers.ts';
+import {
   clearImplementState,
-  fingerprintPlanText,
-  loadPairPlanState,
   nowIso,
-  planSlotOrDefault,
   readImplementStateFile,
   resolveImplementStateFile,
   saveImplementState,
@@ -15,13 +18,10 @@ import {
 import {
   outputCommandResult,
   parseCommandInput,
-  readUserFile,
   resolveCommandCwd,
   resolveCommandWorkspace,
   resolvePlanSlotOption,
 } from '../io.ts';
-
-const MAX_IMPLEMENT_STATE_BYTES = 512 * 1024;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -38,27 +38,6 @@ function assertIsolationShape(record: JsonRecord): void {
   }
 }
 
-function readStatePayload(cwd: string, value: unknown): JsonRecord {
-  const contents = readUserFile(cwd, '--state-file', String(value));
-  if (Buffer.byteLength(contents, 'utf8') > MAX_IMPLEMENT_STATE_BYTES) {
-    throw new Error(
-      '--state-file is larger than 512 KiB. Store bounded round summaries instead of verbatim reports.',
-    );
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(contents);
-  } catch {
-    throw new Error('Could not parse --state-file as JSON.');
-  }
-  const payload = recordLike(parsed);
-  if (!payload) {
-    throw new Error('Provide --state-file containing a JSON object.');
-  }
-  return payload;
-}
-
 function normalizeImplementationRound(value: unknown): number {
   if (value == null) {
     return 0;
@@ -67,39 +46,6 @@ function normalizeImplementationRound(value: unknown): number {
     throw new Error(`Unsupported implementation round "${value}". Use a non-negative integer.`);
   }
   return value as number;
-}
-
-function currentPlanSummary(
-  workspaceRoot: string,
-  slot: string,
-): {
-  available: boolean;
-  slot: string;
-  fingerprint: string | null;
-  updatedAt: unknown;
-  verdict: unknown;
-  round: unknown;
-} {
-  const storedPlan = recordLike(loadPairPlanState(workspaceRoot, slot));
-  return {
-    available: Boolean(storedPlan),
-    slot,
-    fingerprint: fingerprintPlanText(storedPlan?.plan),
-    updatedAt: storedPlan?.updatedAt ?? null,
-    verdict: storedPlan?.verdict ?? null,
-    round: storedPlan?.round ?? null,
-  };
-}
-
-function recordedPlanSlot(record: JsonRecord | null): string {
-  return planSlotOrDefault(recordLike(record?.plan)?.slot);
-}
-
-function recordedPlanFingerprint(record: JsonRecord | null): string | null {
-  const plan = recordLike(record?.plan);
-  return typeof plan?.fingerprint === 'string' && plan.fingerprint.trim()
-    ? plan.fingerprint.trim()
-    : null;
 }
 
 function buildReadPayload(workspaceRoot: string, record: JsonRecord | null): JsonRecord {
@@ -239,13 +185,15 @@ export function handleImplementState(argv: string[]): void {
   if (!action) {
     const state = readImplementStateFile(workspaceRoot);
     if (state.parseError) {
+      const statePath = resolveImplementStateFile(workspaceRoot);
       const payload = {
         available: false,
         unreadable: true,
-        path: resolveImplementStateFile(workspaceRoot),
+        path: statePath,
         parseError: state.parseError,
       };
-      outputCommandResult(payload, renderImplementState(null), options.json);
+      const rendered = `Implementation state exists but is unreadable at ${statePath}: ${state.parseError}\nA new /stereo:implement run replaces it; /stereo:implement --resume cannot use it.\n`;
+      outputCommandResult(payload, rendered, options.json);
       return;
     }
     const record = recordLike(state.record);
@@ -261,7 +209,11 @@ export function handleImplementState(argv: string[]): void {
   let record: JsonRecord;
   if (action === 'record') {
     const slot = resolvePlanSlotOption(options);
-    const input = readStatePayload(cwd, options['state-file']);
+    const input = readStatePayload(
+      cwd,
+      options['state-file'],
+      'Store bounded round summaries instead of verbatim reports.',
+    );
     const baselineCommit =
       typeof input.baselineCommit === 'string' ? input.baselineCommit.trim() : '';
     if (!baselineCommit) {
@@ -287,8 +239,24 @@ export function handleImplementState(argv: string[]): void {
     };
   } else {
     const existing = loadExistingRecord(workspaceRoot);
-    const patch = hasStateFile ? readStatePayload(cwd, options['state-file']) : {};
+    const patch = hasStateFile
+      ? readStatePayload(
+          cwd,
+          options['state-file'],
+          'Store bounded round summaries instead of verbatim reports.',
+        )
+      : {};
     record = applyStatePatch(existing, patch, timestamp);
+    // A patch must not weaken what --record validated: re-normalize the
+    // merged fields instead of persisting whatever the patch carried.
+    const mergedBaseline =
+      typeof record.baselineCommit === 'string' ? record.baselineCommit.trim() : '';
+    if (!mergedBaseline) {
+      throw new Error('The merged record must keep a non-empty baselineCommit.');
+    }
+    record.baselineCommit = mergedBaseline;
+    record.round = normalizeImplementationRound(record.round);
+    record.rounds = Array.isArray(record.rounds) ? record.rounds : [];
     if (action === 'complete') {
       record = {
         ...record,

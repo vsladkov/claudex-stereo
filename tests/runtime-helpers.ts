@@ -233,3 +233,58 @@ export function registerSessionCleanup(t: TestContext, cwd: string, env: NodeJS.
     });
   });
 }
+
+// In-process CLI invocation for pure read-back and flag-validation checks:
+// spawning a fresh Node per assertion pays full module-graph startup
+// (~0.3-0.5s each) to test the same contract runCli exposes directly. Not
+// for tests that need real process isolation (detached workers, brokers,
+// signal handling).
+export async function runCliInProcess(
+  args: string[],
+  env: NodeJS.ProcessEnv = {},
+): Promise<{ status: number; stdout: string; stderr: string }> {
+  const { runCli } = await import('../plugins/stereo/src/cli/main.ts');
+  const previousEnv = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(env)) {
+    previousEnv.set(key, process.env[key]);
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  const previousExitCode = process.exitCode;
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const originalLog = console.log;
+  let stdout = '';
+  let stderr = '';
+  process.exitCode = undefined;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    stdout += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+    return true;
+  }) as typeof process.stderr.write;
+  console.log = (...values: unknown[]) => {
+    stdout += `${values.map(String).join(' ')}\n`;
+  };
+  try {
+    await runCli(args);
+    return { status: process.exitCode ?? 0, stdout, stderr };
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    console.log = originalLog;
+    process.exitCode = previousExitCode;
+    for (const [key, value] of previousEnv) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}

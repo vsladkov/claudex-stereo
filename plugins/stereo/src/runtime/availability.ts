@@ -1,6 +1,6 @@
 import { BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
 import { loadBrokerSession } from '../broker/lifecycle.ts';
-import { binaryAvailable } from '../platform/process.ts';
+import { binaryAvailable, processHasExited } from '../platform/process.ts';
 import type { BinaryAvailability } from '../platform/process.ts';
 
 export interface SessionRuntimeStatus {
@@ -53,6 +53,24 @@ export function getCodexAvailability(
   const cached = availabilityCache.get(cwd);
   if (cached) {
     return cached;
+  }
+  // A live workspace broker is running `codex app-server` right now, which
+  // proves the runtime works without paying the two ~100-300ms probe spawns
+  // this one-shot process would otherwise repeat. A dead or recordless
+  // broker falls through to the real probe and its friendly install error.
+  const brokerSession = loadBrokerSession(cwd);
+  if (
+    brokerSession?.endpoint &&
+    typeof brokerSession.pid === 'number' &&
+    brokerSession.pid > 0 &&
+    !processHasExited(brokerSession.pid)
+  ) {
+    const status: BinaryAvailability = {
+      available: true,
+      detail: 'Live workspace broker; advanced runtime available',
+    };
+    availabilityCache.set(cwd, status);
+    return status;
   }
   const status = probeCodexAvailability(cwd, binaryAvailable);
   availabilityCache.set(cwd, status);

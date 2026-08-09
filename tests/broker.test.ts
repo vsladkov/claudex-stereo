@@ -3,16 +3,14 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
-import test, { afterEach } from 'node:test';
+import test from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
 import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
 import { makeTempDir } from './helpers.ts';
-import { drainCreatedTempDirs } from './helpers.ts';
-import { reapWorkspaceBroker } from './broker-reaper.ts';
-import { readJsonIfReadable } from './runtime-helpers.ts';
+import { readJsonIfReadable, registerBrokerReaping } from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 import {
   createBrokerEndpoint,
@@ -39,11 +37,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // the companion CLI auto-starts a detached broker per workspace, and without
 // a SessionEnd there is nothing else to stop it (one unswept full run used
 // to strand ~40 broker processes).
-afterEach(async () => {
-  for (const dir of drainCreatedTempDirs()) {
-    await reapWorkspaceBroker(dir);
-  }
-});
+registerBrokerReaping();
 const BROKER_SCRIPT = path.join(ROOT, 'plugins', 'stereo', 'scripts', 'app-server-broker.ts');
 const DEAD_PID = 2147483647;
 

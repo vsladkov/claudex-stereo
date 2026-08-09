@@ -1078,7 +1078,10 @@ test('task --background enqueues a detached worker and exposes per-job status', 
 
   assert.equal(resultPayload.job.id, launchPayload.jobId);
   assert.equal(resultPayload.job.status, 'completed');
-  assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
+  // The printed payload is slimmed (no rendered/request echoes); the answer
+  // itself travels once as result.rawOutput.
+  assert.equal(Object.hasOwn(resultPayload.storedJob, 'rendered'), false);
+  assert.match(resultPayload.storedJob.result.rawOutput, /Handled the requested task/);
 });
 
 test('task --workspace keeps isolated thread state on the main workspace broker', (t) => {

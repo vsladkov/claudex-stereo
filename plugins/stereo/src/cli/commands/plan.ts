@@ -39,6 +39,7 @@ import {
 import {
   renderPlanSlotComparison,
   renderPlanSlotList,
+  renderStoredPlanMetadata,
   renderStoredPlanState,
 } from '../../render/render.ts';
 import type { PlanSlotSummary, StoredPairPlanState } from '../../render/render.ts';
@@ -141,7 +142,7 @@ function normalizeStoredPlanRound(round: unknown): number {
 
 export async function handlePlanReview(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ['model', 'effort', 'cwd', 'plan-file', 'thread', 'round', 'slot'],
+    valueOptions: ['model', 'effort', 'cwd', 'workspace', 'plan-file', 'thread', 'round', 'slot'],
     booleanOptions: ['json', 'background'],
     aliasMap: {
       m: 'model',
@@ -153,7 +154,9 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
   const slot = resolvePlanSlotOption(options);
   const model =
     normalizeRequestedModel(options.model) ?? normalizeRequestedModel(PAIR_DEFAULT_MODEL);
-  const effort = normalizeReasoningEffort(options.effort ?? defaultPairEffort(model as string));
+  const effort =
+    normalizeReasoningEffort(options.effort) ??
+    normalizeReasoningEffort(defaultPairEffort(model as string));
   const round = normalizePlanReviewRound(options.round);
   const threadId =
     typeof options.thread === 'string' && options.thread.trim() ? options.thread.trim() : null;
@@ -216,14 +219,16 @@ export async function handlePlanState(
 ): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ['cwd', 'slot'],
-    booleanOptions: ['json', 'list', 'open', 'clear', 'mark-implemented', 'compare'],
+    booleanOptions: ['json', 'list', 'open', 'clear', 'mark-implemented', 'compare', 'metadata'],
   });
 
-  const actions = ['list', 'open', 'clear', 'mark-implemented', 'compare'].filter(
+  const actions = ['list', 'open', 'clear', 'mark-implemented', 'compare', 'metadata'].filter(
     (key) => options[key],
   );
   if (actions.length > 1) {
-    throw new Error('Choose one of --list, --open, --clear, --mark-implemented, or --compare.');
+    throw new Error(
+      'Choose one of --list, --open, --clear, --mark-implemented, --compare, or --metadata.',
+    );
   }
   if (options.list && Object.hasOwn(options, 'slot')) {
     throw new Error('--list covers every slot; drop --slot.');
@@ -389,14 +394,27 @@ export async function handlePlanState(
     );
     outputCommandResult(
       { available: true, ...updated, slot },
-      renderStoredPlanState(updated),
+      renderStoredPlanMetadata(updated, slot === DEFAULT_PLAN_SLOT ? null : slot),
       options.json,
     );
     return;
   }
 
-  const payload = record ? { available: true, ...record, slot } : { available: false, slot };
   const slotLabel = slot === DEFAULT_PLAN_SLOT ? null : slot;
+  if (options.metadata) {
+    const metadataPayload = record
+      ? {
+          available: true,
+          ...record,
+          plan: undefined,
+          planChars: typeof record.plan === 'string' ? record.plan.length : 0,
+          slot,
+        }
+      : { available: false, slot };
+    outputCommandResult(metadataPayload, renderStoredPlanMetadata(record, slotLabel), options.json);
+    return;
+  }
+  const payload = record ? { available: true, ...record, slot } : { available: false, slot };
   const rendered = renderStoredPlanState(record, slotLabel);
   if (!options.open || !record) {
     outputCommandResult(payload, rendered, options.json);
@@ -513,5 +531,16 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
     slot,
   );
 
-  outputCommandResult({ ...record, slot }, renderStoredPlanState(record), options.json);
+  // The caller piped the plan in on stdin one command earlier; echoing the
+  // full text back costs thousands of tokens per store for pure repetition.
+  outputCommandResult(
+    {
+      ...record,
+      plan: undefined,
+      planChars: typeof record.plan === 'string' ? record.plan.length : 0,
+      slot,
+    },
+    renderStoredPlanMetadata(record, slot === DEFAULT_PLAN_SLOT ? null : slot),
+    options.json,
+  );
 }

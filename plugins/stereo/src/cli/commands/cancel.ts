@@ -45,6 +45,11 @@ export async function handleCancel(
   const workspaceRoot = Object.hasOwn(options, 'workspace')
     ? resolveCommandWorkspace(options)
     : undefined;
+  if (positionals.length > 1) {
+    throw new Error(
+      `cancel takes at most one job id; got ${positionals.length}. Cancel jobs one at a time.`,
+    );
+  }
   const reference = positionals[0] ?? '';
   const resolved = resolveCancelableJob(cwd, reference, {
     env: deps.env ?? process.env,
@@ -154,5 +159,9 @@ export async function handleCancel(
     ...(killWarning ? { killWarning } : {}),
   };
 
-  outputCommandResult(payload, renderCancelReport(nextJob, storedJobWarning), options.json);
+  outputCommandResult(
+    payload,
+    renderCancelReport(nextJob, storedJobWarning, killWarning),
+    options.json,
+  );
 }

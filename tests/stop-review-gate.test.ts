@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import test, { afterEach } from 'node:test';
+import test from 'node:test';
+
+import { registerBrokerReaping } from './runtime-helpers.ts';
 import { fileURLToPath } from 'node:url';
 
 import { makeTempDir, initGitRepo, run } from './helpers.ts';
-import { drainCreatedTempDirs } from './helpers.ts';
-import { reapWorkspaceBroker } from './broker-reaper.ts';
 import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
 import {
   evaluateStopReview,
@@ -22,11 +22,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // the companion CLI auto-starts a detached broker per workspace, and without
 // a SessionEnd there is nothing else to stop it (one unswept full run used
 // to strand ~40 broker processes).
-afterEach(async () => {
-  for (const dir of drainCreatedTempDirs()) {
-    await reapWorkspaceBroker(dir);
-  }
-});
+registerBrokerReaping();
 const HOOKS_FILE = path.join(ROOT, 'plugins', 'stereo', 'hooks', 'hooks.json');
 
 test('parseStopReviewOutput accepts ALLOW verdicts', () => {

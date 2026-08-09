@@ -58,7 +58,7 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
 
       if (arrayOptions.has(key)) {
         const nextValue = inlineValue ?? argv[index + 1];
-        if (nextValue === undefined) {
+        if (nextValue === undefined || (inlineValue === undefined && looksLikeFlag(nextValue))) {
           throw new Error(`Missing value for --${rawKey}`);
         }
         appendArrayOption(key, nextValue);
@@ -70,7 +70,7 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
 
       if (valueOptions.has(key)) {
         const nextValue = inlineValue ?? argv[index + 1];
-        if (nextValue === undefined) {
+        if (nextValue === undefined || (inlineValue === undefined && looksLikeFlag(nextValue))) {
           throw new Error(`Missing value for --${rawKey}`);
         }
         options[key] = nextValue;
@@ -94,7 +94,7 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
 
     if (arrayOptions.has(key)) {
       const nextValue = argv[index + 1];
-      if (nextValue === undefined) {
+      if (nextValue === undefined || looksLikeFlag(nextValue)) {
         throw new Error(`Missing value for -${shortKey}`);
       }
       appendArrayOption(key, nextValue);
@@ -104,7 +104,7 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
 
     if (valueOptions.has(key)) {
       const nextValue = argv[index + 1];
-      if (nextValue === undefined) {
+      if (nextValue === undefined || looksLikeFlag(nextValue)) {
         throw new Error(`Missing value for -${shortKey}`);
       }
       options[key] = nextValue;
@@ -116,6 +116,16 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
   }
 
   return { options, positionals };
+}
+
+// A value option must never silently swallow the next flag as its value:
+// `status abc --timeout-ms --json` would otherwise set timeout-ms='--json'
+// (NaN, silent default) AND lose the JSON request. Only double-dash tokens
+// count as flags — single-dash prose values (`-leading-dash` risks) and
+// negative numbers stay legal, and a genuine `--`-leading value can always
+// use the inline `--option=value` form, which skips this guard.
+function looksLikeFlag(token: string): boolean {
+  return /^--[a-zA-Z]/.test(token);
 }
 
 export function splitRawArgumentString(raw: string): string[] {

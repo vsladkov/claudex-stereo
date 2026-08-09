@@ -133,11 +133,12 @@ export async function executePlanReviewRun(
     threadId,
     model: request.model ?? null,
     effort: request.effort ?? null,
+    // rawOutput and reasoningSummary below are the canonical copies; the
+    // codex envelope repeating them cost thousands of duplicated output
+    // tokens per --json read.
     codex: {
       status: result.status,
       stderr: result.stderr,
-      stdout: result.finalMessage,
-      reasoning: result.reasoningSummary,
     },
     result: parsed.parsed,
     rawOutput: parsed.rawOutput,

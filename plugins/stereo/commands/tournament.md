@@ -100,10 +100,7 @@ Before the stored-plan preflight, run:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
 ```
 
-Read `roleDefaults`. If the command fails, report the failure and continue with built-in defaults.
-Ignore any entry with a non-null `invalidReason`, report its warning, and use the built-in default
-for that role. Report an effort stored alongside a Claude-routed model as inert. Resolve stored
-`claude:*` selections as Claude routes and never pass them to the companion's `--model` flag.
+Apply the routing skill's "Workspace role defaults" mechanics to the result.
 
 The workspace `implementer` model supplies `c1` only in the default lineup. Explicit
 `--implementer` flags always win, and no workspace model default is injected into an explicit

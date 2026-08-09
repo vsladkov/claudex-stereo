@@ -2,19 +2,11 @@ import process from 'node:process';
 
 import { wasJsonRequested } from './io.ts';
 import { printUsage } from './usage.ts';
-import { handleSetup } from './commands/setup.ts';
-import { handleDoctor } from './commands/doctor.ts';
-import { handleAdversarialReview, handleReview } from './commands/review.ts';
-import { handleTask, handleTaskResumeCandidate, handleTaskWorker } from './commands/task.ts';
-import { handlePlanReview, handlePlanState, handlePlanStore } from './commands/plan.ts';
-import { handleTransfer } from './commands/transfer.ts';
-import { handleResult, handleStatus } from './commands/status.ts';
-import { handleCancel } from './commands/cancel.ts';
-import { handleConfig } from './commands/config.ts';
-import { handleImplementState } from './commands/implement.ts';
-import { handleTournamentState } from './commands/tournament.ts';
-import { handleVersion } from './commands/version.ts';
 
+// Each case imports its handler lazily: a static import list here pulled the
+// entire 60+-module graph (workflows, runtime, transport, broker, render)
+// into every invocation, taxing trivial calls like `version` or a status
+// poll with ~100-200ms of parse/instantiation.
 async function main(fullArgv: string[]): Promise<void> {
   const [subcommand, ...argv] = fullArgv;
   if (!subcommand || subcommand === 'help' || subcommand === '--help') {
@@ -24,58 +16,58 @@ async function main(fullArgv: string[]): Promise<void> {
 
   switch (subcommand) {
     case 'config':
-      await handleConfig(argv);
+      await (await import('./commands/config.ts')).handleConfig(argv);
       break;
     case 'setup':
-      await handleSetup(argv);
+      await (await import('./commands/setup.ts')).handleSetup(argv);
       break;
     case 'doctor':
-      await handleDoctor(argv);
+      await (await import('./commands/doctor.ts')).handleDoctor(argv);
       break;
     case 'review':
-      await handleReview(argv);
+      await (await import('./commands/review.ts')).handleReview(argv);
       break;
     case 'adversarial-review':
-      await handleAdversarialReview(argv);
+      await (await import('./commands/review.ts')).handleAdversarialReview(argv);
       break;
     case 'task':
-      await handleTask(argv);
+      await (await import('./commands/task.ts')).handleTask(argv);
       break;
     case 'plan-review':
-      await handlePlanReview(argv);
+      await (await import('./commands/plan.ts')).handlePlanReview(argv);
       break;
     case 'plan-state':
-      await handlePlanState(argv);
+      await (await import('./commands/plan.ts')).handlePlanState(argv);
       break;
     case 'plan-store':
-      await handlePlanStore(argv);
+      await (await import('./commands/plan.ts')).handlePlanStore(argv);
       break;
     case 'implement-state':
-      handleImplementState(argv);
+      (await import('./commands/implement.ts')).handleImplementState(argv);
       break;
     case 'tournament-state':
-      handleTournamentState(argv);
+      (await import('./commands/tournament.ts')).handleTournamentState(argv);
       break;
     case 'transfer':
-      await handleTransfer(argv);
+      await (await import('./commands/transfer.ts')).handleTransfer(argv);
       break;
     case 'task-worker':
-      await handleTaskWorker(argv);
+      await (await import('./commands/task.ts')).handleTaskWorker(argv);
       break;
     case 'status':
-      await handleStatus(argv);
+      await (await import('./commands/status.ts')).handleStatus(argv);
       break;
     case 'result':
-      handleResult(argv);
+      (await import('./commands/status.ts')).handleResult(argv);
       break;
     case 'task-resume-candidate':
-      handleTaskResumeCandidate(argv);
+      (await import('./commands/task.ts')).handleTaskResumeCandidate(argv);
       break;
     case 'cancel':
-      await handleCancel(argv);
+      await (await import('./commands/cancel.ts')).handleCancel(argv);
       break;
     case 'version':
-      handleVersion(argv);
+      (await import('./commands/version.ts')).handleVersion(argv);
       break;
     default:
       throw new Error(`Unknown subcommand: ${subcommand}`);

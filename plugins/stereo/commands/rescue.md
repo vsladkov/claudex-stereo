@@ -53,14 +53,8 @@ Operating rules:
 - Return the Codex companion stdout verbatim to the user.
 - Do not paraphrase, summarize, rewrite, or add commentary before or after it.
 - Do not ask the subagent to inspect files, monitor progress, poll `/stereo:status`, fetch `/stereo:result`, call `/stereo:cancel`, summarize output, or do follow-up work of its own.
-- Leave `--effort` unset unless the user explicitly asks for a specific reasoning effort. Task runs never inject an effort default; the pair workflow applies defaults only to OpenAI `gpt-*` models. An explicit `--effort` is forwarded verbatim, including for provider models that may ignore or reject it. Never invent an effort the user did not ask for.
-- Leave the model unset unless the user explicitly asks for one. Otherwise pass the user's
-  `--model` value through verbatim — a model id or one of the plugin aliases (`codex:mini`,
-  `codex:sol`, `codex:terra`, `codex:luna`, `codex:kimi`, `codex:qwen`, `codex:deepseek`,
-  `codex:glm`); the runtime resolves aliases itself, and `/stereo:setup` shows each provider
-  alias's readiness. The bare form without the `codex:` prefix is also accepted; forward either
-  verbatim because the runtime strips the prefix. The runtime rejects `claude:*` values, so a
-  Claude selection must never be forwarded.
-- Leave `--resume` and `--fresh` in the forwarded request. The subagent handles that routing when it builds the `task` command.
+- Model, effort, `--resume`, and `--fresh` handling belongs to the subagent's `codex-cli-runtime`
+  skill: leave those flags in the forwarded request untouched and never treat them as task text.
+  The runtime rejects `claude:*` values, so a Claude selection must never be forwarded.
 - If the helper reports that Codex is missing or unauthenticated, stop and tell the user to run `/stereo:setup`.
 - If the user did not supply a request, ask what Codex should investigate or fix.

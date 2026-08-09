@@ -79,13 +79,9 @@ Before any routed step, run:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
 ```
 
-Read `roleDefaults`. If the command fails, report that failure and continue with built-in
-defaults. If an entry has a non-null `invalidReason`, report it and use the built-in default for
-that role. Resolve the planner as `--planner` > stored `planner` > `claude:fable`, and the plan
-reviewer as `--plan-reviewer` > stored `planReviewer` > `codex:sol`. For each Codex-routed role,
-resolve effort as role effort flag > command-wide `--effort` > stored role effort > model pair
-default. Report a stored effort for a Claude-routed role as inert. Resolve stored `claude:*`
-selections as Claude routes and never pass them to the companion's `--model` flag.
+Apply the routing skill's "Workspace role defaults" mechanics to the result. This command's
+roles: the planner resolves as `--planner` > stored `planner` > `claude:fable`; the plan reviewer
+as `--plan-reviewer` > stored `planReviewer` > `codex:sol`.
 
 ## Stored-plan overwrite guard
 

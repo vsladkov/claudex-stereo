@@ -17,6 +17,7 @@ import {
 import type { ShutdownOutcome } from '../broker/lifecycle.ts';
 import {
   PLUGIN_DATA_ENV,
+  disableStateFileWarnings,
   loadState,
   nowIso,
   readJobFile,
@@ -106,10 +107,6 @@ async function cleanupSessionJobs(
   }
 
   for (const job of removedJobs) {
-    const stillRunning = job.status === 'queued' || job.status === 'running';
-    if (!stillRunning) {
-      continue;
-    }
     const pid = job.pid ?? Number.NaN;
     let storedJob: JobRecord | null = null;
     try {
@@ -298,6 +295,9 @@ async function handleSessionEnd(input: SessionHookInput): Promise<void> {
 }
 
 export async function runSessionLifecycleHook(): Promise<void> {
+  // Hook stdio is a protocol surface: corrupt-state breadcrumbs stay in CLI
+  // invocations only (silence here is pinned by the session-hook tests).
+  disableStateFileWarnings();
   const input = readHookInput();
   const eventName = process.argv[2] ?? input.hook_event_name ?? '';
 

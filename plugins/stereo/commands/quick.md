@@ -116,11 +116,8 @@ Before any routed step, run:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
 ```
 
-Read `roleDefaults`. If the command fails, report the failure and continue with built-in defaults.
-Ignore an entry with a non-null `invalidReason`, report its warning, and use the built-in default
-for that role. Report a stored effort for a Claude-routed role as inert. Resolve stored `claude:*`
-selections as Claude routes and never pass them to the companion's `--model` flag. When a
-workspace default supplies a role's model, say so in the effective-role recap.
+Apply the routing skill's "Workspace role defaults" mechanics to the result. When a workspace
+default supplies a role's model, say so in the effective-role recap.
 
 ## Scope gate and draft
 

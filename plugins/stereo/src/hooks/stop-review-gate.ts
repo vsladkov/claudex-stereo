@@ -5,7 +5,7 @@ import { getCodexAvailability } from '../runtime/index.ts';
 import { readStdinJsonIfPiped } from '../shared/fs.ts';
 import { loadPromptTemplate, interpolateTemplate } from '../shared/prompts.ts';
 import { COMPANION_ENTRY, PROMPTS_ROOT } from '../shared/paths.ts';
-import { getConfig, listJobs } from '../workspace/state.ts';
+import { disableStateFileWarnings, getConfig, listJobs } from '../workspace/state.ts';
 import { filterJobsForCurrentSession, sortJobsNewestFirst } from '../jobs/job-control.ts';
 import { SESSION_ID_ENV } from '../jobs/tracked-jobs.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
@@ -193,6 +193,9 @@ export function evaluateStopReview(
 }
 
 export function runStopReviewGateHook(): void {
+  // Hook stdio is a protocol surface: corrupt-state breadcrumbs stay in CLI
+  // invocations only.
+  disableStateFileWarnings();
   const input = readHookInput();
   const cwd = input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const workspaceRoot = resolveWorkspaceRoot(cwd);

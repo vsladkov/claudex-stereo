@@ -1,16 +1,20 @@
 ---
 description: Show the stored pair plan document with its verdict, rounds, open questions, and residual risks, or compare two slots
-argument-hint: '[--list] [--compare <slotA> <slotB>] [--open|--clear|--mark-implemented] [--slot <name>]'
+argument-hint: '[--list] [--compare <slotA> <slotB>] [--open|--clear|--mark-implemented|--metadata] [--slot <name>]'
 disable-model-invocation: true
 allowed-tools: Bash(node:*), AskUserQuestion
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state`
+!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --metadata`
 
 Raw slash-command arguments:
 `$ARGUMENTS`
 
-The preamble always shows the `default` slot. With `--list`, `--compare`, or an explicit `--slot`,
+The preamble shows the `default` slot's metadata only, so a flagged invocation never pays for a
+plan document it will not use. With no arguments, run
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state` and present that full output
+(metadata plus the stored plan document) instead of the preamble. With `--list`, `--compare`, or
+an explicit `--slot`,
 run the requested companion command and present that output instead.
 
 Apply at most one action:

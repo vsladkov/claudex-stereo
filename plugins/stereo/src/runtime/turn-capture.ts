@@ -978,12 +978,20 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
     dispatchNotificationSafely(message);
   });
 
-  const buildConnectionClosedError = (): Error => {
-    const detail = client.exitError?.message ? `: ${client.exitError.message}` : '';
+  const buildConnectionClosedError = (cause?: Error): Error => {
+    const underlying = client.exitError ?? cause ?? null;
+    const detail = underlying?.message ? `: ${underlying.message}` : '';
     return new Error(`codex app-server connection closed before the turn completed${detail}`, {
-      cause: client.exitError ?? undefined,
+      cause: underlying ?? undefined,
     });
   };
+  // On the broker transport the shared app-server's death reaches us as a
+  // relayed RPC error while our own socket is still open (exitResolved
+  // false), so recognize the transport-generated death message as the same
+  // connection-closed condition rather than racing on exitResolved alone.
+  const isAppServerDeathError = (error: unknown): error is Error =>
+    error instanceof Error &&
+    /codex app-server (exited unexpectedly|connection closed)/.test(error.message);
   const connectionExit: Promise<never> = client.exitPromise.then(() => {
     throw buildConnectionClosedError();
   });
@@ -992,6 +1000,9 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
     .catch((error) => {
       if (client.exitResolved) {
         throw buildConnectionClosedError();
+      }
+      if (isAppServerDeathError(error)) {
+        throw buildConnectionClosedError(error);
       }
       throw error;
     });

@@ -16,6 +16,7 @@ import {
   registerBrokerReaping,
   requireCompanionState,
   waitFor,
+  runCliInProcess,
 } from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 import {
@@ -453,9 +454,8 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.match(fakeState.lastTurnStart.prompt, /revision that responds to your earlier findings/);
   assert.doesNotMatch(fakeState.lastTurnStart.prompt, /<repository_map>/);
 
-  const planState = run('node', [SCRIPT, 'plan-state', '--json'], {
-    cwd: repo,
-    env: buildEnv(binDir),
+  const planState = await runCliInProcess(['plan-state', '--json', '--cwd', repo], {
+    CODEX_HOME: buildEnv(binDir).CODEX_HOME,
   });
   assert.equal(planState.status, 0, planState.stderr);
   const planPayload = JSON.parse(planState.stdout);
@@ -512,9 +512,8 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   const thirdPayload = JSON.parse(third.stdout);
   assert.ok(thirdPayload.parseError);
 
-  const preserved = run('node', [SCRIPT, 'plan-state', '--json'], {
-    cwd: repo,
-    env: buildEnv(binDir),
+  const preserved = await runCliInProcess(['plan-state', '--json', '--cwd', repo], {
+    CODEX_HOME: buildEnv(binDir).CODEX_HOME,
   });
   assert.equal(preserved.status, 0, preserved.stderr);
   const preservedPayload = JSON.parse(preserved.stdout);
@@ -574,9 +573,8 @@ test('plan-review preserves stored state when a later round returns scalar JSON'
     /Codex returned JSON with an unexpected plan-review shape\./,
   );
 
-  const preserved = run('node', [SCRIPT, 'plan-state', '--json'], {
-    cwd: repo,
-    env,
+  const preserved = await runCliInProcess(['plan-state', '--json', '--cwd', repo], {
+    CODEX_HOME: env.CODEX_HOME,
   });
   assert.equal(preserved.status, 0, preserved.stderr);
   const preservedPayload = JSON.parse(preserved.stdout);
@@ -585,18 +583,16 @@ test('plan-review preserves stored state when a later round returns scalar JSON'
   assert.equal(preservedPayload.plan, 'Initial durable plan');
 });
 
-test('plan-state reports unavailable before any plan review has run', () => {
+test('plan-state reports unavailable before any plan review has run', async () => {
   const workspace = makeTempDir();
 
-  const result = run('node', [SCRIPT, 'plan-state', '--json'], {
-    cwd: workspace,
-  });
+  const result = await runCliInProcess(['plan-state', '--json', '--cwd', workspace]);
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), { available: false, slot: 'default' });
 });
 
-test('plan-store persists a Claude-reviewed plan and round-trips through plan-state', () => {
+test('plan-store persists a Claude-reviewed plan and round-trips through plan-state', async () => {
   const workspace = makeTempDir();
   const payloadDir = makeTempDir();
   const plan = '# Approved mixed plan\n\nImplement the selected changes.\n';
@@ -636,7 +632,10 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
 
   assert.equal(stored.status, 0, stored.stderr);
   const storedPayload = JSON.parse(stored.stdout);
-  assert.equal(storedPayload.plan, plan);
+  // plan-store answers with metadata only: the caller supplied the plan text
+  // on stdin one pipe earlier, so echoing it back is pure repetition.
+  assert.equal(storedPayload.plan, undefined);
+  assert.equal(storedPayload.planChars, plan.length);
   assert.equal(storedPayload.threadId, null);
   assert.equal(storedPayload.model, null);
   assert.equal(storedPayload.effort, null);
@@ -650,13 +649,16 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.deepEqual(storedPayload.residualRisks, [...planStoreResidualRisks]);
   assert.match(storedPayload.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 
-  const state = run('node', [SCRIPT, 'plan-state', '--json'], { cwd: workspace });
+  const state = await runCliInProcess(['plan-state', '--json', '--cwd', workspace]);
   assert.equal(state.status, 0, state.stderr);
   const statePayload = JSON.parse(state.stdout);
   assert.equal(statePayload.available, true);
+  assert.equal(statePayload.plan, plan);
   assert.deepEqual(
-    Object.fromEntries(Object.entries(statePayload).filter(([key]) => key !== 'available')),
-    storedPayload,
+    Object.fromEntries(
+      Object.entries(statePayload).filter(([key]) => key !== 'available' && key !== 'plan'),
+    ),
+    Object.fromEntries(Object.entries(storedPayload).filter(([key]) => key !== 'planChars')),
   );
   assert.equal(statePayload.verdict, 'approve');
 
@@ -672,7 +674,7 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   assert.match(rendered.stdout, /# Approved mixed plan/);
 });
 
-test('plan-store persists file-based metadata and round-trips it through plan-state', () => {
+test('plan-store persists file-based metadata and round-trips it through plan-state', async () => {
   const workspace = makeTempDir();
   const payloadDir = makeTempDir();
   const plan = '# Approved file metadata plan\n\nKeep prose out of shell arguments.\n';
@@ -724,9 +726,11 @@ test('plan-store persists file-based metadata and round-trips it through plan-st
   assert.deepEqual(storedPayload.openQuestions, [...planStoreOpenQuestions]);
   assert.deepEqual(storedPayload.residualRisks, [...planStoreResidualRisks]);
 
-  const state = run('node', [SCRIPT, 'plan-state', '--json'], { cwd: workspace });
+  const state = await runCliInProcess(['plan-state', '--json', '--cwd', workspace]);
   assert.equal(state.status, 0, state.stderr);
-  assert.deepEqual(JSON.parse(state.stdout), { available: true, ...storedPayload });
+  const { planChars, ...storedMetadata } = storedPayload;
+  assert.equal(planChars, plan.length);
+  assert.deepEqual(JSON.parse(state.stdout), { available: true, plan, ...storedMetadata });
 });
 
 test('plan-store treats blank file metadata as absent lists and summary', () => {
@@ -794,10 +798,16 @@ test('plan-store --slot writes and round-trips only the named plan file', () => 
     cwd: workspace,
   });
   assert.equal(state.status, 0, state.stderr);
-  assert.deepEqual(JSON.parse(state.stdout), { available: true, ...storedPayload });
-  const { slot: storedSlot, ...storedRecord } = storedPayload;
+  const { slot: storedSlot, planChars, ...storedRecord } = storedPayload;
   assert.equal(storedSlot, 'windows-lane');
-  assert.deepEqual(loadPairPlanState(workspace, 'windows-lane'), storedRecord);
+  assert.equal(planChars, plan.length);
+  assert.deepEqual(JSON.parse(state.stdout), {
+    available: true,
+    plan,
+    ...storedRecord,
+    slot: storedSlot,
+  });
+  assert.deepEqual(loadPairPlanState(workspace, 'windows-lane'), { ...storedRecord, plan });
 });
 
 test('plan-store preserves pair defaults and controls the stored review thread explicitly', () => {
@@ -886,7 +896,7 @@ test('plan-store preserves pair defaults and controls the stored review thread e
   assert.match(conflict.stderr, /Choose either --thread <id> or --no-thread\./);
 });
 
-test('plan-store preserves round zero for drafts and keeps other round validation strict', () => {
+test('plan-store preserves round zero for drafts and keeps other round validation strict', async () => {
   const workspace = makeTempDir();
   const plan = [
     '## Goal',
@@ -923,7 +933,7 @@ test('plan-store preserves round zero for drafts and keeps other round validatio
   assert.equal(draftPayload.reviewedBy, null);
   assert.deepEqual(draftPayload.findings, []);
 
-  const state = run('node', [SCRIPT, 'plan-state', '--json'], { cwd: workspace });
+  const state = await runCliInProcess(['plan-state', '--json', '--cwd', workspace]);
   assert.equal(state.status, 0, state.stderr);
   assert.equal(JSON.parse(state.stdout).round, 0);
 
@@ -1376,7 +1386,7 @@ test('plan-state --compare rejects missing, duplicate, and conflicting slot argu
   );
   await assert.rejects(
     () => handlePlanState(['--cwd', workspace, '--compare', '--list', 'left', 'right']),
-    /Choose one of --list, --open, --clear, --mark-implemented, or --compare\./,
+    /Choose one of --list, --open, --clear, --mark-implemented, --compare, or --metadata\./,
   );
 });
 
@@ -1520,7 +1530,7 @@ test('plain plan-state keeps its text and JSON output byte-identical', async () 
   const jsonOutput = await captureStdout(() =>
     handlePlanState(['--cwd', workspace, '--json'], deps),
   );
-  assert.equal(jsonOutput, `${JSON.stringify(expectedPayload, null, 2)}\n`);
+  assert.equal(jsonOutput, `${JSON.stringify(expectedPayload)}\n`);
   const payload = JSON.parse(jsonOutput);
   assert.equal(Object.hasOwn(payload, 'exportedPath'), false);
   assert.equal(Object.hasOwn(payload, 'openedInEditor'), false);
@@ -1677,7 +1687,7 @@ test('plan-state mutations reject missing plans and conflicting actions', async 
 
   await assert.rejects(
     () => handlePlanState(['--cwd', workspace, '--open', '--clear']),
-    /Choose one of --list, --open, --clear, --mark-implemented, or --compare\./,
+    /Choose one of --list, --open, --clear, --mark-implemented, --compare, or --metadata\./,
   );
   await assert.rejects(
     () => handlePlanState(['--cwd', workspace, '--list', '--slot', 'named']),
@@ -1773,18 +1783,22 @@ test('plan-review --background enqueues a detached worker and stores structured 
   assert.equal(resultPayload.job.id, launchPayload.jobId);
   assert.equal(resultPayload.job.status, 'completed');
   assert.equal(resultPayload.storedJob.result.result.verdict, 'needs-revision');
-  assert.match(resultPayload.storedJob.rendered, /# Codex Plan Review/);
+  // The printed payload is slimmed: the persistence-only copies (rendered,
+  // request) stay in the job file but never re-print to the caller.
+  assert.equal(Object.hasOwn(resultPayload.storedJob, 'rendered'), false);
+  assert.equal(Object.hasOwn(resultPayload.storedJob, 'request'), false);
+  const storedJobFile = JSON.parse(fs.readFileSync(jobFile, 'utf8'));
+  assert.match(storedJobFile.rendered, /# Codex Plan Review/);
   const stateAfterCompletion = requireCompanionState(repo, env);
   const indexedAfterCompletion = stateAfterCompletion.jobs.find(
     (job: Record<string, any>) => job.id === launchPayload.jobId,
   );
   assert.ok(indexedAfterCompletion);
   assert.equal(Object.hasOwn(indexedAfterCompletion, 'request'), false);
-  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(jobFile, 'utf8')), 'request'), true);
+  assert.equal(Object.hasOwn(storedJobFile, 'request'), true);
 
-  const planState = run('node', [SCRIPT, 'plan-state', '--json'], {
-    cwd: repo,
-    env: buildEnv(binDir),
+  const planState = await runCliInProcess(['plan-state', '--json', '--cwd', repo], {
+    CODEX_HOME: buildEnv(binDir).CODEX_HOME,
   });
   assert.equal(planState.status, 0, planState.stderr);
   assert.equal(JSON.parse(planState.stdout).available, true);
