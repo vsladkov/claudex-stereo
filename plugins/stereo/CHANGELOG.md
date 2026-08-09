@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.47.0
+
+- Record reviewer attribution on auto-stored Codex plan reviews: every successfully parsed
+  round now stores a `reviewedBy` label in the same `codex:<model>` form the explicit
+  `plan-store --reviewed-by` flag uses, so the implement and tournament preflights can name the
+  approving reviewer, outside-thread implementer preambles keep their attribution, and a
+  re-review replaces a stale label instead of silently dropping it
+
 ## 1.46.0
 
 - Let the planner refuse honestly: when a task exceeds the size contract, the draft step returns
