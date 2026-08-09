@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.46.0
+
+- Let the planner refuse honestly: when a task exceeds the size contract, the draft step returns
+  a single `SPLIT REQUIRED: <reason>` line that `/stereo:plan` and `/stereo:quick` recognize
+  before heading validation — a compliant refusal is relayed as a split proposal instead of
+  being retried into an oversized plan
+- Cut repeated review-round cost: resumed Codex plan-review rounds send a compact round message
+  on the warm thread instead of re-paying the full review brief every round, the
+  implementation-review brief fences its untrusted blocks once instead of three times, and the
+  stop-gate brief is deduplicated with every verdict shorthand matching the parser's
+  `ALLOW:`/`BLOCK:` format, closing a fail-closed trap on compliant verdicts
+- Finish the metadata-only output work: `plan-state --mark-implemented --json` returns metadata
+  like `plan-store`, the reads that only need review metadata (the plan overwrite guard, Quick's
+  existing-plan warning, the `--clear` confirmation) use `plan-state --metadata`, and foreground
+  `--json` payloads drop the overflow counters alongside their capture arrays
+- Harden the remaining runtime edges: the POSIX shutdown escalation follows an undeliverable
+  process-group kill with `SIGKILL` and repeated `close()` calls can no longer wedge, the CLI
+  resets its JSON-output decision per invocation, and `plan-review` honors `--workspace` for
+  durable state and broker keying
+- Correct instruction drift: review templates name every schema-required finding field and never
+  place instructions inside distrust-fenced blocks, tournament's usage recording matches the
+  `--report` payload shape, status presentation matches the one-line recent-jobs format, and the
+  CI workflow keys its Codex CLI cache and installs from a single version value
+
 ## 1.45.0
 
 - Slim every machine-facing output down to the answer: `result --json` and foreground `--json`
