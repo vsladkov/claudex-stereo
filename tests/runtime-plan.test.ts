@@ -394,6 +394,25 @@ test('plan-review --slot persists the reviewed plan only in the named slot', () 
   run('git', ['commit', '-m', 'init'], { cwd: repo });
   const env = buildEnv(binDir);
 
+  // Seed the slot with a Claude-labeled record so the Codex round must replace
+  // the reviewer label, not merely add one to an empty slot.
+  const seeded = run(
+    'node',
+    [
+      SCRIPT,
+      'plan-store',
+      '--json',
+      '--slot',
+      'Windows-Lane',
+      '--verdict',
+      'approve',
+      '--reviewed-by',
+      'claude:opus',
+    ],
+    { cwd: repo, env, input: '# Prior Claude-reviewed plan\n' },
+  );
+  assert.equal(seeded.status, 0, seeded.stderr);
+
   const result = run(
     'node',
     [SCRIPT, 'plan-review', '--slot', 'Windows-Lane', 'Ship the Windows plan'],
@@ -409,6 +428,7 @@ test('plan-review --slot persists the reviewed plan only in the named slot', () 
   );
   assert.equal(stored.verdict, 'approve');
   assert.match(stored.plan, /Windows plan/);
+  assert.equal(stored.reviewedBy, 'codex:gpt-5.6-sol');
 });
 
 test('plan-review --thread resumes the same pair thread read-only and stores plan state', async () => {
@@ -463,6 +483,7 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(planPayload.round, 2);
   assert.equal(planPayload.verdict, 'needs-revision');
   assert.equal(planPayload.threadId, threadId);
+  assert.equal(planPayload.reviewedBy, 'codex:gpt-5.6-sol');
   assert.match(planPayload.plan, /Revised plan draft/);
   assert.deepEqual(planPayload.findings, [
     {

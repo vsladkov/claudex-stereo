@@ -193,6 +193,10 @@ export async function executePlanReviewRun(
         // Stored camelCase deliberately (pair-plan state is a companion-internal
         // record); the reviewer-facing schema field is snake_case residual_risks.
         residualRisks: parsedPlanReview.residual_risks ?? [],
+        // Mirrors plan-store's --reviewed-by so every stored verdict names its
+        // reviewer; omitting it left Codex-reviewed plans without attribution in
+        // the implement/tournament "by reviewedBy when present" preambles.
+        reviewedBy: request.model ? `codex:${request.model}` : 'codex',
         updatedAt: nowIso(),
       },
       planSlotOrDefault(request.slot),
