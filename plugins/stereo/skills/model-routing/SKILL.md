@@ -94,7 +94,7 @@ per-invocation Claude effort is not available on the Agent invocation surface.
 
 ## Workspace role defaults
 
-Before any routed step in `/stereo:plan`, `/stereo:implement`, or `/stereo:quick`, read this
+Before any routed step in `/stereo:plan`, `/stereo:implement`, `/stereo:quick`, or `/stereo:tournament`, read this
 repository's defaults with:
 
 ```bash

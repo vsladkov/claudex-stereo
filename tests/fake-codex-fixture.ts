@@ -399,7 +399,9 @@ function structuredReviewPayload(prompt) {
     return "not valid json";
   }
 
-  if (prompt.includes("adversarial plan review")) {
+  // Round 1 carries the full template ("adversarial plan review" role);
+  // resumed rounds send the compact round message instead.
+  if (prompt.includes("adversarial plan review") || prompt.includes("This is review round")) {
     if (BEHAVIOR === "plan-review-scalar-json") {
       return JSON.stringify("needs-revision");
     }
@@ -443,7 +445,7 @@ function structuredReviewPayload(prompt) {
 }
 
 function taskPayload(prompt, resume) {
-  if (prompt.includes("<task>") && prompt.includes("Only review the work from the previous Claude turn.")) {
+  if (prompt.includes("<task>") && prompt.includes("Run a stop-gate review of the previous Claude turn.")) {
     if (BEHAVIOR === "adversarial-clean") {
       return "ALLOW: No blocking issues found in the previous turn.";
     }

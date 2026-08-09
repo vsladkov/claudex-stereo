@@ -182,6 +182,7 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
     const request = {
       kind: 'plan-review',
       cwd,
+      workspaceRoot,
       model,
       effort,
       plan,
@@ -200,6 +201,7 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
     (progress) =>
       executePlanReviewRun({
         cwd,
+        workspaceRoot,
         model,
         effort,
         plan,
@@ -393,7 +395,13 @@ export async function handlePlanState(
       slot,
     );
     outputCommandResult(
-      { available: true, ...updated, slot },
+      {
+        available: true,
+        ...updated,
+        plan: undefined,
+        planChars: typeof updated.plan === 'string' ? updated.plan.length : 0,
+        slot,
+      },
       renderStoredPlanMetadata(updated, slot === DEFAULT_PLAN_SLOT ? null : slot),
       options.json,
     );

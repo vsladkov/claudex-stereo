@@ -333,6 +333,10 @@ function slimForegroundPayload(payload: unknown): unknown {
   const slimmed = { ...record };
   delete slimmed.commandExecutions;
   delete slimmed.fileChanges;
+  // The overflow counters describe the deleted arrays; keeping them would
+  // present a self-referencing count for data that is not there.
+  delete slimmed.commandExecutionsOmitted;
+  delete slimmed.fileChangesOmitted;
   return slimmed;
 }
 

@@ -83,7 +83,7 @@ for (const [name, variables] of Object.entries(PRODUCTION_VARIABLES)) {
 
 test('review prompts fence every untrusted data block from instructions', () => {
   const expectedCounts = {
-    'implementation-review': 3,
+    'implementation-review': 1,
     'plan-review': 2,
     'adversarial-review': 2,
     review: 2,

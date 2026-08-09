@@ -1636,6 +1636,10 @@ test('plan-state --mark-implemented preserves review time and renders the marker
   assert.equal(payload.slot, 'default');
   assert.equal(payload.updatedAt, record.updatedAt);
   assert.equal(Number.isFinite(Date.parse(payload.implementedAt)), true);
+  // Metadata only: the orchestrator already holds the plan; echoing it back
+  // at the end of every accepted phase was the fold's stated removal.
+  assert.equal(Object.hasOwn(payload, 'plan') && payload.plan !== undefined, false);
+  assert.equal(payload.planChars, record.plan.length);
 
   const stored = loadPairPlanState(workspace) as StoredPairPlanState;
   assert.equal(stored.updatedAt, record.updatedAt);

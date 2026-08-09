@@ -22,8 +22,11 @@ If the user did not pass a job ID:
 - Keep non-verbose output compact. Preserve the `Session runtime:` and `Review gate:` header lines
   above the table, but do not include progress blocks or other prose outside the table except for
   a `Warnings:` section from the command output.
-- Preserve the actionable fields from the command output, including job ID, kind, model, status, phase, elapsed or duration, summary, and follow-up commands.
-- Keep the `Model` column in the table; it may show `model@provider`, and an absent model must remain `-`.
+- Preserve the actionable fields the command output actually contains. Active jobs and the
+  latest finished job carry job ID, kind, model, status, phase, elapsed or duration, summary, and
+  follow-up commands; other recent jobs render as one line (id, status, kind, title, duration) —
+  present that line as-is and never invent the fields it omits.
+- Keep the `Model` column in the active-jobs table; it may show `model@provider`, and an absent model must remain `-`.
 
 If the user did pass a job ID:
 

@@ -524,3 +524,21 @@ test('implement-state exposes corrupt state and rejects conflicting or misplaced
     await assertJsonError(repo, env, args, '--slot applies only to --record.');
   }
 });
+
+test('in-process invocations do not leak the JSON-output decision across runs', async () => {
+  const { repo, env } = setupRepo();
+
+  // Invocation 1 requests JSON and succeeds.
+  const first = await runImplementState(repo, env, ['--json']);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(JSON.parse(first.stdout).available, false);
+
+  // Invocation 2 does NOT request JSON and fails inside argument parsing
+  // (missing --state-file value). A spawned CLI prints no {"error"} envelope
+  // here; the in-process run must match — a stale sticky flag from
+  // invocation 1 used to leak through wasJsonRequested.
+  const second = await runImplementState(repo, env, ['--record', '--state-file']);
+  assert.notEqual(second.status, 0);
+  assert.equal(second.stdout.includes('"error"'), false, second.stdout);
+  assert.match(second.stderr, /Missing value for --state-file/);
+});

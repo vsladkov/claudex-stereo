@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CODEX_CLI_VERSION: 0.146.0
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -37,11 +40,11 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.codex-cli-prefix
-          key: codex-cli-0.146.0-${{ runner.os }}
+          key: codex-cli-${{ env.CODEX_CLI_VERSION }}-${{ runner.os }}
 
       - name: Install Codex CLI
         if: steps.codex-cache.outputs.cache-hit != 'true'
-        run: npm install -g --prefix "$HOME/.codex-cli-prefix" @openai/codex@0.146.0
+        run: npm install -g --prefix "$HOME/.codex-cli-prefix" "@openai/codex@$CODEX_CLI_VERSION"
 
       - name: Add Codex CLI to PATH
         run: echo "$HOME/.codex-cli-prefix/bin" >> "$GITHUB_PATH"
@@ -83,7 +86,7 @@ jobs:
         run: npm run test:windows
 
       - name: Install Codex CLI
-        run: npm install -g @openai/codex@0.146.0
+        run: npm install -g "@openai/codex@$env:CODEX_CLI_VERSION"
 
       - name: Run build
         run: npm run build

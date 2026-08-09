@@ -467,7 +467,8 @@ For each completed prose-report job fetch:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" result <jobId> --report --json
 ```
 
-Save `report`, `threadId`, and `tokenUsage`; record `storedJob.tokenUsage.job` as per-invocation
+Save `report`, `threadId`, and `tokenUsage`; the `--report` payload has no `storedJob`, so record
+the payload's top-level `tokenUsage.job` as per-invocation
 usage and use `usage unavailable` when omitted. Apply the relaunch-once rule above if a terminal
 result reveals the qualifying busy failure. After each job reaches terminal and its result is
 fetched, use the tournament state update action to save its status, `threadId`, and a bounded usage
@@ -611,7 +612,9 @@ Present one comparison-table row per non-empty completed contestant. Include:
 - reported deviations
 - per-invocation usage and duration for both implementer and reviewer turns
 
-For Codex use `storedJob.tokenUsage.job`; for named Claude use the Agent result. This applies to
+For a Codex contestant use the `--report` payload's top-level `tokenUsage.job`; for a Codex
+reviewer use `storedJob.tokenUsage.job` from its `result --json` fetch; for named Claude use the
+Agent result. This applies to
 both contestants and reviewers. Print `usage unavailable` rather than omitting an unavailable
 metric. State beside the table that no candidate has passed the orchestrator's authoritative
 main-tree gates: contestant self-reports are `contestant-reported checks` only, never

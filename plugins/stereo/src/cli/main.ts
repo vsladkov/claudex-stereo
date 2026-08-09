@@ -1,6 +1,6 @@
 import process from 'node:process';
 
-import { wasJsonRequested } from './io.ts';
+import { resetJsonRequestState, wasJsonRequested } from './io.ts';
 import { printUsage } from './usage.ts';
 
 // Each case imports its handler lazily: a static import list here pulled the
@@ -75,6 +75,7 @@ async function main(fullArgv: string[]): Promise<void> {
 }
 
 export function runCli(argv: string[]): Promise<void> {
+  resetJsonRequestState();
   return main(argv).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     if (wasJsonRequested(argv)) {

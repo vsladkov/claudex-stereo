@@ -146,9 +146,11 @@ any other part of the template:
 
 - `{{TARGET_LABEL}}` = `targetLabel`.
 - `{{REVIEW_COLLECTION_GUIDANCE}}` = an instruction to inspect the exact resolved target directly
-  with read-only git and repository reads, including untracked files for a working-tree review.
-- `{{REVIEW_INPUT}}` = an instruction that repository context is available through those tools and
-  that only the resolved target is reviewable.
+  with read-only git and repository reads, including untracked files for a working-tree review,
+  and that repository context is available only through those tools — only the resolved target
+  is reviewable.
+- `{{REVIEW_INPUT}}` = the literal `No inline repository context is embedded for this review.` —
+  this block is fenced as untrusted data by the template, so it must never carry instructions.
 - `{{USER_FOCUS}}` = the trailing focus text verbatim, or `No extra focus provided.` when empty.
 
 Do not summarize the template: use the complete filled template as the review brief.

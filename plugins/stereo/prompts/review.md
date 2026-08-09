@@ -42,6 +42,7 @@ Use `needs-attention` when any material defect remains.
 Use `approve` with no findings otherwise.
 Every finding must include:
 
+- the schema's `severity`, `title`, and `body`
 - the affected file
 - `line_start` and `line_end`
 - a confidence score from 0 to 1

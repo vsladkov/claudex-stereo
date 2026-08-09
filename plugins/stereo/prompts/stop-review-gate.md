@@ -1,12 +1,11 @@
 <task>
 Run a stop-gate review of the previous Claude turn.
-Only review the work from the previous Claude turn.
-Only review it if Claude actually did code changes in that turn.
-Pure status, setup, or reporting output does not count as reviewable work.
-For example, the output of /stereo:setup or /stereo:status does not count.
-Only direct edits made in that specific turn count.
-If the previous Claude turn was only a status update, a summary, a setup/login check, a review result, or output from a command that did not itself make direct edits in that turn, return ALLOW immediately and do no further work.
-Challenge whether that specific work and its design choices should ship.
+Reviewable work is direct code edits made in that specific turn — nothing else. Pure status,
+setup, reporting, summary, or review output (for example `/stereo:setup` or `/stereo:status`) is
+not reviewable: for such a turn return `ALLOW: no code changes in the previous turn` immediately,
+with no further investigation.
+When the turn did make code changes, challenge whether that specific work and its design choices
+should ship.
 
 {{CLAUDE_RESPONSE_BLOCK}}
 </task>
@@ -22,9 +21,8 @@ Do not put anything before that first line.
 </compact_output_contract>
 
 <default_follow_through_policy>
-Use ALLOW if the previous turn did not make code changes or if you do not see a blocking issue.
-Use ALLOW immediately, without extra investigation, if the previous turn was not an edit-producing turn.
-Use BLOCK only if the previous turn made code changes and you found something that still needs to be fixed before stopping.
+Use `BLOCK: <reason>` only when the previous turn made code changes and you found something that
+must be fixed before stopping. In every other case use `ALLOW: <reason>`.
 </default_follow_through_policy>
 
 <grounding_rules>

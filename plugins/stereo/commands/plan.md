@@ -87,10 +87,11 @@ as `--plan-reviewer` > stored `planReviewer` > `codex:sol`.
 
 Apply this guard only to a run that will store new plan content: the full phase, `--draft-only`, or
 `--review-only --plan-file`. Plain `--review-only` reviews the stored target slot and skips this
-guard entirely. Run the guard before drafting or routing any review:
+guard entirely. Run the guard before drafting or routing any review (metadata only — the guard
+never needs the plan body):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json <slotArg>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --metadata --json <slotArg>
 ```
 
 If `available` is false, continue. If `implementedAt` is present, report it and continue without
@@ -206,8 +207,9 @@ concrete evidence.
 Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-draft.md` and fill it without changing any other text:
 
 - `{{TASK_TEXT}}` = the task text verbatim.
-- `{{SIZE_CONTRACT}}` = `If an honest draft needs more than roughly 400 lines, propose splitting
-the task before review.`
+- `{{SIZE_CONTRACT}}` = `If an honest draft needs more than roughly 400 lines, do not draft:
+return exactly one line — SPLIT REQUIRED: <one-sentence reason> — and nothing else, so the split
+can be discussed before review.`
 
 The result is the single `planDraftBrief` for every route. Never write the draft into the user's
 repository; a Codex route may write it only as a payload file under the routing skill's
@@ -233,8 +235,11 @@ For a named-Claude draft, record the Agent result's token usage and duration. Fo
 record any invocation metrics the harness exposes. Use `usage unavailable` when the relevant
 result omits metrics.
 
-Validate the seven headings. For malformed named-Claude output, apply the routing skill's single
-retry. For malformed Codex output, apply the routing skill's malformed-output retry: write a retry
+Before heading validation, check for the size-contract sentinel: a result whose first line
+starts with `SPLIT REQUIRED:` is a compliant refusal, not malformed output — do not retry it;
+stop, relay the reason, and ask whether to split the task or draft anyway.
+Otherwise validate the seven headings. For malformed named-Claude output, apply the routing
+skill's single retry. For malformed Codex output, apply the routing skill's malformed-output retry: write a retry
 instruction naming the exact validation error, restating the seven-heading contract, and saying
 "return the corrected full plan" to `<retryPayloadFile>` under the routing skill's
 temporary-directory rule, then run:
@@ -254,7 +259,7 @@ temporary-directory rule, then store the draft with no reviewer label:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-store --json <slotArg> --verdict 'draft' --round 0 --no-thread --summary-file "<summaryPayloadFile>" < "<payloadFile>"
 ```
 
-Present the stored draft, identify the selected planner and its per-invocation usage/duration (or
+Present the draft from this run (plan-store returns metadata only, not the document), identify the selected planner and its per-invocation usage/duration (or
 `usage unavailable`), and stop. Name the stored slot. Say that the matching implementation command
 (`/stereo:implement` for `default`, `/stereo:implement --slot <slot>` otherwise) will gate on the
 unapproved `draft` verdict and that `--review-only` runs the next step.

@@ -26,6 +26,8 @@ prompt's surrounding conversation or your private reasoning.
 
 <output_contract>
 Return only the plan document, with no preamble, Markdown fence, or trailing commentary.
+The one exception: when the size contract above tells you to stop instead of drafting, return
+exactly one line — `SPLIT REQUIRED: <one-sentence reason>` — and nothing else.
 Use exactly these seven second-level headings, once each and in this order:
 
 ## Goal

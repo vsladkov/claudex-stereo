@@ -133,7 +133,8 @@ Read `${CLAUDE_PLUGIN_ROOT}/prompts/plan-draft.md` and fill it without changing 
 
 - `{{TASK_TEXT}}` = the task text verbatim.
 - `{{SIZE_CONTRACT}}` = `This is a compact Quick plan. If the task crosses features or subsystems,
-or an honest plan would exceed roughly 120 lines, stop and direct the user to /stereo:plan.`
+or an honest plan would exceed roughly 120 lines, do not draft: return exactly one line —
+SPLIT REQUIRED: <one-sentence reason> — and nothing else.`
 
 The result is the single `planDraftBrief` for every route. Never write the plan into the
 repository; a Codex route may write it only as a payload file under the routing skill's
@@ -153,15 +154,19 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task --background --json
 For a Codex draft, read `storedJob.result.rawOutput` and save its thread only as
 `plannerThreadId`. Record per-job usage from `storedJob.tokenUsage.job`. For a named-Claude draft,
 record the Agent result's token usage and duration. Record any inline metrics the harness exposes;
-otherwise use `usage unavailable`. Validate the seven headings and apply the routing skill's
+otherwise use `usage unavailable`. Before heading validation, check for the size-contract
+sentinel: a result whose first line starts with `SPLIT REQUIRED:` is a compliant refusal, not
+malformed output — do not retry it; stop, relay the reason, and direct the user to
+`/stereo:plan`. Otherwise validate the seven headings and apply the routing skill's
 one-retry recovery.
 
 ## Existing-plan warning
 
-After the scope gate but before review, load:
+After the scope gate but before review, load (metadata only — the warning never needs the plan
+body):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json <slotArg>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --metadata --json <slotArg>
 ```
 
 If `available` is true, warn that Quick will replace the plan in slot `<slot>`, naming its summary

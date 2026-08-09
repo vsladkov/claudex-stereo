@@ -410,7 +410,7 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     compactOutput: 1,
   });
   assert.match(quick, /skills\/model-routing\/SKILL\.md/);
-  assert.match(quick, /plan-state --json/);
+  assert.match(quick, /plan-state --metadata --json/);
   assert.match(quick, /config --json/);
   assert.match(quick, /plan-state --mark-implemented/);
   assert.match(quick, /plan-store --json/);

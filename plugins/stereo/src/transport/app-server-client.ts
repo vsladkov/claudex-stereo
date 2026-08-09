@@ -263,6 +263,7 @@ class AppServerClientBase {
 class SpawnedCodexAppServerClient extends AppServerClientBase {
   declare proc?: ChildProcessByStdio<Writable, Readable, Readable>;
   declare readline?: ReadlineInterface;
+  declare boundedExit?: Promise<unknown>;
 
   constructor(cwd: string, options: CodexAppServerClientOptions = {}) {
     super(cwd, options);
@@ -320,8 +321,10 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
   }
 
   async close(): Promise<void> {
-    if (this.closed) {
-      await this.exitPromise;
+    if (this.boundedExit) {
+      // Every close() (including re-entry) awaits the same bounded race, so
+      // a caller can never re-wedge on the raw exitPromise.
+      await this.boundedExit;
       return;
     }
 
@@ -354,17 +357,28 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
 
     // A codex that ignores stdin-EOF and SIGTERM must not wedge close()
     // forever (broker shutdown awaits it inside the SIGTERM handler):
-    // escalate to a tree kill after a bounded grace, then resolve.
+    // escalate after a bounded grace, then resolve. The direct child is not
+    // detached, so on POSIX the process-group tree kill cannot deliver
+    // (ESRCH: not a group leader) — SIGKILL to the pid is the escalation
+    // that actually lands there.
     const KILL_ESCALATION_MS = 3000;
-    await Promise.race([
+    this.boundedExit = Promise.race([
       this.exitPromise,
       new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
           if (this.proc && this.proc.exitCode === null) {
+            let delivered = false;
             try {
-              terminateProcessTree(this.proc.pid as number);
+              delivered = terminateProcessTree(this.proc.pid as number).delivered;
             } catch {
               // Best-effort: the process may have just exited.
+            }
+            if (!delivered) {
+              try {
+                this.proc.kill('SIGKILL');
+              } catch {
+                // Already gone.
+              }
             }
           }
           resolve();
@@ -377,6 +391,7 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
         });
       }),
     ]);
+    await this.boundedExit;
   }
 
   override sendMessage(message: unknown): void {

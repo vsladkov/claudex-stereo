@@ -61,7 +61,7 @@ Every round's `residual_risks` must restate the complete still-standing set, inc
 Set each finding's `section` to the plan heading it concerns, or "general".
 Put concrete, ordered plan edits in `revision_instructions`; leave it empty when approving.
 Put unresolvable unknowns that need a human decision in `open_questions`.
-Every finding must include a confidence score from 0 to 1 and a concrete recommendation.
+Every finding must include the schema's `severity`, `title`, and `body`, a confidence score from 0 to 1, and a concrete recommendation.
 </structured_output_contract>
 
 <grounding_rules>

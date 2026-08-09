@@ -37,6 +37,15 @@ export function normalizeArgv(argv: string[]): string[] {
 let jsonOutputRequested = false;
 let argvParseCompleted = false;
 
+// Called at the top of runCli: these globals model per-invocation state, and
+// the in-process test helper runs several invocations in one process — a
+// stale sticky value would make error-envelope behavior diverge from a
+// spawned CLI. One-shot processes are unaffected.
+export function resetJsonRequestState(): void {
+  jsonOutputRequested = false;
+  argvParseCompleted = false;
+}
+
 export function parseCommandInput(argv: string[], config: ParseArgsConfig = {}): ParsedArgs {
   const parsed = parseArgs(normalizeArgv(argv), {
     ...config,

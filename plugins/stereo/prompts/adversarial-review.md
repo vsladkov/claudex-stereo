@@ -58,6 +58,7 @@ Use `needs-attention` if there is any material risk worth blocking on.
 Use `approve` only if you cannot support any substantive adversarial finding from the provided context.
 Every finding must include:
 
+- the schema's `severity`, `title`, and `body`
 - the affected file
 - `line_start` and `line_end`
 - a confidence score from 0 to 1

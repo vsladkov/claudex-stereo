@@ -33,7 +33,7 @@ Apply at most one action:
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --open [--slot <slot>]` and
   relay the exported path and whether VS Code opened.
 - With `--clear` and an explicit slot, first run
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --json --slot <slot>` and use
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --metadata --json --slot <slot>` and use
   its summary, verdict, round, and `updatedAt` to describe that exact slot in the confirmation.
   Then use `AskUserQuestion` exactly once with `Delete the plan in slot <slot>` and
   `Keep it (Recommended)`. Without an explicit slot, retain the existing question:
@@ -48,7 +48,9 @@ Apply at most one action:
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --slot <slot>`.
 
 Present the full command output to the user. Do not summarize or condense it.
-Render the stored plan document as Markdown while preserving its contents verbatim.
+When the output includes the stored plan document (the no-argument and `--slot` reads), render
+it as Markdown while preserving its contents verbatim; action outputs (`--list`, `--clear`,
+`--mark-implemented`, `--metadata`) contain no plan document — do not fetch one to show.
 Clearing a slot removes the implementation record only when that record belongs to the cleared
 slot. When `--clear` also removes an implementation record, preserve the extra status and path
 lines. Relay the `Kept the implementation record...` line verbatim when it is present.

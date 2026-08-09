@@ -622,7 +622,7 @@ test('stop hook runs a stop-time review task and blocks on findings when the rev
   assert.match(fakeState.lastTurnStart.prompt, /<compact_output_contract>/i);
   assert.match(
     fakeState.lastTurnStart.prompt,
-    /Only review the work from the previous Claude turn/i,
+    /Run a stop-gate review of the previous Claude turn/i,
   );
   assert.match(
     fakeState.lastTurnStart.prompt,
