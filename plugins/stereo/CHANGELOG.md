@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.45.0
+
+- Slim every machine-facing output down to the answer: `result --json` and foreground `--json`
+  payloads carry one copy of the final message instead of three or four, `plan-store` and
+  `plan-state --mark-implemented` return metadata instead of echoing the stored plan back, a new
+  `plan-state --metadata` mode lets `/stereo:plan-state` open without shipping the plan body,
+  JSON output is compact, long foreground runs sample their progress echoes, and status reports
+  print static job metadata once with finished jobs collapsed to one line each
+- Make every companion invocation faster: workspace resolution is cached per process (a status
+  wait now spawns one git subprocess where it spawned hundreds), subcommand handlers load
+  lazily, and a live workspace broker vouches for Codex availability so trivial commands skip
+  the probe spawns
+- Harden the runtime edges: a write racing app-server death no longer crashes the worker,
+  shutdown escalates when Codex ignores SIGTERM, a broker-busy rejection after thread start
+  falls back to a private app-server so concurrent sessions never hard-fail, the
+  connection-closed error is reported consistently on the broker transport, value flags reject a
+  following flag token instead of silently swallowing it, `cancel` reports a failed worker kill,
+  and `implement-state`/`tournament-state` updates re-validate what `--record` enforced
+- Trim duplicated instruction text across the rescue stack and pair commands, and speed the
+  development loop: the Windows CI lane sheds duplicate OS-independent steps, superseded PR runs
+  cancel, the pinned Codex CLI install is cached, and the test suite drops from roughly 58 to 44
+  seconds
+
 ## 1.44.0
 
 - Give the Claude implementer a shell scoped to building and testing, with tool parity across
