@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.50.0
+
+- Add the `claude:opus-4.8` selection, valid for every role and every command's Claude path: each
+  pair agent gains a twin definition (`stereo:<role>-opus-4-8`) whose frontmatter pins
+  `claude-opus-4-8` over the same body and tools, because the Agent tool's model parameter accepts
+  only the four aliases and `claude:opus` resolves to the harness's current Opus generation
+- Make `claude:opus-4.8` the built-in implementer for `/stereo:implement` and `/stereo:quick` and
+  the tournament's Claude contestant; `claude:inherit` and the base agents are unchanged
+- Correct the routing skill's account of model inheritance to the harness's current resolution
+  order: the agent definition decides before `CLAUDE_CODE_SUBAGENT_MODEL`
+
 ## 1.49.0
 
 - Route the Codex implementer seats to `codex:astra`: the tournament's Codex contestant fallback
