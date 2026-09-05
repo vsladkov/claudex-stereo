@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.49.0
+
+- Route the Codex implementer seats to `codex:astra`: the tournament's Codex contestant fallback
+  and the command-heavy implementer switch in `/stereo:implement` and `/stereo:quick` now name
+  Astra, so a Codex-routed implementer resumes the plan-review thread it approved
+- Accept `ultra` as a reasoning effort across the model registry, every command's effort flags,
+  the CLI usage text, and the runtime skill; it is the tier above `max` on the models that
+  advertise it, and the pair-role defaults stay `max`
+
 ## 1.48.0
 
 - Add `codex:astra` (GPT-6 Astra, `gpt-6-astra`) to the Codex model aliases with the `max`
