@@ -26,9 +26,10 @@ After reading the routing skill, parse all arguments before loading state:
   single contestant is not a tournament, and name `/stereo:implement` as the single-implementer
   command. Two or three occurrences define the lineup explicitly. With four or more, stop and
   state that tournaments are capped at 3 contestants.
-- Accept `claude:sonnet`, `claude:opus`, `claude:haiku`, `claude:fable`, and `claude:inherit` as
-  Claude contestants. Accept a Codex selection with or without the `codex:` prefix. Reject
-  `claude:session` because Claude writes must stay inside the contained `stereo:implementer` agent;
+- Accept `claude:sonnet`, `claude:opus`, `claude:opus-4.8`, `claude:haiku`, `claude:fable`, and
+  `claude:inherit` as Claude contestants. Accept a Codex selection with or without the `codex:`
+  prefix. Reject `claude:session` because Claude writes must stay inside the contained
+  `stereo:implementer` agent;
   reject unknown `claude:*` values and `codex:claude:*`. A Claude contestant runs as one foreground
   `stereo:implementer` invocation in its own worktree, so multiple Claude contestants run
   sequentially.
@@ -61,7 +62,7 @@ After reading the routing skill, parse all arguments before loading state:
 
 When `--implementer` is absent entirely, use the conditional default lineup. Set `c1` to the
 workspace `implementer` model when its `config --json` entry has a null `invalidReason` and resolves
-to a Codex route; otherwise use the fallback `c1` = `codex:astra`. Set `c2` = `claude:opus` always.
+to a Codex route; otherwise use the fallback `c1` = `codex:astra`. Set `c2` = `claude:opus-4.8` always.
 Report which default source supplied `c1` before launch.
 
 The Codex effort ladder below gives `c1` the effective model's model-pair default unless `--effort`
@@ -366,7 +367,8 @@ For each Claude contestant, in label order:
      [complete contestant prompt]
    ```
 
-   For `claude:inherit`, omit the `model` parameter entirely.
+   For `claude:inherit`, omit the `model` parameter entirely. For `claude:opus-4.8`, use
+   `stereo:implementer-opus-4-8` as the `subagent_type` and omit the `model` parameter.
 
 2. Compose the complete contestant prompt in this order:
 
@@ -569,7 +571,8 @@ every review is a fresh independent invocation:
     [complete implementationReviewBrief]
   ```
 
-  For `claude:inherit`, omit the `model` parameter entirely. Record the Agent result's
+  For `claude:inherit`, omit the `model` parameter entirely; for `claude:opus-4.8`, also use
+  `stereo:implementation-reviewer-opus-4-8` as the `subagent_type`. Record the Agent result's
   per-invocation usage and duration, or `usage unavailable` for either omitted metric.
 
 - For a Codex reviewer, write the complete brief to that contestant's review payload file under

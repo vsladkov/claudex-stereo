@@ -29,7 +29,7 @@ After reading the routing skill, parse all arguments before repository work:
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
   Codex-routed plan reviewer.
 - `--implementer <model>` resolves as explicit flag > workspace `implementer` default >
-  `claude:opus`. The latest Codex plan-review payload's model and effort never resolve the
+  `claude:opus-4.8`. The latest Codex plan-review payload's model and effort never resolve the
   implementer; per the implementation routing below, a Codex-routed selection resumes
   `planReviewThreadId` only when it is the plan reviewer's resolved model.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
@@ -58,7 +58,8 @@ After reading the routing skill, parse all arguments before repository work:
 
 Reject missing values, duplicate role or role-effort flags, invalid effort or round values,
 unknown flags, unknown `claude:*` values, and `claude:session` as implementer. Accept
-`claude:inherit` alongside `claude:session` and the four explicit Claude aliases. Accept a Codex
+`claude:inherit` and `claude:opus-4.8` alongside `claude:session` and the four explicit Claude
+aliases. Accept a Codex
 selection with or without the `codex:` prefix and reject `codex:claude:*`. Reject a role effort
 flag when its selected role is Claude-routed. Resolve every Codex role through role effort >
 command-wide effort > workspace role effort > the routing skill's pair default. Plan-review

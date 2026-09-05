@@ -1440,7 +1440,7 @@
                 <h3>Claude builds and verifies in a contained agent</h3>
                 <p>
                   The delta is built and tested before the review gate — in any-language repos.
-                  <code>claude:opus</code>
+                  <code>claude:opus-4.8</code>
                 </p>
               </div>
             </li>
@@ -1556,7 +1556,7 @@
 <span class="ok">✓</span> plan stored <span class="d">— run /stereo:implement</span>
 
 <span class="d">&gt;</span> /stereo:implement
-<span class="c">◆ implementer claude:opus</span> <span class="d">— 14 files changed</span>
+<span class="c">◆ implementer claude:opus-4.8</span> <span class="d">— 14 files changed</span>
 <span class="d">◆ implementer-run tests</span> <span class="ok">✓</span> <span class="d">· static checks</span> <span class="ok">✓</span>
 <span class="x">◆ implementation-reviewer codex:astra</span> <span class="d">— acceptable · 0 fixes</span>
 <span class="ok">✓</span> done <span class="d">— nothing committed; review and commit yourself</span></pre>
@@ -1907,7 +1907,11 @@
           <fieldset>
             <legend>Implementer</legend>
             <label class="lc">
-              <input type="radio" name="implementer" value="claude:opus" checked />
+              <input type="radio" name="implementer" value="claude:opus-4.8" checked />
+              <span>claude:opus-4.8</span>
+            </label>
+            <label class="lc">
+              <input type="radio" name="implementer" value="claude:opus" />
               <span>claude:opus</span>
             </label>
             <label class="lx">
@@ -1970,7 +1974,7 @@
           optional in commands, and tool output prints resolved model ids (<code>codex:astra</code>
           runs <code>gpt-6-astra</code>). Flags matching the defaults are omitted, so the default
           selection is just the two bare commands. The implementer defaults to the contained
-          <code>claude:opus</code> agent, which builds and tests its own changes; a Codex
+          <code>claude:opus-4.8</code> agent, which builds and tests its own changes; a Codex
           implementer instead resumes the stored plan-review thread when it is the model that
           produced it. <code>claude:session</code> is not offered for the implementer — Claude
           writes always run in a contained agent. Trust a third-party provider with implementation
@@ -2003,8 +2007,8 @@
                 </tr>
                 <tr>
                   <td>Implementer</td>
-                  <td><code class="cc">claude:opus</code></td>
-                  <td><code class="cc">claude:opus</code></td>
+                  <td><code class="cc">claude:opus-4.8</code></td>
+                  <td><code class="cc">claude:opus-4.8</code></td>
                 </tr>
                 <tr>
                   <td>Implementation reviewer</td>
@@ -2245,7 +2249,7 @@
         const defaults = {
           planner: 'claude:fable',
           'plan-reviewer': 'codex:astra',
-          implementer: 'claude:opus',
+          implementer: 'claude:opus-4.8',
           'implementation-reviewer': 'codex:astra',
         };
         const planOut = document.getElementById('rc-plan');

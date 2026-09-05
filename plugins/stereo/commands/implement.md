@@ -19,7 +19,7 @@ Raw slash-command arguments:
 After reading the routing skill, parse all arguments before loading state:
 
 - `--implementer <model>` selects the implementer. Resolve it as explicit flag > workspace
-  `implementer` default > `claude:opus`.
+  `implementer` default > `claude:opus-4.8`.
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
   Codex-routed implementer.
 - `--implementation-reviewer <model>` selects the implementation reviewer. Resolve it as explicit
@@ -53,8 +53,9 @@ Define `<slotArg>` as `--slot <slot>` for a non-default target slot and omit it 
 `default` slot. On `--resume`, replace it with the slot owned by the durable implementation record.
 
 Reject missing values, duplicates, positionals, invalid effort/round values, unknown flags,
-unknown `claude:*` values, and both mode flags together. Accept `claude:inherit` alongside
-`claude:session` and the four explicit Claude aliases. Accept a Codex selection with or without
+unknown `claude:*` values, and both mode flags together. Accept `claude:inherit` and
+`claude:opus-4.8` alongside `claude:session` and the four explicit Claude aliases. Accept a Codex
+selection with or without
 the `codex:` prefix and reject `codex:claude:*`. The removed implementer `--model` and `--review-model`
 flags are unknown; report the role-named replacements.
 The renamed `--impl-reviewer` and `--impl-reviewer-effort` flags are unknown; report
@@ -89,7 +90,7 @@ Reject `claude:session` as the implementer; Claude writes must use the contained
 
 Stored-plan `model`/`effort` are the last Codex pair values recorded for the plan; they survive a
 Claude-side persist and never resolve the implementer. Resolve the model as `--implementer` >
-workspace `implementer` default > `claude:opus`. For a Codex-routed implementer, resolve effort as
+workspace `implementer` default > `claude:opus-4.8`. For a Codex-routed implementer, resolve effort as
 `--implementer-effort` > command-wide `--effort` > workspace implementer effort default > the
 selected model's pair default; stored-plan effort belongs to the stored model and is never
 borrowed by a different selection. Omit a null effort. A Codex-routed implementer resumes

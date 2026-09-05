@@ -9,7 +9,7 @@ import {
   parseRoleSelection,
 } from '../plugins/stereo/src/models/role-defaults.ts';
 
-test('role selections route the six Claude values and accepted Codex forms', () => {
+test('role selections route every Claude value and accepted Codex forms', () => {
   for (const selection of CLAUDE_SELECTIONS) {
     assert.deepEqual(parseRoleSelection('planner', selection), {
       selection,
@@ -42,6 +42,9 @@ test('role selections reject invalid addressing and session implementation', () 
     /not a valid --implementer default/,
   );
   assert.equal(parseRoleSelection('planner', 'claude:session').route, 'claude');
+  assert.equal(parseRoleSelection('implementer', 'claude:opus-4.8').route, 'claude');
+  assert.equal(parseRoleSelection('implementer', 'claude:inherit').route, 'claude');
+  assert.equal(parseRoleSelection('planner', 'claude:inherit').route, 'claude');
 });
 
 test('role effort accepts the registry values and rejects unknown values', () => {

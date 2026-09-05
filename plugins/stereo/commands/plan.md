@@ -42,7 +42,8 @@ a routed step:
 
 Reject missing values, duplicate role or role-effort flags, invalid effort or round values,
 unknown flags, unknown `claude:*` values, and both mode flags together. Accept `claude:inherit`
-alongside `claude:session` and the four explicit Claude aliases. Accept a Codex selection with or
+and `claude:opus-4.8` alongside `claude:session` and the four explicit Claude aliases. Accept a
+Codex selection with or
 without the `codex:` prefix and reject `codex:claude:*`. The removed `--planner-model` and reviewer
 `--model` flags are unknown; report the role-named replacements.
 

@@ -28,8 +28,8 @@ role default applies to this command.
 - A model that does not start with `claude:` takes the Codex path below, including one with an
   optional `codex:` prefix that the companion strips. Preserve the user's raw arguments
   byte-for-byte when invoking the companion.
-- `claude:session`, `claude:inherit`, `claude:sonnet`, `claude:opus`, `claude:haiku`, and
-  `claude:fable` take the Claude path. Reject any other `claude:*` value using the routing skill's
+- `claude:session`, `claude:inherit`, `claude:sonnet`, `claude:opus`, `claude:opus-4.8`,
+  `claude:haiku`, and `claude:fable` take the Claude path. Reject any other `claude:*` value using the routing skill's
   availability rule.
 - Reject any trailing focus text on the Codex path before repository work because the built-in
   reviewer does not accept custom focus text. Name `/stereo:adversarial-review <focus>` as the
@@ -158,7 +158,8 @@ Do not summarize the template: use the complete filled template as the review br
 - For `claude:session`, perform the filled brief inline and produce one raw JSON object.
 - For a named Claude selection, invoke `stereo:reviewer` through the routing skill's foreground
   template with `run_in_background: false` and the complete filled brief. For `claude:inherit`,
-  omit the Agent `model` parameter so platform inheritance applies.
+  omit the Agent `model` parameter so platform inheritance applies. For `claude:opus-4.8`, use
+  `stereo:reviewer-opus-4-8` as the `subagent_type` and omit the `model` parameter.
 
 Validate the result against `${CLAUDE_PLUGIN_ROOT}/schemas/review-output.schema.json`, including all
 nested fields and enums. Apply the routing skill's one-retry-then-ask recovery for malformed

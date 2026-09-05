@@ -51,11 +51,12 @@ thread reservations, plus an optional stop-time review gate.
   `/stereo:config --plan-reviewer codex:sol --implementation-reviewer codex:sol` or pass the role
   flags per run.
 - **Node.js 24 or later** (the plugin runs its TypeScript sources natively via Node's type stripping)
-- **A Claude Code harness that exposes named `fable` and `opus` models.** The default pair
-  pipeline routes its planner to `fable` and its implementer to `opus` (the default tournament
-  lineup also uses `opus`). The harness resolves each alias to its current generation — `fable`
-  is Fable 5.1 and `opus` is Opus 5 as of this release — and a specific generation cannot be
-  pinned per role; if named models are unavailable, use the
+- **A Claude Code harness that exposes the named `fable` model and the `claude-opus-4-8` model id.**
+  The default pair pipeline routes its planner to the `fable` alias, which the harness resolves to
+  its current Fable generation (Fable 5.1 as of this release), and its implementer to Opus 4.8
+  through a twin agent definition pinned to that model id (the default tournament lineup uses the
+  same pin). The `opus` alias stays available as `claude:opus` and resolves to the
+  harness's current Opus generation; if a named model is unavailable, use the
   [per-role model escape hatches](#troubleshooting).
 
 ## Install
@@ -163,9 +164,12 @@ Every multi-role command uses role-named model flags: `--planner`, `--plan-revie
 
 - `claude:session` runs the role inline when that role allows it.
 - `claude:inherit` runs the contained foreground agent—a separate subagent with its own fresh
-  context, isolated from this conversation—with its invocation-level model parameter omitted.
-  `CLAUDE_CODE_SUBAGENT_MODEL` wins when set; otherwise the agent inherits the main
-  conversation's model.
+  context, isolated from this conversation—with its invocation-level model parameter omitted, so
+  the agent inherits the main conversation's model (on Claude Code 2.1.251 and later the agent's
+  frontmatter decides before `CLAUDE_CODE_SUBAGENT_MODEL`; older harnesses let that variable win).
+- `claude:opus-4.8` runs the role's contained agent on Opus 4.8 through a twin agent definition
+  (`stereo:<role>-opus-4-8`) whose frontmatter pins that model id, because the Agent tool's own
+  model parameter accepts just the four aliases. It is valid for every role.
 - `claude:sonnet`, `claude:opus`, `claude:haiku`, and `claude:fable` use a contained foreground
   Claude agent.
 - Any other value is a Codex selection—a registry alias, a raw model id, or a qualified
@@ -175,12 +179,12 @@ Every multi-role command uses role-named model flags: `--planner`, `--plan-revie
 
 Defaults with no role flags:
 
-| Role                    | `/stereo:plan` + `/stereo:implement` | `/stereo:quick` |
-| ----------------------- | ------------------------------------ | --------------- |
-| Planner                 | `claude:fable`                       | `claude:fable`  |
-| Plan reviewer           | `codex:astra`                        | `codex:astra`   |
-| Implementer             | `claude:opus`                        | `claude:opus`   |
-| Implementation reviewer | `codex:astra`                        | `codex:astra`   |
+| Role                    | `/stereo:plan` + `/stereo:implement` | `/stereo:quick`   |
+| ----------------------- | ------------------------------------ | ----------------- |
+| Planner                 | `claude:fable`                       | `claude:fable`    |
+| Plan reviewer           | `codex:astra`                        | `codex:astra`     |
+| Implementer             | `claude:opus-4.8`                    | `claude:opus-4.8` |
+| Implementation reviewer | `codex:astra`                        | `codex:astra`     |
 
 Codex aliases, prefix semantics, effort rules, reviewer continuation, and per-role model choice
 live in the [Model routing reference](#model-routing-reference).
@@ -379,10 +383,10 @@ Implements the plan reviewed by [`/stereo:plan`](#stereoplan). The implementer a
 reviewer are independently selectable while the current Claude session keeps ownership of the
 gates, verification, fix loop, and final report:
 
-| Step                  | Flag                        | Default       | Claude execution                          | Codex execution      |
-| --------------------- | --------------------------- | ------------- | ----------------------------------------- | -------------------- |
-| Implementation        | `--implementer`             | `claude:opus` | Foreground build/test-capable implementer | Workspace-write task |
-| Implementation review | `--implementation-reviewer` | `codex:astra` | Foreground read-only reviewer             | Fresh read-only task |
+| Step                  | Flag                        | Default           | Claude execution                          | Codex execution      |
+| --------------------- | --------------------------- | ----------------- | ----------------------------------------- | -------------------- |
+| Implementation        | `--implementer`             | `claude:opus-4.8` | Foreground build/test-capable implementer | Workspace-write task |
+| Implementation review | `--implementation-reviewer` | `codex:astra`     | Foreground read-only reviewer             | Fresh read-only task |
 
 The same Claude and Codex model values accepted by `/stereo:plan` work here, except
 `claude:session` is not a valid implementer: Claude writes are always isolated in the contained
@@ -395,7 +399,7 @@ slot from the durable implementation record, so `--slot` and `--resume` cannot b
 Use [`/stereo:plan-state`](#stereoplan-state) to read the complete stored plan, its review
 metadata, open questions, and residual risks before starting implementation.
 
-With no new flags, a contained `claude:opus` implementer applies and verifies the plan's changes
+With no new flags, a contained `claude:opus-4.8` implementer applies and verifies the plan's changes
 and a `codex:astra` review gates every round from the other ecosystem. A Codex-routed implementer
 (`--implementer codex:astra` or a workspace default) instead builds inside the stored review thread
 when it is the model that reviewed the plan — resuming the approval context — or a fresh thread
@@ -571,7 +575,7 @@ instead. If no reviewed plan is stored for the repository, the command directs y
 
 Runs the complete cycle—both phases end to end—in one command for a small, single-feature task.
 Each of the four roles is independently routable. By default, a contained `claude:fable` planner
-drafts, `codex:astra` reviews the plan, a contained `claude:opus` implementer applies and
+drafts, `codex:astra` reviews the plan, a contained `claude:opus-4.8` implementer applies and
 verifies the changes, and `codex:astra` gates the implementation — the same alternating-vendor defaults as the
 phase commands, crossing ecosystems at every handoff. The scope gate still runs inline in this
 session before any routed draft.
@@ -598,12 +602,12 @@ quick stops before review and directs you to
 
 Use the same four role flags as the phase commands:
 
-| Role                    | Model flag                  | Effort flag                        | Default        |
-| ----------------------- | --------------------------- | ---------------------------------- | -------------- |
-| Planner                 | `--planner`                 | `--planner-effort`                 | `claude:fable` |
-| Plan reviewer           | `--plan-reviewer`           | `--plan-reviewer-effort`           | `codex:astra`  |
-| Implementer             | `--implementer`             | `--implementer-effort`             | `claude:opus`  |
-| Implementation reviewer | `--implementation-reviewer` | `--implementation-reviewer-effort` | `codex:astra`  |
+| Role                    | Model flag                  | Effort flag                        | Default           |
+| ----------------------- | --------------------------- | ---------------------------------- | ----------------- |
+| Planner                 | `--planner`                 | `--planner-effort`                 | `claude:fable`    |
+| Plan reviewer           | `--plan-reviewer`           | `--plan-reviewer-effort`           | `codex:astra`     |
+| Implementer             | `--implementer`             | `--implementer-effort`             | `claude:opus-4.8` |
+| Implementation reviewer | `--implementation-reviewer` | `--implementation-reviewer-effort` | `codex:astra`     |
 
 `--slot <name>` selects the durable plan slot Quick stores into and defaults to `default`. Quick
 warns about an existing plan in that slot but never asks, because a Quick run that stores a plan
@@ -612,7 +616,7 @@ throwaway detached worktree using the same machinery as
 [`/stereo:implement --isolated`](#stereoimplement), while the plan draft and plan review always run
 against the main tree. Use [`/stereo:doctor`](#stereodoctor) for stranded-worktree cleanup.
 
-The default `claude:opus` implementer applies the plan's changes in a contained agent and
+The default `claude:opus-4.8` implementer applies the plan's changes in a contained agent and
 builds and tests them inside its turn; the
 recap names every effective role before writes begin. A Codex-routed implementer
 (`--implementer codex:astra` or a workspace default) instead builds inside the plan reviewer's
@@ -642,7 +646,7 @@ committed or pushed.
 
 Runs one already-approved stored plan through 2 or 3 independent implementers. With no
 `--implementer` flags, the default lineup uses the workspace `implementer` model for `c1` when it is
-valid and Codex-routed, otherwise `codex:astra`; `c2` remains `claude:opus`. The Codex contestant uses
+valid and Codex-routed, otherwise `codex:astra`; `c2` remains `claude:opus-4.8`. The Codex contestant uses
 that model's pair-default effort unless `--effort` or an applicable workspace implementer effort
 overrides it; an effort stored alongside a Claude-routed implementer remains inert. Claude runs at
 full session strength and has no effort dial. Each contestant starts in its own detached temporary
@@ -651,9 +655,9 @@ evidence is reviewed. Two contestants are the minimum for a comparison; three is
 every extra contestant adds an implementation run and an independent review, increasing cost,
 rate-limit pressure, and cleanup work. Use `/stereo:implement` when you want one implementer.
 
-Contestants may be Codex selections or `claude:sonnet`, `claude:opus`, `claude:haiku`,
-`claude:fable`, and `claude:inherit`. `claude:session` is rejected because Claude writes stay in the
-contained implementer agent. Codex contestants launch first as concurrent detached jobs; Claude
+Contestants may be Codex selections or `claude:sonnet`, `claude:opus`, `claude:opus-4.8`,
+`claude:haiku`, `claude:fable`, and `claude:inherit`. `claude:session` is rejected because Claude
+writes stay in the contained implementer agent. Codex contestants launch first as concurrent detached jobs; Claude
 contestants then run one at a time in the foreground before Codex polling resumes.
 `--implementer-effort` is Codex-only and requires an all-Codex lineup, while `--effort` covers every
 Codex contestant in a mixed lineup. The one selected implementation reviewer resolves as the
@@ -966,11 +970,11 @@ Use `/stereo:config` to replace any of these defaults for one repository. Resolu
 role flag > stored workspace role default > the built-in listed below; the model recorded by the
 latest Codex plan review never resolves the implementer.
 
-| Situation                        | Planner          | Plan reviewer    | Implementer      | Implementation reviewer |
-| -------------------------------- | ---------------- | ---------------- | ---------------- | ----------------------- |
-| Default and most work            | `claude:fable`   | `codex:astra`    | `claude:opus`    | `codex:astra`           |
-| Command-heavy or Codex-side work | `claude:fable`   | `codex:astra`    | `codex:astra`    | `claude:fable`          |
-| Cheapest implementation gate     | Task-appropriate | Task-appropriate | Task-appropriate | `claude:session`        |
+| Situation                        | Planner          | Plan reviewer    | Implementer       | Implementation reviewer |
+| -------------------------------- | ---------------- | ---------------- | ----------------- | ----------------------- |
+| Default and most work            | `claude:fable`   | `codex:astra`    | `claude:opus-4.8` | `codex:astra`           |
+| Command-heavy or Codex-side work | `claude:fable`   | `codex:astra`    | `codex:astra`     | `claude:fable`          |
+| Cheapest implementation gate     | Task-appropriate | Task-appropriate | Task-appropriate  | `claude:session`        |
 
 For most work, use the defaults:
 
@@ -997,11 +1001,11 @@ model that reviewed the plan and in a fresh thread with the plan embedded otherw
 
 Each route prices the workflow differently:
 
-| Route                                                                                                                 | Budget                  | Cost profile                                                                                                                                                                                                                                                                                                                                           |
-| --------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Defaults: `claude:fable` draft, `codex:astra` plan gate, `claude:opus` implementer, `codex:astra` implementation gate | Split across ecosystems | Drafting and implementation run on the Claude budget as contained agents; both review gates run on the OpenAI budget, the plan gate as a resumable `plan-review` thread (deep, deliberate rounds — minutes of wall time with heavily cached input — that later rounds resume cheaply) and the implementation gate as a fresh read-only task per round. |
-| `--plan-reviewer claude:fable` / `--implementation-reviewer claude:fable`                                             | Claude only             | Keeps a phase's review on the Claude budget with faster rounds. Later rounds follow [reviewer continuation](#reviewer-continuation). A Claude-reviewed plan leaves no resumable Codex review thread, so a Codex-routed implementer would start fresh with the complete plan embedded.                                                                  |
-| `--implementation-reviewer claude:session`                                                                            | Claude, inline          | The cheapest implementation gate, but not independent of the session that produced the work.                                                                                                                                                                                                                                                           |
+| Route                                                                                                                     | Budget                  | Cost profile                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Defaults: `claude:fable` draft, `codex:astra` plan gate, `claude:opus-4.8` implementer, `codex:astra` implementation gate | Split across ecosystems | Drafting and implementation run on the Claude budget as contained agents; both review gates run on the OpenAI budget, the plan gate as a resumable `plan-review` thread (deep, deliberate rounds — minutes of wall time with heavily cached input — that later rounds resume cheaply) and the implementation gate as a fresh read-only task per round. |
+| `--plan-reviewer claude:fable` / `--implementation-reviewer claude:fable`                                                 | Claude only             | Keeps a phase's review on the Claude budget with faster rounds. Later rounds follow [reviewer continuation](#reviewer-continuation). A Claude-reviewed plan leaves no resumable Codex review thread, so a Codex-routed implementer would start fresh with the complete plan embedded.                                                                  |
+| `--implementation-reviewer claude:session`                                                                                | Claude, inline          | The cheapest implementation gate, but not independent of the session that produced the work.                                                                                                                                                                                                                                                           |
 
 One flag moves the plan gate back to Claude for a faster, single-budget loop; selecting the
 inline planner as well keeps the whole plan phase in this session:
@@ -1018,7 +1022,7 @@ or `fable` models, use the per-role escape hatches under [Troubleshooting](#trou
 ### Prefix semantics
 
 The prefix names the executing runtime, not the model vendor. `claude:` remains required for its
-closed six-value set so those selections are distinguishable from the open Codex passthrough;
+closed seven-value set so those selections are distinguishable from the open Codex passthrough;
 `codex:` is optional in commands because the Codex side cannot be enumerated and includes
 third-party providers. This documentation writes every Codex-side selection with the `codex:`
 prefix for symmetry with `claude:`; the companion strips it once and resolves the selection to
@@ -1055,7 +1059,7 @@ rejected when its selected role is
 Claude-routed, and a stored effort under a Claude-routed model is reported as inert.
 Stored plans record Codex `model`/`effort` only; they never resolve the implementer, whose
 selection is the role flag, the `/stereo:config` workspace default, or the built-in
-`claude:opus`.
+`claude:opus-4.8`.
 
 Stereo's Claude role agents intentionally omit the agent-definition `effort` field, so they
 inherit the session's effort and extended-thinking configuration. Subagents have no separate
@@ -1234,9 +1238,10 @@ These are the reservation errors you may encounter:
 line before assuming the requested edits were possible. On Ubuntu 24.04, Codex write runs need
 `sysctl kernel.apparmor_restrict_unprivileged_userns=0`, which is not persisted across reboots.
 
-**The harness does not expose `opus` or `fable`.** Named Claude model availability is a
-default-path dependency in both the planning and implementation phases. Select
-`--planner claude:session`, use `claude:inherit` for a contained role, select
+**The harness does not expose `fable` or the `claude-opus-4-8` model id.** Named Claude model
+availability is a default-path dependency in both the planning and implementation phases. Select
+`--planner claude:session`, use `claude:inherit` for a contained role, pick `--implementer claude:opus`
+or another alias the harness resolves, select
 `--plan-reviewer codex:astra`, or select `--implementation-reviewer claude:session`, `claude:inherit`, or
 a Codex model. Stereo surfaces the original availability error and never silently substitutes a
 model.
