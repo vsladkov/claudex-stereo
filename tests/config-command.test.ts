@@ -147,7 +147,7 @@ test('config validation fails closed with the JSON error contract', () => {
   const cases: Array<[string[], RegExp]> = [
     [['--planner', 'claude:fabel'], /Unsupported model/],
     [['--planner', 'codex:claude:sonnet'], /not Codex models/],
-    [['--planner-effort', 'ultra'], /Unsupported reasoning effort/],
+    [['--planner-effort', 'hyper'], /Unsupported reasoning effort/],
     [['--implementer', 'claude:session'], /not a valid --implementer default/],
     [['--clear', 'unknown'], /Unsupported --clear key/],
     [

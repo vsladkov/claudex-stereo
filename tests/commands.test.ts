@@ -352,7 +352,7 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     2,
     'both foreground Agent templates must pass an invocation-level model',
   );
-  assert.match(tournament, /`c1` = `codex:sol`/);
+  assert.match(tournament, /`c1` = `codex:astra`/);
   assert.match(tournament, /`c2` = `claude:opus`/);
   assert.equal(
     (tournament.match(/--prompt-file "<payloadFile>"/g) ?? []).length,

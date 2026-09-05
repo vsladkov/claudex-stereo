@@ -1,4 +1,5 @@
-export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ReasoningEffort =
+  'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
 export interface ModelEntry {
   model: string;
@@ -14,6 +15,7 @@ export const VALID_REASONING_EFFORTS: ReadonlySet<string> = new Set([
   'high',
   'xhigh',
   'max',
+  'ultra',
 ]);
 
 // Bare because it feeds normalizeRequestedModel; documentation writes it as `codex:astra`.
@@ -138,7 +140,7 @@ export function normalizeReasoningEffort(effort: unknown): ReasoningEffort | nul
   }
   if (!VALID_REASONING_EFFORTS.has(normalized)) {
     throw new Error(
-      `Unsupported reasoning effort "${effort}". Use one of: none, minimal, low, medium, high, xhigh, max.`,
+      `Unsupported reasoning effort "${effort}". Use one of: none, minimal, low, medium, high, xhigh, max, ultra.`,
     );
   }
   return normalized as ReasoningEffort;

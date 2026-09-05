@@ -35,7 +35,7 @@ Command selection:
 - Forward `--resume` and `--fresh` to `task` unchanged as flags, never as task text; the CLI
   accepts both directly (`--resume` is an alias of `--resume-last`). `--resume` always resumes,
   and `--fresh` always runs fresh, even when the request text is ambiguous.
-- `--effort`: accepted values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+- `--effort`: accepted values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. `ultra` is the tier above `max` on the models that advertise it (`codex:astra` and `codex:sol` today); the runtime forwards it unchanged, so a model that lacks the tier rejects it at the API.
 - `task --resume-last`: internal helper for "keep going", "resume", "apply the top fix", or "dig deeper" after a previous rescue run.
 
 Safety rules:

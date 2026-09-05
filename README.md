@@ -642,7 +642,7 @@ committed or pushed.
 
 Runs one already-approved stored plan through 2 or 3 independent implementers. With no
 `--implementer` flags, the default lineup uses the workspace `implementer` model for `c1` when it is
-valid and Codex-routed, otherwise `codex:sol`; `c2` remains `claude:opus`. The Codex contestant uses
+valid and Codex-routed, otherwise `codex:astra`; `c2` remains `claude:opus`. The Codex contestant uses
 that model's pair-default effort unless `--effort` or an applicable workspace implementer effort
 overrides it; an effort stored alongside a Claude-routed implementer remains inert. Claude runs at
 full session strength and has no effort dial. Each contestant starts in its own detached temporary
@@ -969,7 +969,7 @@ latest Codex plan review never resolves the implementer.
 | Situation                        | Planner          | Plan reviewer    | Implementer      | Implementation reviewer |
 | -------------------------------- | ---------------- | ---------------- | ---------------- | ----------------------- |
 | Default and most work            | `claude:fable`   | `codex:astra`    | `claude:opus`    | `codex:astra`           |
-| Command-heavy or Codex-side work | `claude:fable`   | `codex:astra`    | `codex:sol`      | `claude:fable`          |
+| Command-heavy or Codex-side work | `claude:fable`   | `codex:astra`    | `codex:astra`    | `claude:fable`          |
 | Cheapest implementation gate     | Task-appropriate | Task-appropriate | Task-appropriate | `claude:session`        |
 
 For most work, use the defaults:
@@ -992,7 +992,7 @@ advisory on approved runs and binding on unapproved ones — so what a contained
 the argument around them, not the findings. A plan whose steps need commands outside the
 implementer's build/test scope (version bumps, package installation, out-of-gate codegen,
 migrations, network access, interactive processes) prompts a switch to a command-capable Codex
-implementer (`codex:sol` by default), which builds inside the stored review thread when it is the
+implementer (`codex:astra` by default), which builds inside the stored review thread when it is the
 model that reviewed the plan and in a fresh thread with the plan embedded otherwise.
 
 Each route prices the workflow differently:
@@ -1048,7 +1048,10 @@ effort, then the model-pair default. Stored-plan effort applies to implementatio
 stored-plan model also supplied the implementer model; an explicit or workspace-supplied model
 drops it. The model-pair default comes from the alias table: `max` for `codex:astra`, `codex:sol`,
 `codex:terra`, and `codex:luna`, `xhigh` for `codex:mini`, and `max` for unregistered raw `gpt-*` ids. Non-OpenAI
-selections omit an effort override. A role effort flag is rejected when its selected role is
+selections omit an effort override. Accepted effort values are `none`, `minimal`, `low`, `medium`,
+`high`, `xhigh`, `max`, and `ultra`; `ultra` is the tier above `max` on the models that advertise
+it (`codex:astra` and `codex:sol` today), and the pair defaults stay `max`. A role effort flag is
+rejected when its selected role is
 Claude-routed, and a stored effort under a Claude-routed model is reported as inert.
 Stored plans record Codex `model`/`effort` only; they never resolve the implementer, whose
 selection is the role flag, the `/stereo:config` workspace default, or the built-in

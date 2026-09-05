@@ -1,6 +1,6 @@
 ---
 description: Race Claude and Codex implementers on an approved plan; hand back the winning delta
-argument-hint: '[--implementer <model>]... [--implementer-effort <none|minimal|low|medium|high|xhigh|max>]... [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--resume] [--slot <name>]'
+argument-hint: '[--implementer <model>]... [--implementer-effort <none|minimal|low|medium|high|xhigh|max|ultra>]... [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--resume] [--slot <name>]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(npm:*), Bash(git:*), Bash(npx:*), Bash(pnpm:*), Bash(yarn:*), Bash(dotnet:*), Bash(cargo:*), Bash(go:*), Bash(make:*), Bash(python3:*), Bash(pytest:*), Bash(mvn:*), Bash(gradle:*), AskUserQuestion, Agent
 ---
@@ -32,7 +32,7 @@ After reading the routing skill, parse all arguments before loading state:
   reject unknown `claude:*` values and `codex:claude:*`. A Claude contestant runs as one foreground
   `stereo:implementer` invocation in its own worktree, so multiple Claude contestants run
   sequentially.
-- `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` is repeatable with positional
+- `--implementer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` is repeatable with positional
   pairing. It is legal only when `--implementer` is present, every contestant is Codex-routed, and
   its occurrence count equals the `--implementer` count exactly; the k-th effort pairs with the
   k-th contestant. Reject a partial list and name the exact implementer and effort counts seen.
@@ -43,9 +43,9 @@ After reading the routing skill, parse all arguments before loading state:
 - `--implementation-reviewer <model>` selects one shared implementation reviewer. Accept it once
   and resolve it as explicit flag > workspace `implementationReviewer` default > `claude:fable`.
   `claude:session` is legal for this role.
-- `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
+- `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort
   for a Codex-routed reviewer and is illegal for a Claude-routed reviewer.
-- `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for Codex roles
+- `--effort <none|minimal|low|medium|high|xhigh|max|ultra>` is the command-wide default for Codex roles
   without a role effort flag.
   When no active role is Codex-routed, a command-wide `--effort` is inert: accept it, report it as
   inert, and never translate it into a Claude-side control.
@@ -61,11 +61,11 @@ After reading the routing skill, parse all arguments before loading state:
 
 When `--implementer` is absent entirely, use the conditional default lineup. Set `c1` to the
 workspace `implementer` model when its `config --json` entry has a null `invalidReason` and resolves
-to a Codex route; otherwise use the fallback `c1` = `codex:sol`. Set `c2` = `claude:opus` always.
+to a Codex route; otherwise use the fallback `c1` = `codex:astra`. Set `c2` = `claude:opus` always.
 Report which default source supplied `c1` before launch.
 
 The Codex effort ladder below gives `c1` the effective model's model-pair default unless `--effort`
-or the valid workspace implementer effort default overrides it. The built-in `codex:sol` fallback's
+or the valid workspace implementer effort default overrides it. The built-in `codex:astra` fallback's
 model-pair default is `max`.
 
 Claude contestants have no effort dial: model selection is the per-invocation Claude strength
@@ -105,7 +105,7 @@ Apply the routing skill's "Workspace role defaults" mechanics to the result.
 The workspace `implementer` model supplies `c1` only in the default lineup. Explicit
 `--implementer` flags always win, and no workspace model default is injected into an explicit
 lineup. A valid Claude-routed workspace implementer is inert for the lineup: report its selection
-and route by name and use the built-in `codex:sol` fallback. A stored `claude:*` selection never
+and route by name and use the built-in `codex:astra` fallback. A stored `claude:*` selection never
 reaches the companion's `--model` flag. Report and ignore an invalid entry under the existing
 `invalidReason` rule. A valid standalone or Codex-routed workspace implementer effort still
 participates in the Codex effort ladder and is inert for Claude. An effort stored alongside a

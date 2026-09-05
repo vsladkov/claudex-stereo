@@ -146,13 +146,13 @@ test('normalizeReasoningEffort rejects unknown efforts with the exact error text
   assert.throws(
     () => normalizeReasoningEffort('garbage'),
     new Error(
-      'Unsupported reasoning effort "garbage". Use one of: none, minimal, low, medium, high, xhigh, max.',
+      'Unsupported reasoning effort "garbage". Use one of: none, minimal, low, medium, high, xhigh, max, ultra.',
     ),
   );
   assert.throws(
-    () => normalizeReasoningEffort(' ultra '),
+    () => normalizeReasoningEffort(' hyper '),
     new Error(
-      'Unsupported reasoning effort " ultra ". Use one of: none, minimal, low, medium, high, xhigh, max.',
+      'Unsupported reasoning effort " hyper ". Use one of: none, minimal, low, medium, high, xhigh, max, ultra.',
     ),
   );
 });

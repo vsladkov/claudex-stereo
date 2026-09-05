@@ -1,6 +1,6 @@
 ---
 description: Draft or review a plan with independently selected Claude or Codex role models
-argument-hint: '[--draft-only|--review-only] [--plan-file <path>] [--slot <name>] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [task description]'
+argument-hint: '[--draft-only|--review-only] [--plan-file <path>] [--slot <name>] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--max-plan-rounds <n>] [task description]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Write, Bash(node:*), Bash(git:*), AskUserQuestion, Agent
 ---
@@ -21,12 +21,12 @@ After reading the routing skill, parse every argument before inspecting the repo
 a routed step:
 
 - `--planner <model>` selects the drafter and defaults to `claude:fable`.
-- `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+- `--planner-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
   Codex-routed planner.
 - `--plan-reviewer <model>` selects the plan reviewer and defaults to `codex:astra`.
-- `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+- `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
   Codex-routed plan reviewer.
-- `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
+- `--effort <none|minimal|low|medium|high|xhigh|max|ultra>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
   When no active role is Codex-routed, accept `--effort` but report that it is inert rather than
   silently dropping it.

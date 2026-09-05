@@ -45,10 +45,10 @@ test('role selections reject invalid addressing and session implementation', () 
 });
 
 test('role effort accepts the registry values and rejects unknown values', () => {
-  for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
+  for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
     assert.equal(parseRoleEffort('planner-effort', effort), effort);
   }
-  assert.throws(() => parseRoleEffort('planner-effort', 'ultra'), /Unsupported reasoning effort/);
+  assert.throws(() => parseRoleEffort('planner-effort', 'hyper'), /Unsupported reasoning effort/);
   assert.throws(() => parseRoleEffort('planner-effort', '  '), /Provide a reasoning effort/);
 });
 

@@ -1,6 +1,6 @@
 ---
 description: Plan, review, implement, and verify one small task with independently routed Claude or Codex roles
-argument-hint: '[--isolated] [--slot <name>] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-plan-rounds <n>] [--max-fix-rounds <n>] [small task description]'
+argument-hint: '[--isolated] [--slot <name>] [--planner <model>] [--planner-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--plan-reviewer <model>] [--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--max-plan-rounds <n>] [--max-fix-rounds <n>] [small task description]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), Bash(npx:*), Bash(pnpm:*), Bash(yarn:*), Bash(dotnet:*), Bash(cargo:*), Bash(go:*), Bash(make:*), Bash(python3:*), Bash(pytest:*), Bash(mvn:*), Bash(gradle:*), AskUserQuestion, Agent
 ---
@@ -22,24 +22,24 @@ After reading the routing skill, parse all arguments before repository work:
 
 - `--planner <model>` resolves as explicit flag > workspace `planner` default >
   `claude:fable`; the scope gate still runs inline in this session before any routed draft.
-- `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+- `--planner-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
   Codex-routed planner.
 - `--plan-reviewer <model>` resolves as explicit flag > workspace `planReviewer` default >
   `codex:astra`.
-- `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+- `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
   Codex-routed plan reviewer.
 - `--implementer <model>` resolves as explicit flag > workspace `implementer` default >
   `claude:opus`. The latest Codex plan-review payload's model and effort never resolve the
   implementer; per the implementation routing below, a Codex-routed selection resumes
   `planReviewThreadId` only when it is the plan reviewer's resolved model.
-- `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+- `--implementer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
   Codex-routed implementer.
 - `--implementation-reviewer <model>` resolves as explicit flag > workspace
   `implementationReviewer` default > `codex:astra`; the cross-ecosystem reviewer is independent of
   this orchestrating session and of the Claude-routed default implementer.
-- `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
+- `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort
   for a Codex-routed implementation reviewer.
-- `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
+- `--effort <none|minimal|low|medium|high|xhigh|max|ultra>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
   When no active role is Codex-routed, a command-wide `--effort` is inert: accept it, report it as
   inert, and never translate it into a Claude-side control.
@@ -271,7 +271,7 @@ follows. If the selected implementer is Claude, scan for command-requiring work 
 implementer's
 build/test/static-check scope: version bumps, dependency installation, code generation the
 repository's gates do not already run, migrations, network access, or interactive/long-running
-processes. If found, ask whether to switch to the command-capable `codex:sol` implementer, leave
+processes. If found, ask whether to switch to the command-capable `codex:astra` implementer, leave
 each out-of-scope command step user-owned, or stop. The Claude implementer builds and tests inside
 its own turn but never runs the excluded command classes; never execute shell text on a Claude
 agent's behalf. A switch chosen here resolves the implementer before the snapshot or any worktree

@@ -1,6 +1,6 @@
 ---
 description: Run an adversarial review that challenges the implementation approach and design choices
-argument-hint: '[--wait|--background] [--base <ref>] [--pr <n>] [--scope auto|working-tree|branch] [--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max>] [focus ...]'
+argument-hint: '[--wait|--background] [--base <ref>] [--pr <n>] [--scope auto|working-tree|branch] [--model <model-or-alias>] [--effort <none|minimal|low|medium|high|xhigh|max|ultra>] [focus ...]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), Bash(gh:*), AskUserQuestion, Agent
 ---

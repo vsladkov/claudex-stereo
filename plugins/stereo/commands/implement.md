@@ -1,6 +1,6 @@
 ---
 description: Implement or review the stored plan with independently selected Claude or Codex role models
-argument-hint: '[--implement-only|--review-only] [--resume] [--isolated] [--base <ref>] [--slot <name>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>] [--effort <none|minimal|low|medium|high|xhigh|max>] [--max-fix-rounds <n>] [--fresh]'
+argument-hint: '[--implement-only|--review-only] [--resume] [--isolated] [--base <ref>] [--slot <name>] [--implementer <model>] [--implementer-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--effort <none|minimal|low|medium|high|xhigh|max|ultra>] [--max-fix-rounds <n>] [--fresh]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(node:*), Bash(npm:*), Bash(git:*), Bash(npx:*), Bash(pnpm:*), Bash(yarn:*), Bash(dotnet:*), Bash(cargo:*), Bash(go:*), Bash(make:*), Bash(python3:*), Bash(pytest:*), Bash(mvn:*), Bash(gradle:*), AskUserQuestion, Agent
 ---
@@ -20,16 +20,16 @@ After reading the routing skill, parse all arguments before loading state:
 
 - `--implementer <model>` selects the implementer. Resolve it as explicit flag > workspace
   `implementer` default > `claude:opus`.
-- `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
+- `--implementer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort for a
   Codex-routed implementer.
 - `--implementation-reviewer <model>` selects the implementation reviewer. Resolve it as explicit
   flag > workspace `implementationReviewer` default > `codex:astra`: the implementation review is
   the last gate before commit, and the cross-ecosystem reviewer is independent of both the
   orchestrator and the Claude-routed default implementer that produced the delta.
   `claude:session` remains valid and is the cheaper inline choice.
-- `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
+- `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max|ultra>` overrides effort
   for a Codex-routed implementation reviewer.
-- `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
+- `--effort <none|minimal|low|medium|high|xhigh|max|ultra>` is the command-wide default for
   Codex-routed roles that have no role effort flag.
   When no active role is Codex-routed, a command-wide `--effort` is inert: accept it, report it as
   inert, and never translate it into a Claude-side control.
@@ -304,7 +304,7 @@ for commands outside the implementer's build/test/static-check scope: version bu
 installation, code generation the repository's gates do not already run, migrations, network
 access, or interactive/long-running processes. If present, ask:
 
-- Switch to the command-capable `codex:sol` implementer with the user's effort or `max`
+- Switch to the command-capable `codex:astra` implementer with the user's effort or `max`
   (recommended).
 - Continue and leave each out-of-scope command step user-owned.
 - Stop.
