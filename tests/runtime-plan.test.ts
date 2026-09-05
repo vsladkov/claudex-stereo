@@ -165,7 +165,7 @@ test('plan-review applies sol/max defaults and names a pair thread', () => {
   assert.match(result.stdout, /Missing verification step/);
   assert.match(result.stdout, /Revision instructions:/);
   const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(fakeState.lastTurnStart.model, 'gpt-5.6-sol');
+  assert.equal(fakeState.lastTurnStart.model, 'gpt-6-astra');
   assert.equal(fakeState.lastTurnStart.effort, 'max');
   assert.match(fakeState.lastTurnStart.prompt, /adversarial plan review/);
   assert.match(fakeState.lastTurnStart.prompt, /<repository_map>/);
@@ -361,7 +361,7 @@ test('plan-review resolves blank and prefix-similar model selections safely', ()
 
   assert.equal(blankResult.status, 0, blankResult.stderr);
   const blankState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(blankState.lastTurnStart.model, 'gpt-5.6-sol');
+  assert.equal(blankState.lastTurnStart.model, 'gpt-6-astra');
   assert.equal(blankState.lastTurnStart.effort, 'max');
 });
 
@@ -428,7 +428,7 @@ test('plan-review --slot persists the reviewed plan only in the named slot', () 
   );
   assert.equal(stored.verdict, 'approve');
   assert.match(stored.plan, /Windows plan/);
-  assert.equal(stored.reviewedBy, 'codex:gpt-5.6-sol');
+  assert.equal(stored.reviewedBy, 'codex:gpt-6-astra');
 });
 
 test('plan-review --thread resumes the same pair thread read-only and stores plan state', async () => {
@@ -448,7 +448,7 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(first.status, 0, first.stderr);
   const firstPayload = JSON.parse(first.stdout);
   assert.equal(firstPayload.round, 1);
-  assert.equal(firstPayload.model, 'gpt-5.6-sol');
+  assert.equal(firstPayload.model, 'gpt-6-astra');
   assert.equal(firstPayload.effort, 'max');
   assert.equal(firstPayload.result.verdict, 'needs-revision');
   const threadId = firstPayload.threadId;
@@ -483,7 +483,7 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(planPayload.round, 2);
   assert.equal(planPayload.verdict, 'needs-revision');
   assert.equal(planPayload.threadId, threadId);
-  assert.equal(planPayload.reviewedBy, 'codex:gpt-5.6-sol');
+  assert.equal(planPayload.reviewedBy, 'codex:gpt-6-astra');
   assert.match(planPayload.plan, /Revised plan draft/);
   assert.deepEqual(planPayload.findings, [
     {
@@ -505,7 +505,7 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
     renderedPlanState.stdout,
     /^Stored plan \(verdict: needs-revision, round 2, updated [^)]+\)\n/,
   );
-  assert.ok(renderedPlanState.stdout.includes(`Model: gpt-5.6-sol@max · Thread: ${threadId}\n`));
+  assert.ok(renderedPlanState.stdout.includes(`Model: gpt-6-astra@max · Thread: ${threadId}\n`));
   assert.match(renderedPlanState.stdout, /\n---\n\nRevised plan draft\n$/);
 
   // A malformed round must not clobber the last good stored plan state.

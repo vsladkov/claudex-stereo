@@ -1417,7 +1417,7 @@
               <div class="duo-card">
                 <span class="stepnum">02 · CHALLENGE</span>
                 <h3>A second model challenges assumptions</h3>
-                <p>Adversarial review through bounded revision rounds. <code>codex:sol</code></p>
+                <p>Adversarial review through bounded revision rounds. <code>codex:astra</code></p>
               </div>
             </li>
             <li class="side-c">
@@ -1463,7 +1463,7 @@
               <div class="duo-card">
                 <span class="stepnum">04 · GATE</span>
                 <h3>A fresh reviewer gates the diff</h3>
-                <p>The gate runs outside the session. <code>codex:sol</code></p>
+                <p>The gate runs outside the session. <code>codex:astra</code></p>
               </div>
             </li>
           </ol>
@@ -1551,14 +1551,14 @@
             <div class="term-bar"><i></i><i></i><i></i>&nbsp; claude — ~/dev/api</div>
             <pre><span class="d">&gt;</span> /stereo:plan add rate limiting to the public API
 <span class="c">◆ planner claude:fable</span> <span class="d">— drafting (read-only)…</span>
-<span class="x">◆ plan-reviewer codex:sol</span> <span class="d">— round 1: needs-revision · 3 findings</span>
-<span class="x">◆ plan-reviewer codex:sol</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
+<span class="x">◆ plan-reviewer codex:astra</span> <span class="d">— round 1: needs-revision · 3 findings</span>
+<span class="x">◆ plan-reviewer codex:astra</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
 <span class="ok">✓</span> plan stored <span class="d">— run /stereo:implement</span>
 
 <span class="d">&gt;</span> /stereo:implement
 <span class="c">◆ implementer claude:opus</span> <span class="d">— 14 files changed</span>
 <span class="d">◆ implementer-run tests</span> <span class="ok">✓</span> <span class="d">· static checks</span> <span class="ok">✓</span>
-<span class="x">◆ implementation-reviewer codex:sol</span> <span class="d">— acceptable · 0 fixes</span>
+<span class="x">◆ implementation-reviewer codex:astra</span> <span class="d">— acceptable · 0 fixes</span>
 <span class="ok">✓</span> done <span class="d">— nothing committed; review and commit yourself</span></pre>
           </div>
           <figcaption>
@@ -1884,7 +1884,11 @@
           <fieldset>
             <legend>Plan reviewer</legend>
             <label class="lx">
-              <input type="radio" name="plan-reviewer" value="codex:sol" checked />
+              <input type="radio" name="plan-reviewer" value="codex:astra" checked />
+              <span>codex:astra</span>
+            </label>
+            <label class="lx">
+              <input type="radio" name="plan-reviewer" value="codex:sol" />
               <span>codex:sol</span>
             </label>
             <label class="lc">
@@ -1922,7 +1926,11 @@
           <fieldset>
             <legend>Implementation reviewer</legend>
             <label class="lx">
-              <input type="radio" name="implementation-reviewer" value="codex:sol" checked />
+              <input type="radio" name="implementation-reviewer" value="codex:astra" checked />
+              <span>codex:astra</span>
+            </label>
+            <label class="lx">
+              <input type="radio" name="implementation-reviewer" value="codex:sol" />
               <span>codex:sol</span>
             </label>
             <label class="lc">
@@ -1959,8 +1967,8 @@
         </div>
         <p class="console-note">
           Amber chips route to Claude, cyan to the Codex runtime. The <code>codex:</code> prefix is
-          optional in commands, and tool output prints resolved model ids (<code>codex:sol</code>
-          runs <code>gpt-5.6-sol</code>). Flags matching the defaults are omitted, so the default
+          optional in commands, and tool output prints resolved model ids (<code>codex:astra</code>
+          runs <code>gpt-6-astra</code>). Flags matching the defaults are omitted, so the default
           selection is just the two bare commands. The implementer defaults to the contained
           <code>claude:opus</code> agent, which builds and tests its own changes; a Codex
           implementer instead resumes the stored plan-review thread when it is the model that
@@ -1990,8 +1998,8 @@
                 </tr>
                 <tr>
                   <td>Plan reviewer</td>
-                  <td><code class="cx">codex:sol</code></td>
-                  <td><code class="cx">codex:sol</code></td>
+                  <td><code class="cx">codex:astra</code></td>
+                  <td><code class="cx">codex:astra</code></td>
                 </tr>
                 <tr>
                   <td>Implementer</td>
@@ -2000,8 +2008,8 @@
                 </tr>
                 <tr>
                   <td>Implementation reviewer</td>
-                  <td><code class="cx">codex:sol</code></td>
-                  <td><code class="cx">codex:sol</code></td>
+                  <td><code class="cx">codex:astra</code></td>
+                  <td><code class="cx">codex:astra</code></td>
                 </tr>
               </tbody>
             </table>
@@ -2236,9 +2244,9 @@
       if (rcForm) {
         const defaults = {
           planner: 'claude:fable',
-          'plan-reviewer': 'codex:sol',
+          'plan-reviewer': 'codex:astra',
           implementer: 'claude:opus',
-          'implementation-reviewer': 'codex:sol',
+          'implementation-reviewer': 'codex:astra',
         };
         const planOut = document.getElementById('rc-plan');
         const implOut = document.getElementById('rc-impl');

@@ -25,7 +25,7 @@ After reading the routing skill, parse all arguments before repository work:
 - `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed planner.
 - `--plan-reviewer <model>` resolves as explicit flag > workspace `planReviewer` default >
-  `codex:sol`.
+  `codex:astra`.
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
 - `--implementer <model>` resolves as explicit flag > workspace `implementer` default >
@@ -35,7 +35,7 @@ After reading the routing skill, parse all arguments before repository work:
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer.
 - `--implementation-reviewer <model>` resolves as explicit flag > workspace
-  `implementationReviewer` default > `codex:sol`; the cross-ecosystem reviewer is independent of
+  `implementationReviewer` default > `codex:astra`; the cross-ecosystem reviewer is independent of
   this orchestrating session and of the Claude-routed default implementer.
 - `--implementation-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort
   for a Codex-routed implementation reviewer.
@@ -65,7 +65,7 @@ command-wide effort > workspace role effort > the routing skill's pair default. 
 payload effort belongs to the payload model and is never borrowed by the resolved implementer.
 A delta is never gated by the model that produced it: when the resolved implementer and
 implementation reviewer are the same model and the reviewer came from the built-in default rather
-than a flag or workspace default, substitute the other ecosystem's review default (`codex:sol`
+than a flag or workspace default, substitute the other ecosystem's review default (`codex:astra`
 for a Claude-routed implementer, `claude:fable` for a Codex-routed one) and report the
 substitution; a same-model reviewer selected by flag or workspace default is honored but called
 out as self-review.

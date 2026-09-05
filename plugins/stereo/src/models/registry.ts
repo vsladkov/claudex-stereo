@@ -16,11 +16,12 @@ export const VALID_REASONING_EFFORTS: ReadonlySet<string> = new Set([
   'max',
 ]);
 
-// Bare because it feeds normalizeRequestedModel; documentation writes it as `codex:sol`.
-export const PAIR_DEFAULT_MODEL = 'sol';
+// Bare because it feeds normalizeRequestedModel; documentation writes it as `codex:astra`.
+export const PAIR_DEFAULT_MODEL = 'astra';
 export const PAIR_DEFAULT_EFFORT: ReasoningEffort = 'max'; // every OpenAI `gpt-*` pair role
 
 export const MODEL_REGISTRY = {
+  astra: { model: 'gpt-6-astra', defaultPairEffort: PAIR_DEFAULT_EFFORT },
   // gpt-5.4-mini rejects 'max' (accepted set tops out at xhigh; probed live 2026-08-03),
   // so this row pins its own strongest accepted effort instead of PAIR_DEFAULT_EFFORT.
   mini: { model: 'gpt-5.4-mini', defaultPairEffort: 'xhigh' },

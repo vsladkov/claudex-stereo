@@ -23,7 +23,7 @@ After reading the routing skill, parse all arguments before loading state:
 - `--implementer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed implementer.
 - `--implementation-reviewer <model>` selects the implementation reviewer. Resolve it as explicit
-  flag > workspace `implementationReviewer` default > `codex:sol`: the implementation review is
+  flag > workspace `implementationReviewer` default > `codex:astra`: the implementation review is
   the last gate before commit, and the cross-ecosystem reviewer is independent of both the
   orchestrator and the Claude-routed default implementer that produced the delta.
   `claude:session` remains valid and is the cheaper inline choice.
@@ -101,7 +101,7 @@ default.
 A delta is never gated by the model that produced it: when the resolved implementer and
 implementation reviewer are the same model and the reviewer came from the built-in default
 rather than a flag or workspace default, substitute the other ecosystem's review default —
-`codex:sol` for a Claude-routed implementer, `claude:fable` for a Codex-routed one — and report
+`codex:astra` for a Claude-routed implementer, `claude:fable` for a Codex-routed one — and report
 the substitution. A same-model reviewer selected by an explicit
 `--implementation-reviewer` flag or a stored workspace default is honored but called out as
 self-review in the recap and the final report.

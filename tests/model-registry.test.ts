@@ -12,6 +12,7 @@ import {
 } from '../plugins/stereo/src/models/registry.ts';
 
 test('normalizeRequestedModel resolves the documented aliases to exact models', () => {
+  assert.equal(normalizeRequestedModel('astra'), 'gpt-6-astra');
   assert.equal(normalizeRequestedModel('sol'), 'gpt-5.6-sol');
   assert.equal(normalizeRequestedModel('terra'), 'gpt-5.6-terra');
   assert.equal(normalizeRequestedModel('luna'), 'gpt-5.6-luna');
@@ -23,6 +24,7 @@ test('normalizeRequestedModel resolves the documented aliases to exact models', 
 });
 
 test('normalizeRequestedModel strips one optional codex: runtime prefix', () => {
+  assert.equal(normalizeRequestedModel('codex:astra'), 'gpt-6-astra');
   assert.equal(normalizeRequestedModel('codex:sol'), 'gpt-5.6-sol');
   assert.equal(normalizeRequestedModel('  CODEX:Glm  '), 'glm-5.2');
   assert.equal(normalizeRequestedModel('codex:gpt-5.6-sol@azure'), 'gpt-5.6-sol@azure');
@@ -118,6 +120,7 @@ test('normalizeRequestedModel returns null for null and empty input', () => {
 
 test('defaultPairEffort honors registry overrides and defaults raw gpt-* models to max', () => {
   assert.equal(defaultPairEffort('gpt-5.6'), 'max');
+  assert.equal(defaultPairEffort('gpt-6-astra'), 'max');
   assert.equal(defaultPairEffort('gpt-5.6-sol'), 'max');
   assert.equal(defaultPairEffort('gpt-5.6-terra'), 'max');
   assert.equal(defaultPairEffort('gpt-5.5'), 'max');

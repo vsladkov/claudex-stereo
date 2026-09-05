@@ -23,7 +23,7 @@ a routed step:
 - `--planner <model>` selects the drafter and defaults to `claude:fable`.
 - `--planner-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed planner.
-- `--plan-reviewer <model>` selects the plan reviewer and defaults to `codex:sol`.
+- `--plan-reviewer <model>` selects the plan reviewer and defaults to `codex:astra`.
 - `--plan-reviewer-effort <none|minimal|low|medium|high|xhigh|max>` overrides effort for a
   Codex-routed plan reviewer.
 - `--effort <none|minimal|low|medium|high|xhigh|max>` is the command-wide default for
@@ -81,7 +81,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --json
 
 Apply the routing skill's "Workspace role defaults" mechanics to the result. This command's
 roles: the planner resolves as `--planner` > stored `planner` > `claude:fable`; the plan reviewer
-as `--plan-reviewer` > stored `planReviewer` > `codex:sol`.
+as `--plan-reviewer` > stored `planReviewer` > `codex:astra`.
 
 ## Stored-plan overwrite guard
 
