@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.48.0
+
+- Add `codex:astra` (GPT-6 Astra, `gpt-6-astra`) to the Codex model aliases with the `max`
+  pair-role effort default, and make it the built-in plan reviewer and implementation reviewer
+  for `/stereo:plan`, `/stereo:implement`, and `/stereo:quick`, replacing `codex:sol` in both
+  review gates; the same-model reviewer substitution and the CLI-level plan-review default follow
+- Document that `claude:fable` resolves to the harness's current Fable generation (Fable 5.1) and
+  `claude:opus` to Opus 5, and that a specific generation cannot be pinned per role
+- Require Codex CLI 0.153.1 or later for the default review gates, with a workspace-default
+  fallback for older CLIs
+
 ## 1.47.0
 
 - Record reviewer attribution on auto-stored Codex plan reviews: every successfully parsed
