@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.51.0
+
+- Remove the `claude:opus-4.8` selection and the six `stereo:<role>-opus-4-8` agent twins: Claude
+  selections are the four aliases, which the harness resolves to its current generation of each
+  family, plus `claude:inherit` for the session model and `claude:session` for inline roles; a
+  contained role runs on a specific generation by setting the session model to it and selecting
+  `claude:inherit`
+- Restore `claude:opus` as the built-in implementer for `/stereo:implement` and `/stereo:quick`
+  and as the tournament's Claude contestant
+
 ## 1.50.0
 
 - Add the `claude:opus-4.8` selection, valid for every role and every command's Claude path: each
