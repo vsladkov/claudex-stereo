@@ -353,7 +353,7 @@ test('pair commands load the canonical routing skill and keep workflow wiring', 
     'both foreground Agent templates must pass an invocation-level model',
   );
   assert.match(tournament, /`c1` = `codex:astra`/);
-  assert.match(tournament, /`c2` = `claude:opus-4.8`/);
+  assert.match(tournament, /`c2` = `claude:opus`/);
   assert.equal(
     (tournament.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
     2,
@@ -616,18 +616,15 @@ test('pair commands fill the canonical role briefs', () => {
 });
 
 test('pair agents keep their role-specific tool and output contracts', () => {
-  const pairAgents = [
-    'adversarial-reviewer',
-    'implementation-reviewer',
-    'implementer',
-    'plan-reviewer',
-    'planner',
-    'reviewer',
-  ];
   const expectedAgents = [
+    'adversarial-reviewer.md',
     'codex-rescue.md',
-    ...pairAgents.flatMap((role) => [`${role}.md`, `${role}-opus-4-8.md`]),
-  ].sort();
+    'implementation-reviewer.md',
+    'implementer.md',
+    'plan-reviewer.md',
+    'planner.md',
+    'reviewer.md',
+  ];
   assert.deepEqual(fs.readdirSync(path.join(PLUGIN_ROOT, 'agents')).sort(), expectedAgents);
 
   const implementer = read('agents/implementer.md');
@@ -673,7 +670,7 @@ test('pair agents keep their role-specific tool and output contracts', () => {
     'plan-reviewer.md',
     'planner.md',
     'reviewer.md',
-  ].flatMap((file) => [file, file.replace(/\.md$/, '-opus-4-8.md')])) {
+  ]) {
     assert.match(
       read(path.join('agents', file)),
       /^tools:\s*Read, Glob, Grep, Bash, WebFetch, WebSearch$/m,
@@ -681,21 +678,10 @@ test('pair agents keep their role-specific tool and output contracts', () => {
     );
   }
 
-  // Each pair agent has a `-opus-4-8` twin whose frontmatter pins the model
-  // (the only per-role generation handle the harness offers) over the same
-  // body, so the twins must never drift from their base definitions.
-  const body = (source: string): string => source.replace(/^---\n[\s\S]*?\n---\n/, '');
-  const frontmatterField = (source: string, field: string): string =>
-    source.match(new RegExp(`^${field}:\\s*(.*)$`, 'm'))?.[1] ?? '';
-  for (const role of pairAgents) {
-    const base = read(path.join('agents', `${role}.md`));
-    const twin = read(path.join('agents', `${role}-opus-4-8.md`));
-    assert.match(base, /^model:\s*inherit$/m, role);
-    assert.match(base, /run_in_background: false/, role);
-    assert.equal(frontmatterField(twin, 'name'), `${role}-opus-4-8`, role);
-    assert.equal(frontmatterField(twin, 'model'), 'claude-opus-4-8', role);
-    assert.equal(frontmatterField(twin, 'tools'), frontmatterField(base, 'tools'), role);
-    assert.equal(body(twin), body(base), `${role}-opus-4-8 body drifted from ${role}`);
+  for (const file of expectedAgents.filter((file) => file !== 'codex-rescue.md')) {
+    const source = read(path.join('agents', file));
+    assert.match(source, /^model:\s*inherit$/m, file);
+    assert.match(source, /run_in_background: false/, file);
   }
 });
 

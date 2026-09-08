@@ -14,20 +14,19 @@ wording here.
 
 Interpret selections as follows:
 
-| Selection           | Route                                                                                                                                                                                                                                                                                                                        |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claude:session`    | Run inline in the current Claude session                                                                                                                                                                                                                                                                                     |
-| `claude:inherit`    | Run the named foreground agent with the `model` parameter omitted                                                                                                                                                                                                                                                            |
-| `claude:sonnet`     | Run the named foreground agent with `model: "sonnet"`                                                                                                                                                                                                                                                                        |
-| `claude:opus`       | Run the named foreground agent with `model: "opus"`                                                                                                                                                                                                                                                                          |
-| `claude:haiku`      | Run the named foreground agent with `model: "haiku"`                                                                                                                                                                                                                                                                         |
-| `claude:fable`      | Run the named foreground agent with `model: "fable"`                                                                                                                                                                                                                                                                         |
-| `claude:opus-4.8`   | Run the role's `-opus-4-8` agent twin (`stereo:planner-opus-4-8`, `stereo:plan-reviewer-opus-4-8`, `stereo:implementer-opus-4-8`, `stereo:implementation-reviewer-opus-4-8`, `stereo:reviewer-opus-4-8`, `stereo:adversarial-reviewer-opus-4-8`) with the `model` parameter omitted; those definitions pin `claude-opus-4-8` |
-| `codex:<selection>` | The written form for Codex-side models; pass it to the companion unchanged — it strips exactly one leading `codex:` prefix                                                                                                                                                                                                   |
-| Anything else       | A bare Codex selection, equivalent to its `codex:` form; pass it to the companion unchanged                                                                                                                                                                                                                                  |
+| Selection           | Route                                                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `claude:session`    | Run inline in the current Claude session                                                                                   |
+| `claude:inherit`    | Run the named foreground agent with the `model` parameter omitted                                                          |
+| `claude:sonnet`     | Run the named foreground agent with `model: "sonnet"`                                                                      |
+| `claude:opus`       | Run the named foreground agent with `model: "opus"`                                                                        |
+| `claude:haiku`      | Run the named foreground agent with `model: "haiku"`                                                                       |
+| `claude:fable`      | Run the named foreground agent with `model: "fable"`                                                                       |
+| `codex:<selection>` | The written form for Codex-side models; pass it to the companion unchanged — it strips exactly one leading `codex:` prefix |
+| Anything else       | A bare Codex selection, equivalent to its `codex:` form; pass it to the companion unchanged                                |
 
 The prefix names the executing runtime, not the model vendor. `claude:` is required because it
-names a closed seven-value set; every other selection runs through the Codex companion runtime,
+names a closed six-value set; every other selection runs through the Codex companion runtime,
 including third-party provider aliases. On the Codex side, `codex:` is optional addressing sugar:
 pass it unchanged, and the companion strips exactly one occurrence before resolving aliases,
 providers, and effort defaults. The prefix never changes routing, effort, or persistence.
@@ -50,17 +49,17 @@ The remaining one-runtime surfaces and route asymmetries are deliberate:
   control; the detailed Claude-side controls are described below.
 - Stored-plan `model`/`effort` record the last Codex pair values only; they never resolve the
   implementer, whose selection is the role flag, the durable workspace default
-  (`/stereo:config --implementer <model>`), or the built-in `claude:opus-4.8`.
+  (`/stereo:config --implementer <model>`), or the built-in `claude:opus`.
 
 `claude:inherit` requests the platform's model inheritance. With the Agent `model` parameter
 omitted, the agent frontmatter decides: `model: inherit` resolves to the main conversation's model
 on Claude Code 2.1.251 and later, which consults `CLAUDE_CODE_SUBAGENT_MODEL` only when the
 frontmatter sets no model (older harnesses let that variable win first). The Agent `model`
-parameter accepts only the four aliases, so a specific generation is selectable per role only
-through a pinned agent definition: every pair agent has a `-opus-4-8` twin with the same body and
-tools whose frontmatter pins `claude-opus-4-8`, and `claude:opus-4.8` routes to that twin. Record
-the effective model reported by the Agent result in the invocation note; if it is not exposed,
-label the effective model `unavailable` rather than guessing.
+parameter accepts only the four aliases, and each alias resolves to the harness's current
+generation of that family, so no selection pins a specific generation per role: to run a contained
+role on a specific generation, set the session model to it and select `claude:inherit`. Record the
+effective model reported by the Agent result in the invocation note; if it is not exposed, label
+the effective model `unavailable` rather than guessing.
 
 Allow `claude:session` for planner, plan-reviewer, reviewer, implementation-reviewer, and
 adversarial-reviewer roles. Reject it for the implementer: Claude writes must stay inside the
@@ -119,7 +118,7 @@ warning with the exact role and stored value, ignore the whole entry, and use th
 for that role. A stored `claude:*` value is a routing selection resolved by the command; it is
 never passed to the companion's `--model` flag.
 
-The implementer resolves as explicit flag > workspace implementer default > `claude:opus-4.8`.
+The implementer resolves as explicit flag > workspace implementer default > `claude:opus`.
 Stored-plan `model`/`effort` record the last Codex pair values for the plan and never resolve the
 implementer; stored-plan effort belongs to the stored model and is never borrowed by a different
 selection. A Codex-routed implementer's effective effort is role flag > command-wide effort >
@@ -132,9 +131,8 @@ Always invoke these agents in the foreground. Supply the command's complete step
 where a bracketed placeholder appears.
 
 For `claude:sonnet|opus|haiku|fable`, include the explicit `model` parameter shown below. For
-`claude:inherit` and `claude:opus-4.8`, omit the `model` parameter entirely; do not pass the string
-`inherit`, a model id, or a null value. For `claude:opus-4.8`, also replace the `subagent_type` with
-the role's `-opus-4-8` twin (for example `stereo:planner-opus-4-8`).
+`claude:inherit`, omit the `model` parameter entirely; do not pass the string `inherit` or a null
+value.
 
 Planner:
 

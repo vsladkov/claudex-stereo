@@ -8,10 +8,6 @@ export const CLAUDE_SELECTIONS = [
   'claude:inherit',
   'claude:sonnet',
   'claude:opus',
-  // Routed to the role's `-opus-4-8` agent variant, whose frontmatter pins
-  // claude-opus-4-8: the Agent tool's model parameter takes only aliases, so a
-  // specific generation is selectable per role only through such a pin.
-  'claude:opus-4.8',
   'claude:haiku',
   'claude:fable',
 ] as const;
@@ -85,7 +81,7 @@ export function parseRoleSelection(
   if (normalizedSelection.startsWith('claude:')) {
     if (!CLAUDE_SELECTION_SET.has(normalizedSelection)) {
       throw new Error(
-        `Unsupported model "${selection}" for --${flag}. Use one of: claude:session, claude:inherit, claude:sonnet, claude:opus, claude:opus-4.8, claude:haiku, claude:fable, or a Codex selection.`,
+        `Unsupported model "${selection}" for --${flag}. Use one of: claude:session, claude:inherit, claude:sonnet, claude:opus, claude:haiku, claude:fable, or a Codex selection.`,
       );
     }
     const definition = definitionForFlag(flag);

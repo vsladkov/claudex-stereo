@@ -31,8 +31,7 @@ remaining focus text from the raw arguments. Default to the companion's normal m
 - A model that does not start with `claude:` takes the Codex path below, including one with an
   optional `codex:` prefix. Preserve the user's raw arguments byte-for-byte when invoking the
   companion; it strips the prefix.
-- `claude:session`, `claude:inherit`, `claude:opus-4.8`, and the four explicit Claude aliases take
-  the Claude path.
+- `claude:session`, `claude:inherit`, and the four explicit Claude aliases take the Claude path.
   Reject any other `claude:*` value using the routing skill's availability rule.
 - Reject `--effort` when the selected model is any `claude:*` route. Effort is a Codex runtime
   control; tell the user to remove it or choose a Codex model.
@@ -161,8 +160,7 @@ template: use the complete filled template as the review brief.
 - For `claude:session`, perform the filled brief inline and produce one raw JSON object.
 - For a named Claude selection, invoke `stereo:adversarial-reviewer` using the routing skill's
   foreground template and the complete filled brief. For `claude:inherit`, omit the Agent
-  `model` parameter so platform inheritance applies. For `claude:opus-4.8`, use
-  `stereo:adversarial-reviewer-opus-4-8` as the `subagent_type` and omit the `model` parameter.
+  `model` parameter so platform inheritance applies.
 
 Validate the result against
 `${CLAUDE_PLUGIN_ROOT}/schemas/review-output.schema.json`, including all nested fields and enums.

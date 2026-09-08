@@ -14,6 +14,6 @@ names.
 
 Explicit role flags take precedence over stored workspace defaults, which take precedence over
 built-in defaults. The built-in defaults are `claude:fable` for the planner, `codex:astra` for the
-plan reviewer, `claude:opus-4.8` for the implementer, and `codex:astra` for the implementation
+plan reviewer, `claude:opus` for the implementer, and `codex:astra` for the implementation
 reviewer, shared by the two phase commands and `/stereo:quick` alike. An unset role uses that
 command's built-in default.
