@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.53.0
+
+- Add Claude Sonnet 5.5: `claude:sonnet` now runs `claude-sonnet-5-5` at `xhigh`, and
+  `claude:sonnet-5.5` pins it; `claude:sonnet-5` pins the earlier Sonnet 5
+- Accept every Claude model that Claude Code offers: `claude:opus-5`, `claude:opus-4.7`,
+  `claude:opus-4.6`, `claude:fable-5`, and `claude:sonnet-4.6` join the versions already known
+- Opus 4.6 and Sonnet 4.6 have no `xhigh`: they default to `high`, and an `xhigh` flag or stored
+  effort on them is refused before any job
+
 ## 1.52.0
 
 ### Headless Claude roles
