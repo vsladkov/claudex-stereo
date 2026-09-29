@@ -198,3 +198,23 @@ test('a version the table gives no effort refuses one, naming where it came from
   assert.doesNotThrow(() => assertClaudeEffortAllowed(opusId, 'low'));
   assert.doesNotThrow(() => assertClaudeEffortAllowed('my-gateway-model', 'low'));
 });
+
+test('a version that lacks an effort tier refuses it and defaults to a tier it takes', () => {
+  const lacking = MODEL_VERSIONS.filter((row) => row.runtime === 'claude' && row.efforts);
+  assert.deepEqual(
+    lacking.map((row) => claudeModelId(row.family, row.version)),
+    ['claude-opus-4-6', 'claude-sonnet-4-6'],
+  );
+  for (const row of lacking) {
+    const id = claudeModelId(row.family, row.version);
+    assert.ok(row.effort && row.efforts?.includes(row.effort), `${id} defaults to its own tier`);
+    assert.equal(parseClaudeSelection(`claude:${row.family}-${row.version}`).modelArg, id);
+    assert.throws(
+      () => assertClaudeEffortAllowed(id, 'xhigh', '--implementer-effort'),
+      new Error(`${id} does not take --implementer-effort xhigh; it takes low, medium, high, max.`),
+    );
+    for (const effort of row.efforts ?? []) {
+      assert.doesNotThrow(() => assertClaudeEffortAllowed(id, effort));
+    }
+  }
+});

@@ -240,7 +240,7 @@ Examples:
 /stereo:review --background
 /stereo:review --model claude:opus
 /stereo:review --model claude:opus focus on rollback safety
-/stereo:review --background --model claude:sonnet-5 --effort high focus on rollback safety
+/stereo:review --background --model claude:sonnet-5.5 --effort high focus on rollback safety
 /stereo:review --native
 ```
 
@@ -1092,23 +1092,30 @@ default and are listed under [Other model providers](#other-model-providers).
 ### Claude model versions
 
 A Claude selection names a family the plugin knows—`opus`, `fable`, `sonnet`, or `haiku`—and runs
-it as a headless Claude session. There is no Claude model catalog, so the plugin ships a version
-table with the versions it knows and each one's default effort; the family alone is an alias for
-the newest version in that table, and `-<version>` pins one. The plugin always passes Claude Code
-the exact id, never a bare alias:
+it as a headless Claude session. Claude Code has no command that lists its models, so the plugin
+ships a version table with the versions Claude Code offers and each one's default effort; the
+family alone is an alias for the newest version in that table, and `-<version>` pins one. The
+plugin always passes Claude Code the exact id, never a bare alias:
 
-| Version   | Selection                                    | Model argument     | Default effort |
-| --------- | -------------------------------------------- | ------------------ | -------------- |
-| Opus 5.5  | `claude:opus` (alias) or `claude:opus-5.5`   | `claude-opus-5-5`  | `xhigh`        |
-| Opus 4.8  | `claude:opus-4.8`                            | `claude-opus-4-8`  | `xhigh`        |
-| Fable 5.1 | `claude:fable` (alias) or `claude:fable-5.1` | `claude-fable-5-1` | `xhigh`        |
-| Sonnet 5  | `claude:sonnet` (alias) or `claude:sonnet-5` | `claude-sonnet-5`  | `xhigh`        |
-| Haiku 4.5 | `claude:haiku` (alias) or `claude:haiku-4.5` | `claude-haiku-4-5` | none           |
+| Version    | Selection                                      | Model argument      | Default effort |
+| ---------- | ---------------------------------------------- | ------------------- | -------------- |
+| Opus 5.5   | `claude:opus` (alias) or `claude:opus-5.5`     | `claude-opus-5-5`   | `xhigh`        |
+| Opus 5     | `claude:opus-5`                                | `claude-opus-5`     | `xhigh`        |
+| Opus 4.8   | `claude:opus-4.8`                              | `claude-opus-4-8`   | `xhigh`        |
+| Opus 4.7   | `claude:opus-4.7`                              | `claude-opus-4-7`   | `xhigh`        |
+| Opus 4.6   | `claude:opus-4.6`                              | `claude-opus-4-6`   | `high`         |
+| Fable 5.1  | `claude:fable` (alias) or `claude:fable-5.1`   | `claude-fable-5-1`  | `xhigh`        |
+| Fable 5    | `claude:fable-5`                               | `claude-fable-5`    | `xhigh`        |
+| Sonnet 5.5 | `claude:sonnet` (alias) or `claude:sonnet-5.5` | `claude-sonnet-5-5` | `xhigh`        |
+| Sonnet 5   | `claude:sonnet-5`                              | `claude-sonnet-5`   | `xhigh`        |
+| Sonnet 4.6 | `claude:sonnet-4.6`                            | `claude-sonnet-4-6` | `high`         |
+| Haiku 4.5  | `claude:haiku` (alias) or `claude:haiku-4.5`   | `claude-haiku-4-5`  | none           |
 
 A pin may separate its version's segments with `.` or `-` (`claude:opus-5-5` is `claude:opus-5.5`).
 A version the table does not know, a misspelled family, or any other text after `claude:` is
-rejected before launch, naming the families or versions the plugin knows. Haiku takes no effort:
-an effort flag on it, or a stored effort beside it, is rejected before any job record. A new Claude generation
+rejected before launch, naming the families or versions the plugin knows. Haiku takes no effort,
+and Opus 4.6 and Sonnet 4.6 have no `xhigh`: an effort flag a version does not take, or such an
+effort stored beside it, is rejected before any job record. A new Claude generation
 reaches `claude:<family>` with the plugin release that adds it; the built-in planner and
 implementer pin their versions and move only when a release changes them.
 
@@ -1127,23 +1134,26 @@ command-wide `--effort` on `/stereo:plan`, `/stereo:implement`, `/stereo:quick`,
    applies to the built-in model. Models compare by the id they resolve to, so
    `--implementer claude:opus` matches a `claude:opus-5.5` default while Opus 5.5 is the newest
    Opus, and `--implementer claude:opus-4.8` does not.
-3. Otherwise the selected version's default effort: `xhigh` for every Claude version but Haiku 4.5,
-   which takes none, and for a Codex version `xhigh`, or the highest tier below it that the
-   catalog lists for that model. Third-party provider models take none.
+3. Otherwise the selected version's default effort. A Claude version defaults to `xhigh`, except
+   Opus 4.6 and Sonnet 4.6, which have no `xhigh` and default to `high`, and Haiku 4.5, which
+   takes none. A Codex version defaults to `xhigh`, or the highest tier below it that the catalog
+   lists for that model. Third-party provider models take none.
 
 A stored effort therefore follows its stored model: after
 `/stereo:config --implementer claude:opus-4.8 --implementer-effort high`, the implementer runs Opus
 4.8 at `high`, while a run with `--implementer claude:opus-5.5` runs Opus 5.5 at `xhigh`.
-Everything defaults to `xhigh`; lower it per workspace or per run where you want faster, cheaper
-turns. `/stereo:rescue` and the stop-time review gate run no role, so without `--effort` they use
+The built-in role defaults all run at `xhigh`; lower it per workspace or per run where you want
+faster, cheaper turns. `/stereo:rescue` and the stop-time review gate run no role, so without
+`--effort` they use
 Codex's own default.
 
 Each runtime validates its own ladder. Codex accepts `none`, `minimal`, `low`, `medium`, `high`,
 `xhigh`, `max`, and `ultra`; `ultra` is the tier above `max` on the models whose catalog entry lists
 it (`/stereo:setup` shows each model's tiers), and no default reaches `max` or `ultra`. Claude
 accepts `low`, `medium`, `high`, `xhigh`, and `max`. An explicit or stored effort the resolved
-model does not take—a Haiku effort, or a Codex tier its catalog entry does not list—is refused
-before any job record. A role effort flag is rejected for `claude:session`, which runs inline and
+model does not take—a Haiku effort, `xhigh` on Opus 4.6 or Sonnet 4.6, or a Codex tier its catalog
+entry does not list—is refused before any job record. A role effort flag is rejected for
+`claude:session`, which runs inline and
 takes no effort, and Stereo never translates an effort into an inline-session control
 (`ultrathink` is a main-turn keyword only).
 

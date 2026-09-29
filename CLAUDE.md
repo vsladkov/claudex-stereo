@@ -30,8 +30,12 @@ models → runtime → jobs → render/workflows → cli/hooks` (models, runtime
     `claude -p` and parses its stream-json events; `runtime/claude-runner.ts`
     turns a role request into flags, environment, and a turn result.
   - Models: `models/model-table.ts` is the one table of model versions for
-    both runtimes (one row per version, with its default effort); adding a row
-    is the only maintenance for a new version. `ROLE_DEFINITIONS` in
+    both runtimes (one row per version, with its default effort and, where it
+    lacks a tier, the efforts it takes); its Claude rows are the models Claude
+    Code offers, and adding a row is the only maintenance for a new version.
+    Claude Code has no command that lists its models, and its catalog cache
+    under `~/.claude/cache/` is as private as Codex's: never read it.
+    `ROLE_DEFINITIONS` in
     `models/role-defaults.ts` holds each role's built-in default, which moves
     only when that table changes. `models/registry.ts` holds the third-party
     provider aliases (one row per model). OpenAI models are not rows:

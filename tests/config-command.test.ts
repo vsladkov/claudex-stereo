@@ -336,6 +336,20 @@ test('a haiku effort is refused at config time; a Codex tier the catalog lacks i
     /^claude:haiku takes no effort \(the model rejects the parameter\); drop --implementer-effort high for claude-haiku-\S+\.$/,
   );
   assert.equal(fs.existsSync(resolveStateFile(workspace)), false, 'nothing was stored');
+  // So is a tier a Claude version lacks: the 4.6 generation has no xhigh.
+  const lacking = runConfig(workspace, [
+    '--implementer',
+    'claude:opus-4.6',
+    '--implementer-effort',
+    'xhigh',
+    '--json',
+  ]);
+  assert.equal(lacking.status, 1);
+  assert.equal(
+    errorOf(lacking),
+    'claude-opus-4-6 does not take --implementer-effort xhigh; it takes low, medium, high, max.',
+  );
+  assert.equal(fs.existsSync(resolveStateFile(workspace)), false, 'nothing was stored');
   // The catalog may be stale, so a Codex tier it does not list only warns.
   const tier = runConfig(workspace, [
     '--plan-reviewer',

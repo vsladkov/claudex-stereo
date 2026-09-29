@@ -1,7 +1,7 @@
 // Claude-side model selections for the headless `claude -p` transport.
 //
-// There is no model catalog for a Claude Code subscription session, so the
-// version table (model-table.ts) supplies what a catalog would:
+// Claude Code has no command that lists its models, so the version table
+// (model-table.ts) supplies what a catalog would:
 // `claude:<family>` means the newest version the table knows for that family,
 // `claude:<family>-<version>` pins a row, and a full
 // `claude-<family>-<version>` id (what a dry run pins, so a launch passes it
@@ -159,17 +159,26 @@ export function normalizeServedModelId(servedModel: string): string {
 }
 
 // A version the table gives no effort (Haiku: the model rejects the
-// parameter) would fail inside the CLI after the job record exists; refuse
-// an effort on it here. `source` names the effort as normalizeClaudeEffort does.
+// parameter), or an effort a version lacks (the 4.6 generation has no xhigh),
+// would fail inside the CLI after the job record exists; refuse it here.
+// `source` names the effort as normalizeClaudeEffort does.
 export function assertClaudeEffortAllowed(
   modelArg: string,
   effort: string | null | undefined,
   source = '--effort',
 ): void {
   const row = rowForModelArg(modelArg);
-  if (effort && row && row.effort === null) {
+  if (!effort || !row) {
+    return;
+  }
+  if (row.effort === null) {
     throw new Error(
       `claude:${row.family} takes no effort (the model rejects the parameter); drop ${source} ${effort} for ${modelArg}.`,
+    );
+  }
+  if (row.efforts && !row.efforts.includes(effort as ClaudeEffort)) {
+    throw new Error(
+      `${modelArg} does not take ${source} ${effort}; it takes ${row.efforts.join(', ')}.`,
     );
   }
 }

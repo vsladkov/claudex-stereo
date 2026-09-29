@@ -274,7 +274,7 @@ test('a Claude plan-review session resumes as a task with the plan-reviewer role
       '--thread',
       session,
       '--model',
-      'claude:sonnet',
+      'claude:sonnet-5',
       '--role',
       'plan-reviewer',
       'review it again',

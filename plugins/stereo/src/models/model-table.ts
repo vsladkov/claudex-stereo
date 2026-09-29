@@ -1,9 +1,9 @@
 // One table of model versions for both runtimes: the versions this plugin
 // knows and the default effort each takes. Claude rows are the only source of
-// Claude versions (a subscription session has no model catalog), so an alias
-// such as `claude:opus` means the newest opus row here and a pin must name a
-// row. Codex versions come from the live catalog; a Codex row only pins a
-// version's default effort, so none needs to exist.
+// Claude versions (Claude Code has no command that lists its models), so an
+// alias such as `claude:opus` means the newest opus row here and a pin must
+// name a row. Codex versions come from the live catalog; a Codex row only
+// pins a version's default effort, so none needs to exist.
 
 import type { CatalogEffort } from './catalog.ts';
 import type { CompanionRuntime } from '../shared/runtime.ts';
@@ -14,22 +14,34 @@ export interface ModelVersionRow {
   version: string;
   /** The default effort this version takes; null means the model takes none. */
   effort: CatalogEffort | null;
+  /** The efforts this version takes, where it lacks a tier of its runtime's ladder. */
+  efforts?: readonly CatalogEffort[];
 }
 
 // The Codex default effort for a version without a row: the catalog steps it
 // down to a tier the model lists.
 export const FALLBACK_EFFORT: CatalogEffort = 'xhigh';
 
+// The 4.6 generation has no `xhigh`: it defaults to the tier below.
+const WITHOUT_XHIGH: readonly CatalogEffort[] = ['low', 'medium', 'high', 'max'];
+
 // Add a row to teach the plugin a version: a new Claude generation reaches
 // `claude:<family>` the moment its row is the newest one, and a new Claude
-// family is one row too. Haiku takes no effort at all (the model rejects the
-// parameter). Codex rows are an extension point: none ships, and a
-// `runtime: 'codex'` row would pin that catalog version's default effort.
+// family is one row too. The Claude rows are the models Claude Code offers.
+// Haiku takes no effort at all (the model rejects the parameter). Codex rows
+// are an extension point: none ships, and a `runtime: 'codex'` row would pin
+// that catalog version's default effort.
 export const MODEL_VERSIONS: readonly ModelVersionRow[] = [
   { runtime: 'claude', family: 'opus', version: '5.5', effort: 'xhigh' },
+  { runtime: 'claude', family: 'opus', version: '5', effort: 'xhigh' },
   { runtime: 'claude', family: 'opus', version: '4.8', effort: 'xhigh' },
+  { runtime: 'claude', family: 'opus', version: '4.7', effort: 'xhigh' },
+  { runtime: 'claude', family: 'opus', version: '4.6', effort: 'high', efforts: WITHOUT_XHIGH },
   { runtime: 'claude', family: 'fable', version: '5.1', effort: 'xhigh' },
+  { runtime: 'claude', family: 'fable', version: '5', effort: 'xhigh' },
+  { runtime: 'claude', family: 'sonnet', version: '5.5', effort: 'xhigh' },
   { runtime: 'claude', family: 'sonnet', version: '5', effort: 'xhigh' },
+  { runtime: 'claude', family: 'sonnet', version: '4.6', effort: 'high', efforts: WITHOUT_XHIGH },
   { runtime: 'claude', family: 'haiku', version: '4.5', effort: null },
 ];
 
