@@ -15,7 +15,7 @@ import type {
   ClaudeAvailability,
 } from '../plugins/stereo/src/runtime/claude-availability.ts';
 import type { Model } from '../plugins/stereo/src/protocol/app-server.ts';
-import { PROCESS_OPS } from '../plugins/stereo/src/platform/process.ts';
+import { PROCESS_OPS, processHasExited } from '../plugins/stereo/src/platform/process.ts';
 import type { ProcessOps } from '../plugins/stereo/src/platform/process.ts';
 import { threadReservationPath } from '../plugins/stereo/src/workspace/thread-lock-io.ts';
 import {
@@ -144,17 +144,12 @@ export function run(command: string, args: readonly string[], options: RunOption
   }) as unknown as RunResult;
 }
 
-// Whether a pid names a live process (a zombie still counts until reaped).
+// Whether a pid names a running process, by the production rule
+// (processHasExited): on Linux a zombie has exited. A child of the test
+// process is a zombie until Node reaps it, so a bare kill(pid, 0) right after
+// production reported the exit would still find it.
 export function processIsAlive(pid: number | null | undefined): boolean {
-  if (!pid) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  return pid ? !processHasExited(pid) : false;
 }
 
 // Poll until the predicate returns something truthy, and return it; throws
