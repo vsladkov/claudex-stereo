@@ -644,9 +644,10 @@ test(
 );
 
 test('Linux: a zombie (exited, not yet reaped) counts as exited', { skip: !LINUX }, async (t) => {
-  // The shell starts a `sleep 0` it never reaps (exec replaces it with a
-  // longer sleep), and prints its pid.
-  const parent = spawn('sh', ['-c', 'sleep 0 & echo $!; exec sleep 30'], {
+  // The shell starts a short sleep, prints its pid, and is replaced by a
+  // longer sleep before the short one ends: nothing is left to reap it. (A
+  // `sleep 0` could end first and be reaped by the shell itself.)
+  const parent = spawn('sh', ['-c', 'sleep 0.3 & echo $!; exec sleep 30'], {
     stdio: ['ignore', 'pipe', 'ignore'],
   });
   t.after(() => parent.kill('SIGKILL'));
