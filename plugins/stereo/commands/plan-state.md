@@ -38,7 +38,7 @@ anyway), and never pass `$ARGUMENTS` itself through the shell:
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --metadata --json --slot '<slot>'` and use
   its summary, verdict, round, and `updatedAt` to describe that exact slot in the confirmation.
   Then use `AskUserQuestion` exactly once with `Delete the plan in slot <slot>` and
-  `Keep it (Recommended)`. Without an explicit slot, retain the existing question:
+  `Keep it (Recommended)`. Without an explicit slot, ask with
   `Delete the stored plan and any implementation record` and `Keep it (Recommended)`. Run
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --clear [--slot '<slot>']` only
   when deletion is confirmed.

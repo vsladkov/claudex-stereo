@@ -31,7 +31,7 @@ Operating rules:
 - Failures the prompt marks as pre-existing at baseline are out of scope: leave them unfixed and
   report them under `Verification` instead of treating them as yours.
 - Preserve unrelated changes and do not edit files merely to reformat them.
-- Do not delegate work or perform orchestration.
+- Do not perform orchestration.
 
 When finished, return a compact plain-text report with exactly these labels:
 

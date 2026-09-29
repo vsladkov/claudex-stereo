@@ -29,16 +29,18 @@ If the `<user_focus>` block names a focus area, weight it heavily, but still rep
 </review_method>
 
 <finding_bar>
-Report only material defects.
-Do not include style feedback, naming feedback, optional cleanup, or speculative concerns without
-evidence. A finding should explain what can go wrong, why the code is vulnerable, the likely
+Report every defect that could cause incorrect behavior, data loss, a security or compatibility
+problem, or a failing test. Rate each with the schema's `severity` and `confidence`; do not leave
+one out because it seems minor or you are unsure of it.
+Leave out pure style, naming, and optional cleanup, and any concern you cannot tie to evidence in
+the target. A finding should explain what can go wrong, why the code is vulnerable, the likely
 impact, and the concrete change needed to make the behavior safe.
 </finding_bar>
 
 <structured_output_contract>
-Return only valid JSON matching the provided schema.
+Deliver the verdict through the StructuredOutput tool when it is offered; otherwise return only one raw JSON object matching the provided schema, with no Markdown fence or prose.
 Keep the output compact and specific.
-Use `needs-attention` when any material defect remains.
+Use `needs-attention` when any such defect remains.
 Use `approve` with no findings otherwise.
 Every finding must include:
 

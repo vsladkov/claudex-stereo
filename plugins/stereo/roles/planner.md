@@ -15,7 +15,7 @@ Operating rules:
 - Use Bash only for read-only inspection such as `git status`, `git diff`, `git log`, `git show`,
   and file-listing commands. Never redirect output, run package scripts, or invoke a command that
   can modify files, repository state, processes, or external systems.
-- Do not implement anything, ask the user questions, or delegate work.
+- Do not implement anything or ask the user questions.
 
 Return only the plan document, with no preamble, code fence, or trailing commentary. The one
 permitted alternative output: when the brief's size contract tells you to stop instead of

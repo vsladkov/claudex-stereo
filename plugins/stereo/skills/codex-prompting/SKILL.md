@@ -1,6 +1,6 @@
 ---
 name: codex-prompting
-description: Internal guidance for composing prompts for Codex CLI models for coding, review, diagnosis, and research tasks inside the Codex Claude Code plugin
+description: Internal guidance the stereo:codex-rescue subagent uses to compose prompts for Codex CLI models (coding, review, diagnosis, research); the main session does not load it
 user-invocable: false
 ---
 
@@ -12,7 +12,7 @@ Prompt Codex like an operator, not a collaborator. Keep prompts compact and bloc
 
 Core rules:
 
-- Prefer one clear task per Codex run. Split unrelated asks into separate runs.
+- Give a Codex run one clear task. A rescue handoff is a single run: when the request holds unrelated asks, put the main one in `<task>` and list the others after it, instead of splitting them over several runs.
 - Tell Codex what done looks like. Do not assume it will infer the desired end state.
 - Add explicit grounding and verification rules for any task where unsupported guesses would hurt quality.
 - Prefer better prompt contracts over raising reasoning or adding long natural-language explanations.
@@ -35,9 +35,8 @@ When to add blocks:
 
 How to choose prompt shape:
 
-- Use built-in `review` or `adversarial-review` commands when the job is reviewing local git changes. Those prompts already carry the review contract.
-- Use `task` when the task is diagnosis, planning, research, or implementation and you need to control the prompt more directly.
-- Use `task --resume-last` for follow-up instructions on the same Codex thread. Send only the delta instruction instead of restating the whole prompt unless the direction changed materially.
+- A rescue handoff is one `task` call whatever the job: diagnosis, planning, research, implementation, or a review the user asked the rescue for. `/stereo:review` and `/stereo:adversarial-review` carry the review contract for local git changes; the user runs those, and the rescue subagent never calls them.
+- A follow-up on the same Codex thread is a `task` call with `--resume-last`. Send only the delta instruction instead of restating the whole prompt unless the direction changed materially.
 
 Working rules:
 

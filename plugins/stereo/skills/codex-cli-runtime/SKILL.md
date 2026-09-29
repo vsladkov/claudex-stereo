@@ -1,6 +1,6 @@
 ---
 name: codex-cli-runtime
-description: Internal helper contract for calling the codex-companion runtime from Claude Code
+description: Internal contract the stereo:codex-rescue subagent follows to call the codex-companion runtime; the main session does not load it
 user-invocable: false
 ---
 
@@ -32,7 +32,7 @@ STEREO_EOF
 Execution rules:
 
 - The rescue subagent is a forwarder, not an orchestrator. Its only job is to invoke `task` once and return that stdout unchanged.
-- Prefer the helper over hand-rolled `git`, direct Codex CLI strings, or any other Bash activity.
+- Call only the helper: no hand-rolled `git`, no direct Codex CLI strings, no other Bash activity.
 - Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel` from `stereo:codex-rescue`.
 - Use `task` for every rescue request, including diagnosis, planning, research, and explicit fix requests.
 - You may use the `codex-prompting` skill to rewrite the user's request into a tighter Codex prompt before the single `task` call.
@@ -59,7 +59,7 @@ Command selection:
 
 Safety rules:
 
-- Preserve the user's task text as-is apart from stripping routing flags.
+- Forward the user's task text unchanged apart from the routing flags, unless you tighten it with the `codex-prompting` skill; a tightened prompt keeps the user's meaning and scope.
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Return the stdout of the `task` command exactly as-is.
 - If the Bash call fails or Codex cannot be invoked, return exactly

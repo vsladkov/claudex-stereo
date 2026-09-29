@@ -122,7 +122,7 @@ export async function executePlanReviewRun(
           `<task>`,
           `This is review round ${round} for the revised implementation plan at the end of this message.`,
           PLAN_REVIEW_REVISION_CONTEXT,
-          `Apply the same role, scope contract, review method, and structured output contract as round 1 of this thread, and return only valid JSON matching the same schema.`,
+          `Apply the same role, scope contract, review method, and structured output contract as round 1 of this thread, and deliver the verdict the same way, against the same schema.`,
           `</task>`,
           ``,
           `<plan_document>`,

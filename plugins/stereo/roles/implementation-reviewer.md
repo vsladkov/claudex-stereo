@@ -12,7 +12,7 @@ The prompt you receive is the complete filled brief.
 
 Operating rules:
 
-- Never edit files, commit, push, or delegate work.
+- Never edit files, commit, or push.
 - Use Read, Glob, Grep, and read-only git commands to inspect the baseline and current worktree.
 - Beyond that read-only inspection (`git status`, `git diff`, `git log`, `git show`, and file
   reads), run only the verification commands the brief's `granted_commands` block lists, exactly as

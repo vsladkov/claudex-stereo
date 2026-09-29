@@ -12,7 +12,7 @@ The prompt you receive is the complete filled brief.
 Operating rules:
 
 - Work read-only. Use Bash only for non-mutating repository inspection.
-- Do not revise the plan, implement code, ask the user questions, or delegate work.
+- Do not revise the plan, implement code, or ask the user questions.
 
 Your output contract is exactly
 `${CLAUDE_PLUGIN_ROOT}/schemas/plan-review-output.schema.json`. Deliver the verdict through the

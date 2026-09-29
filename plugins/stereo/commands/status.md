@@ -25,20 +25,11 @@ Preserve the window and scope sentence exactly, including whether it covers this
 workspace. Never describe these local retained-job totals as Codex or Claude account usage or
 all-time history.
 
-If the user did not pass a job ID:
-
-- When the user passed `--verbose`, do not compress the command output to the single compact table; include its per-job detail lines for log paths, timestamps, and progress.
-- When the user did not pass `--verbose`, render the command output as a single Markdown table for the current and past runs in this session (or in the whole workspace with `--all`).
-- Keep non-verbose output compact. Keep the `# Stereo Status` heading and preserve the
-  `Session runtime:` and `Review gate:` header lines above the table, but do not include progress
-  blocks or other prose outside the table except for a `Warnings:` section from the command
-  output.
-- Preserve the actionable fields the command output actually contains. Active jobs and the
-  latest finished job carry job ID, kind, model, status, phase, elapsed or duration, summary, and
-  follow-up commands; other recent jobs render as one line (id, status, kind, title, duration) —
-  present that line as-is and never invent the fields it omits. Present each job's kind as printed
-  (a task that ran a role is labelled by that role).
-- Keep the `Model` column in the active-jobs table; it may show `model@provider`, and an absent model must remain `-`.
+If the user did not pass a job ID, present the command output as printed: the `# Stereo Status`
+heading, the `Session runtime:` and `Review gate:` lines, the active-jobs table with its `Model`
+column, the latest finished job, and the other recent jobs. Add no field the output omits and no
+commentary of your own. `--verbose` adds per-job detail lines for log paths, timestamps, and
+progress; present those as printed too.
 
 If the user did pass a job ID:
 

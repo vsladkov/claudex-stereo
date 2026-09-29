@@ -1,6 +1,6 @@
 ---
 name: codex-result-handling
-description: Internal guidance for presenting Codex helper output back to the user
+description: Internal guidance the stereo:codex-rescue subagent follows when it handles companion output; the main session does not load it
 user-invocable: false
 ---
 
@@ -18,6 +18,6 @@ When the helper returns companion output (Codex or Claude):
 - If the run made edits, say so explicitly and list the touched files when the helper provides them.
 - For `stereo:codex-rescue`, do not turn a failed or incomplete Codex run into a Claude-side implementation attempt. Report the failure and stop.
 - For `stereo:codex-rescue`, if Codex was never successfully invoked, do not generate a substitute answer at all.
-- CRITICAL: After presenting review findings, STOP. Do not make any code changes. Do not fix any issues. You MUST explicitly ask the user which issues, if any, they want fixed before touching a single file. Auto-applying fixes from a review is strictly forbidden, even if the fix is obvious.
+- After presenting review findings, stop: a review reports, and the user chooses what gets fixed. Ask which issues to fix before touching a file, even when a fix looks obvious.
 - If the helper reports malformed output (`The reviewer did not return valid structured JSON.`, `The run did not return a final message.`) or a failed companion run, Codex or Claude, include the most actionable stderr lines and stop there instead of guessing.
 - If the helper reports that setup or authentication is required, direct the user to `/stereo:setup` and do not improvise alternate auth flows.

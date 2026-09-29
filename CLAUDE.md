@@ -108,7 +108,7 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   append-only history — never retro-edit shipped entries.
 - CI also runs `npm test` and `npm run build` (an alias for typecheck, still
   with no emit). `.gitattributes` normalizes line endings. The required Windows
-  lane (promoted from advisory after three consecutive green `main` runs) runs
+  lane runs
   `npm run test:windows` (`scripts/test-windows.ts`) and the Codex codegen/typecheck
   build step; formatting, lint, and version checks run on the Linux lane. CI installs a pinned
   Codex CLI for the codegen prestep on both lanes — bump the pin in
@@ -127,7 +127,7 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
 ## Tests
 
 - `npm test` — node:test over every `tests/*.test.ts` file, one process per
-  file, parallel; about a minute (50–80 s, depending on load). Support modules
+  file, parallel; under a minute. Support modules
   (`env-bootstrap.cjs`, `helpers.ts`, `runtime-helpers.ts`,
   `fake-codex-fixture.ts`, `fake-claude-fixture.ts`, `broker-reaper.ts`,
   `global-setup.ts`) are not matched by the glob. The test script preloads

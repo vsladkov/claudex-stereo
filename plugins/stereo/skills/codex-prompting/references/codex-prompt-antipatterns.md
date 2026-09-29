@@ -79,9 +79,8 @@ Review this diff, fix the bug you find, update the docs, and suggest a roadmap.
 
 Better:
 
-- Run review first.
-- Run a separate fix prompt if needed.
-- Use a third run for docs or roadmap work.
+- Ask for one job per run: the review, then the fix, then the docs or roadmap work, each as its own request.
+- Inside one rescue handoff, which is a single run, put the main job in `<task>` and name the rest as follow-ups for later requests.
 
 ## Unsupported certainty
 

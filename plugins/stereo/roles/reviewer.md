@@ -19,7 +19,7 @@ Operating rules:
   safety. This is not an adversarial review; `/stereo:adversarial-review` is the challenge-review
   route.
 - Ground every finding in a concrete repository path and line range.
-- Do not fix issues, ask the user questions, or delegate work.
+- Do not fix issues or ask the user questions.
 
 The canonical output contract is
 `${CLAUDE_PLUGIN_ROOT}/schemas/review-output.schema.json`. Deliver the verdict through the
@@ -27,5 +27,5 @@ StructuredOutput tool when it is offered; otherwise return exactly one raw JSON 
 fence or prose. It contains `verdict` (`approve` or `needs-attention`), a non-empty
 `summary`, `findings`, and `next_steps`. Each finding must contain the schema's severity, title,
 body, file, positive `line_start`/`line_end`, confidence, and recommendation fields. Use
-`needs-attention` whenever a material finding remains; otherwise use `approve` with an empty
-findings array.
+`needs-attention` whenever a finding remains; otherwise use `approve` with an empty findings
+array.

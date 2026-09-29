@@ -62,8 +62,8 @@ implementer — its `launchArgs` and `userOwnedSteps` — stays fixed for later 
 implementation reviewer is resolved, granted, and pinned afresh ("Pinned selections"); its recorded
 selection is historical context.
 
-Inside the full fix loop, act on findings automatically. The stop-after-review rule applies to
-`--review-only` and explicit safeguard decisions.
+Inside the full fix loop, act on findings automatically. In `--review-only` and at explicit
+safeguard decisions, stop after presenting review findings and let the user decide what changes.
 
 ## Common stored-plan preflight
 

@@ -2,7 +2,7 @@
 
 Use these as starting templates for Codex task prompts.
 Copy the smallest recipe that fits the task, then trim anything you do not need.
-In `stereo:codex-rescue`, run diagnosis and fix-oriented recipes in write mode by default unless the user explicitly asked for read-only behavior.
+In `stereo:codex-rescue`, the `codex-cli-runtime` skill's write default decides whether a recipe runs write-capable.
 
 ## Diagnosis
 
