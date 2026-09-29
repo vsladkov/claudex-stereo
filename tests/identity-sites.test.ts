@@ -333,9 +333,11 @@ test('cancel signals only an ours worker, and names an unknown one for the user 
 // ---------------------------------------------------------------------------
 // doctor
 
-function worldDoctorDeps(world: World) {
+// The synthetic world is a Linux one (its records carry Linux start tokens),
+// whatever the host: the cheap check tells a foreign pid apart only there.
+function worldDoctorDeps(world: World, platform: NodeJS.Platform = 'linux') {
   return doctorDeps({
-    ops: { processHasExited: world.hasExited, readProcessIdentity: world.read },
+    ops: { processHasExited: world.hasExited, readProcessIdentity: world.read, platform },
   });
 }
 
@@ -355,6 +357,11 @@ test('doctor counts a job stalled only when its worker is dead or foreign', asyn
     seedJob(workspace, runningJob(id, { pid: WORKER_PID, pidStart }));
     const found = findStalledJobs(workspace, worldDoctorDeps(world)).map((job) => job.id);
     assert.deepEqual(found, stalled ? [id] : [], `${scenario}`);
+    // Off Linux no free identity read exists, so a live pid is never called stalled.
+    const elsewhere = findStalledJobs(workspace, worldDoctorDeps(world, 'win32')).map(
+      (job) => job.id,
+    );
+    assert.deepEqual(elsewhere, scenario === 'dead' ? [id] : [], `${scenario} off Linux`);
   }
 });
 
