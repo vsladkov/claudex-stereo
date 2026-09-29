@@ -1,5 +1,111 @@
 # Changelog
 
+## 1.52.0
+
+### Headless Claude roles
+
+- Run every named Claude role as a headless `claude -p` session that the companion tracks as a
+  background job, exactly like a Codex one (`/stereo:status`, `/stereo:result`, `/stereo:cancel`,
+  resume): Claude reviews take `--background`, and Claude tournament contestants run in parallel.
+  This needs Claude Code 2.1.281 or newer, logged in or with `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, or
+  `CLAUDE_CODE_USE_VERTEX` set, which `/stereo:setup` checks (a user-settings `apiKeyHelper` also
+  reaches every role); the Codex CLI minimum is now 0.156.1
+- Contain the Claude implementer in `acceptEdits` mode with grants for the common build and test
+  runners (a denied write fails the job naming the paths; `/stereo:config --claude-sandbox on` adds
+  Claude Code's Bash sandbox); Claude reviewers run read-only plus the plan's verification commands
+- Results name the exact model that ran, and for Claude jobs the cost, any permission denials, and
+  a `claude --resume <id>` line
+
+### Model versions and efforts
+
+- Select a Claude version with `claude:<family>[-<version>]`: a family alone is the newest version
+  the plugin knows (`claude:opus` is Opus 5.5), and `claude:opus-4.8` pins one
+- Resolve Codex families against your account's live model catalog, so new OpenAI models need no
+  plugin release: `codex:sol` is now the newest Sol (`gpt-6-sol`; `codex:sol-5.6` pins the older
+  one), and a family or version the catalog does not list is refused before any job; a provider id
+  with a digit or punctuation (`codex:llama3`, `codex:mistral:7b`) still passes through as a raw id
+- Every version defaults to `xhigh` (Haiku takes no effort; a Codex model without `xhigh` takes its
+  highest lower tier), Claude roles take an effort too, and an effort the model does not take is
+  refused before any job
+
+### Role defaults and config
+
+- Pin the built-in defaults to versions—planner `claude:fable-5.1`, both review gates
+  `codex:astra-6`, implementer `claude:opus-5.5`—all at `xhigh`; the gates ran at `max` in 1.51,
+  which `/stereo:config --plan-reviewer-effort max --implementation-reviewer-effort max` restores
+- Set efforts per role on either runtime; a stored effort follows its stored model
+- `/stereo:config` shows what each role default launches and the versions it knows, and refuses a
+  change that would leave an entry invalid
+
+### Review and pair-command behaviour
+
+- `/stereo:review` runs Stereo's structured reviewer on both runtimes with focus text, `--effort`,
+  and `--background`; `--native` opts into Codex's built-in reviewer. Without `--model`, reviews,
+  adversarial reviews, and plan reviews run their role's default, not Codex's `config.toml` model
+- Pin each role to the exact model id it resolved to before its first launch, and keep a
+  resumed implementer's model, effort, grants, and sandbox as recorded
+- Trust a Claude implementer's gates from its recorded runs, re-running before review only the
+  static checks and gates it did not pass after its last edit; run the heavy stage after an
+  accepted review and after a tournament hand-back
+- Isolated worktrees link the main tree's ignored dependency directories without changing its
+  status, and the implementer is told never to install into those links; every retained-worktree
+  message prints the companion's own removal command, runnable as printed, and discarding an
+  isolated implementation's delta removes its worktree; `status <job> --brief` prints one poll line;
+  `status --all` lists every session's jobs; a task is labelled by the role it ran (`planner`,
+  `implementer`, `implementation-reviewer`), the stop gate's by `stop-gate`, and any other by
+  `rescue`
+
+### Reliability
+
+- `/stereo:cancel` records the cancellation before stopping anything, leaves an already-finished
+  job alone, and names any process it could not confirm stopped; cancel and session end signal a
+  recorded process only after verifying it is the one the job started
+- Session end stops the session's jobs in every workspace it used, in a process of its own that
+  outlasts the 1.5 seconds Claude Code gives the hook; `/clear` and `/resume` leave the jobs
+  running, a worker that outlives the sweep never brings its job back, and the shared broker of
+  every workspace the session used is asked to shut down when idle, never killed
+- `/stereo:doctor` lists jobs whose worker died, which `/stereo:cancel <id>` settles; an unreadable
+  `state.json` is moved aside instead of overwritten; concurrent writes no longer lose job records;
+  a reservation whose owner died is taken over by the next run, or removed by `/stereo:setup` and
+  `/stereo:status`, without a manual delete
+- Bound CLI probes to fifteen seconds and send the stop gate's prompt on stdin; on Windows, run an
+  npm-installed Claude Code or Codex through its JavaScript entry and keep backslashes in arguments
+- A Claude task or plan-review session resumes only from the directory it ran in: a resume from
+  anywhere else is refused before any job, naming the `--cwd` to pass
+- `status --wait --timeout-ms 0` answers at once instead of waiting the default four minutes, and a
+  job whose worker finishes as it is polled is reported finished, not `stalled`
+- `/stereo:status`, `cancel`, `result`, `config`, and `transfer` pass their arguments on stdin, so
+  no shell reads them: a path with an apostrophe or backslashes works and `$` or backticks stay
+  literal; the companion no longer splits a single command-line argument into several
+
+### Removals and renames
+
+- `claude:inherit` is removed; select a family or version instead
+- The built-in OpenAI alias table is gone: `codex:mini` resolves only if your catalog lists it
+- The implementer always starts fresh and never resumes the plan reviewer's thread, so
+  `/stereo:implement --fresh` is removed; named-Claude implementation reviewers no longer continue
+  across fix rounds; an implementation or a tournament interrupted under 1.51 cannot be resumed
+- A stored plan no longer records its review thread, model, or effort, and `/stereo:plan-state` no
+  longer prints them; `plan-store` takes no `--thread` or `--no-thread`
+- `/stereo:rescue --resume` continues only an earlier rescue thread, no longer one a pair role or
+  the stop gate ran
+- The pair commands no longer take a command-wide `--effort`
+- The six role definitions no longer appear in `/agents`, and named Claude roles have no web tools
+  and run without the session's hooks and user-level settings (an `apiKeyHelper` is carried over)
+- `/stereo:doctor` no longer reports model-registry drift
+- The broker no longer releases a dead run's thread reservation, and its log has no
+  `broker orphan reservation` lines: a run ended by a signal releases every reservation it holds,
+  what a dead run leaves is taken over or removed as described under Reliability, and a resume
+  waits while the broker finishes the turn a dead run left behind
+- In JSON output, `strandedReservations` no longer lists `stranded-reservation`, `stranded-cleanup`,
+  or `orphaned-claim` entries, only what could not be read or removed, and a cancelled job's record
+  no longer carries `cancelledAt`
+- Report headings read `# Stereo …`, reservation errors say `companion run`, and the inactivity
+  budget is `STEREO_TURN_INACTIVITY_TIMEOUT_MS` (renamed from `CODEX_TURN_INACTIVITY_TIMEOUT_MS`)
+- `/stereo:plan` no longer retries a failed plan-review job on its own: like the other pair
+  commands, it asks whether to relaunch, resume, or stop
+
 ## 1.51.0
 
 - Remove the `claude:opus-4.8` selection and the six `stereo:<role>-opus-4-8` agent twins: Claude
