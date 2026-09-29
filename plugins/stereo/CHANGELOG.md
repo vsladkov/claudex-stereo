@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.54.0
+
+- `/stereo:review` and `/stereo:adversarial-review` report every defect that could cause incorrect
+  behavior, data loss, a security or compatibility problem, or a failing test, each with its
+  severity and confidence, instead of only what the reviewer judged material; style, naming, and
+  optional cleanup stay out
+- The adversarial review and the plan review no longer prefer one strong finding over several
+  weaker ones
+- `/stereo:rescue`: the forwarder's instructions agree with each other: one `task` call per handoff,
+  no review commands, and the task text forwarded unchanged unless it is tightened into a Codex
+  prompt that keeps its meaning and scope
+- `/stereo:status` presents the companion's output as printed
+- Review prompts: the adversarial review's summary rule and the plan review's approvability rule
+  stand on their own instead of reading as list items, and every review prompt names the same way
+  to deliver the verdict
+- Claude roles carry no rule about delegation, which their tools never allowed
+
 ## 1.53.0
 
 - Add Claude Sonnet 5.5: `claude:sonnet` now runs `claude-sonnet-5-5` at `xhigh`, and
