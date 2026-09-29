@@ -1,20 +1,21 @@
 import fs from 'node:fs';
-import path from 'node:path';
 
 import {
   loadBrokerSession,
   probeBrokerEndpoint,
   resolveBrokerStateFile,
 } from '../../broker/lifecycle.ts';
-import { readModelCatalogDrift } from '../../models/catalog-cache.ts';
 import { listWorktrees } from '../../platform/git.ts';
-import { processHasExited } from '../../platform/process.ts';
+import { PROCESS_OPS, recordedProcessGone } from '../../platform/process.ts';
+import type { ProcessOps } from '../../platform/process.ts';
 import { renderDoctorReport } from '../../render/render.ts';
-import type { DoctorRenderReport } from '../../render/render.ts';
-import { optionalString, recordLike } from '../../shared/json.ts';
-import { outputResult } from '../../shared/text.ts';
+import type { DoctorRenderReport, StalledJobEntry } from '../../render/render.ts';
+import { optionalString, recordedPid, recordLike } from '../../shared/json.ts';
+import { jobRuntime } from '../../shared/runtime.ts';
 import {
   getConfig,
+  isActiveJob,
+  listJobs,
   readImplementStateFile,
   readTournamentStateFile,
   resolveDurableStateDir,
@@ -26,7 +27,14 @@ import {
 } from '../../workspace/state.ts';
 import { resolveCodexHome } from '../../workspace/thread-lock-io.ts';
 import { buildSetupReport } from './setup.ts';
-import { parseCommandInput, resolveCommandCwd, resolveCommandWorkspace } from '../io.ts';
+import { worktreeRemoveCommand } from './worktree.ts';
+import {
+  outputReportResult,
+  parseCommandInput,
+  resolveCommandCwd,
+  resolveCommandWorkspace,
+} from '../io.ts';
+import { errorMessage } from '../../shared/errors.ts';
 
 export type DoctorReport = DoctorRenderReport;
 
@@ -34,19 +42,55 @@ export interface DoctorDeps {
   buildSetupReport: typeof buildSetupReport;
   loadBrokerSession: typeof loadBrokerSession;
   probeBrokerEndpoint: typeof probeBrokerEndpoint;
-  processHasExited: typeof processHasExited;
   listWorktrees: typeof listWorktrees;
-  readModelCatalogDrift: typeof readModelCatalogDrift;
+  /** The process seams (the broker's liveness, the stall check). */
+  ops: ProcessOps;
 }
 
 export const defaultDoctorDeps: DoctorDeps = {
   buildSetupReport,
   loadBrokerSession,
   probeBrokerEndpoint,
-  processHasExited,
   listWorktrees,
-  readModelCatalogDrift,
+  ops: PROCESS_OPS,
 };
+
+// A queued job may simply not have started yet; only one this old with no
+// live worker counts as stalled. A record with no pid has nothing the
+// worker check could judge, so its age is all that tells a launch that died
+// before it recorded its worker from one still starting.
+const STALLED_QUEUED_AGE_MS = 120_000;
+
+// Active records whose worker is gone (recordedProcessGone: the cheap check
+// status and `status --wait` share), for /stereo:cancel to settle.
+export function findStalledJobs(workspaceRoot: string, deps: DoctorDeps): StalledJobEntry[] {
+  const stalled: StalledJobEntry[] = [];
+  for (const job of listJobs(workspaceRoot)) {
+    if (!isActiveJob(job)) {
+      continue;
+    }
+    // A worker that is not gone (a live pid it cannot tell apart included) is no stall.
+    const workerMayStillRun =
+      recordedPid(job.pid) !== null && !recordedProcessGone(job.pid, job.pidStart, deps.ops);
+    if (workerMayStillRun) {
+      continue;
+    }
+    if (job.status === 'queued' && job.pid == null) {
+      const created = Date.parse(job.createdAt ?? '');
+      if (!Number.isFinite(created) || Date.now() - created < STALLED_QUEUED_AGE_MS) {
+        continue;
+      }
+    }
+    stalled.push({
+      id: job.id,
+      title: typeof job.title === 'string' ? job.title : null,
+      status: job.status,
+      runtime: jobRuntime(job),
+      pid: typeof job.pid === 'number' ? job.pid : null,
+    });
+  }
+  return stalled;
+}
 
 export async function buildDoctorReport(
   cwd: string,
@@ -61,7 +105,7 @@ export async function buildDoctorReport(
   let pidAlive: boolean | null = null;
   if (brokerSession?.pid) {
     try {
-      pidAlive = !deps.processHasExited(brokerSession.pid);
+      pidAlive = !deps.ops.processHasExited(brokerSession.pid);
     } catch {
       pidAlive = null;
     }
@@ -112,17 +156,24 @@ export async function buildDoctorReport(
     worktreeListing = {
       available: false,
       entries: [],
-      detail: error instanceof Error ? error.message : String(error),
+      detail: errorMessage(error),
     };
   }
   const stereoWorktrees = worktreeListing.entries
     .filter((entry) => entry.path.split(/[\\/]+/).includes('stereo-worktrees'))
     .map((entry) => ({
       ...entry,
-      removeCommand: `git -C "${workspaceRoot}" worktree remove --force "${entry.path}"`,
+      removeCommand: worktreeRemoveCommand(workspaceRoot, entry.path),
     }));
   for (const entry of stereoWorktrees) {
     nextSteps.push(`Remove the stranded worktree with ${entry.removeCommand}.`);
+  }
+
+  const stalledJobs = findStalledJobs(workspaceRoot, deps);
+  for (const job of stalledJobs) {
+    nextSteps.push(
+      `Job ${job.id} still shows as ${job.status} but its worker process is gone; settle it with /stereo:cancel ${job.id}.`,
+    );
   }
 
   const lastJobAnnouncementAt = getConfig(workspaceRoot).lastJobAnnouncementAt ?? null;
@@ -135,22 +186,6 @@ export async function buildDoctorReport(
       `The SessionStart announcement watermark is in the future and suppresses finished-job announcements; reset it with ${resetCommand}.`,
     );
   }
-
-  let modelCatalog: ReturnType<typeof readModelCatalogDrift>;
-  try {
-    modelCatalog = deps.readModelCatalogDrift();
-  } catch (error) {
-    modelCatalog = {
-      available: false,
-      path: path.join(codexHome, 'models_cache.json'),
-      reason: error instanceof Error ? error.message : String(error),
-      fetchedAt: null,
-      clientVersion: null,
-      entries: [],
-      warnings: [],
-    };
-  }
-  nextSteps.push(...modelCatalog.warnings);
 
   return {
     workspaceRoot,
@@ -210,7 +245,7 @@ export async function buildDoctorReport(
       future: watermarkFuture,
       resetCommand,
     },
-    modelCatalog,
+    stalledJobs,
     actionsTaken,
     nextSteps,
   };
@@ -238,5 +273,5 @@ export async function handleDoctor(
 
   const reportCwd = Object.hasOwn(options, 'workspace') ? workspaceRoot : cwd;
   const report = await buildDoctorReport(reportCwd, actionsTaken, deps);
-  outputResult(options.json ? report : renderDoctorReport(report), options.json);
+  outputReportResult(report, renderDoctorReport(report), options.json);
 }

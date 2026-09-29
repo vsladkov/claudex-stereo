@@ -8,10 +8,12 @@ import {
   clearCompletionTimer,
   completeTurn,
   createTurnCaptureState,
+  resolveTurnInactivityTimeoutMs,
   scheduleInferredCompletion,
   summarizeUnifiedDiff,
 } from '../plugins/stereo/src/runtime/turn-capture.ts';
 import type { ProgressUpdate } from '../plugins/stereo/src/runtime/turn-capture.ts';
+import { parsePositiveIntEnv } from '../plugins/stereo/src/shared/env.ts';
 import type { AppServerClient } from '../plugins/stereo/src/runtime/threads.ts';
 import type { AppServerNotification, Turn } from '../plugins/stereo/src/protocol/app-server.ts';
 
@@ -33,7 +35,6 @@ test('createTurnCaptureState seeds thread-scoped defaults', () => {
   assert.equal(state.threadLabels.size, 0);
   assert.equal(state.turnId, null);
   assert.equal(state.completed, false);
-  assert.equal(state.inferredCompletion, false);
   assert.equal(state.finalAnswerSeen, false);
   assert.equal(state.finalTurn, null);
   assert.equal(state.completionTimer, null);
@@ -832,7 +833,6 @@ test('the inferred-completion timer completes the turn exactly once', async () =
   assert.equal(fireAll(clock), 1);
   const finished = await state.completion;
   assert.equal(finished.completed, true);
-  assert.equal(finished.inferredCompletion, true);
   assert.equal(finished.finalTurn?.status, 'completed');
 
   // A late duplicate fire must not double-complete.
@@ -850,7 +850,6 @@ test('a real completion cancels the pending inferred-completion timer', () => {
 
   completeTurn(state, { id: 'turn-real', status: 'completed' } as Turn);
   assert.equal(clock.pending.length, 0, 'completeTurn must clear the debounce timer');
-  assert.equal(state.inferredCompletion, false);
   assert.equal(state.finalTurn?.id, 'turn-real');
 
   // Nothing left to fire; firing is a no-op even if a stale handle leaked.
@@ -869,4 +868,25 @@ test('pending collaborations veto the inferred-completion schedule', () => {
   state.pendingCollaborations.clear();
   scheduleInferredCompletion(state);
   assert.equal(clock.pending.length, 1);
+});
+
+test('the inactivity timeout reads STEREO_TURN_INACTIVITY_TIMEOUT_MS only', () => {
+  assert.equal(resolveTurnInactivityTimeoutMs({}), 1_800_000);
+  assert.equal(resolveTurnInactivityTimeoutMs({ STEREO_TURN_INACTIVITY_TIMEOUT_MS: '40' }), 40);
+  assert.equal(
+    resolveTurnInactivityTimeoutMs({ CODEX_TURN_INACTIVITY_TIMEOUT_MS: '25' }),
+    1_800_000,
+  );
+});
+
+test('parsePositiveIntEnv falls back on blanks and garbage and reads non-positive values as off', () => {
+  for (const raw of [undefined, null, '', '   ', 'abc', 'NaN']) {
+    assert.equal(parsePositiveIntEnv(raw, 7), 7, JSON.stringify(raw));
+  }
+  assert.equal(parsePositiveIntEnv('12', 7), 12);
+  assert.equal(parsePositiveIntEnv(' 12 ', 7), 12);
+  assert.equal(parsePositiveIntEnv('1.9', 7), 1);
+  // Zero and negatives read as 0, which every caller treats as disabled.
+  assert.equal(parsePositiveIntEnv('0', 7), 0);
+  assert.equal(parsePositiveIntEnv('-3', 7), 0);
 });

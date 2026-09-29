@@ -3,12 +3,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import test from 'node:test';
-
-import { registerBrokerReaping } from './runtime-helpers.ts';
 import { fileURLToPath } from 'node:url';
 
-import { makeTempDir, initGitRepo, run } from './helpers.ts';
-import { resolveDurableStateDir } from '../plugins/stereo/src/workspace/state.ts';
+import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
+import { initGitRepo, makeTempDir, run, waitFor } from './helpers.ts';
+import {
+  SCRIPT,
+  initializeBasicRepo,
+  readFakeState,
+  registerBrokerReaping,
+  requireCompanionState,
+  seedRunningJob,
+  waitForFakeState,
+} from './runtime-helpers.ts';
+import { STOP_GATE_ORIGIN } from '../plugins/stereo/src/workspace/state.ts';
 import {
   evaluateStopReview,
   interpretStopReviewSpawn,
@@ -111,38 +119,6 @@ test('interpretStopReviewSpawn distinguishes overflow, timeout, command, and JSO
 const STOP_HOOK = path.join(ROOT, 'plugins', 'stereo', 'scripts', 'stop-review-gate-hook.ts');
 const IS_WINDOWS = process.platform === 'win32';
 
-function seedRunningJob(repo: string, sessionId: string): void {
-  const stateDir = resolveDurableStateDir(repo);
-  const jobsDir = path.join(stateDir, 'jobs');
-  fs.mkdirSync(jobsDir, { recursive: true });
-  const runningLog = path.join(jobsDir, 'task-running.log');
-  fs.writeFileSync(runningLog, 'running\n', 'utf8');
-  fs.writeFileSync(
-    path.join(stateDir, 'state.json'),
-    `${JSON.stringify(
-      {
-        version: 1,
-        config: { stopReviewGate: false },
-        jobs: [
-          {
-            id: 'task-live',
-            status: 'running',
-            title: 'Codex Task',
-            jobClass: 'task',
-            sessionId,
-            logFile: runningLog,
-            createdAt: '2026-03-18T15:32:00.000Z',
-            updatedAt: '2026-03-18T15:33:00.000Z',
-          },
-        ],
-      },
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  );
-}
-
 function makeRepo(): string {
   const repo = makeTempDir();
   initGitRepo(repo);
@@ -157,7 +133,7 @@ test(
   { skip: IS_WINDOWS },
   () => {
     const repo = makeRepo();
-    seedRunningJob(repo, 'sess-current');
+    seedRunningJob(repo, 'task-live', 'sess-current');
 
     const linkDir = makeTempDir('stop-hook-link-');
     const link = path.join(linkDir, 'stop-review-gate-hook.ts');
@@ -185,7 +161,7 @@ test(
 
 test('malformed hook stdin degrades to empty input instead of crashing the gate', () => {
   const repo = makeRepo();
-  seedRunningJob(repo, 'sess-current');
+  seedRunningJob(repo, 'task-live', 'sess-current');
 
   const result = run(process.execPath, [STOP_HOOK], {
     cwd: repo,
@@ -201,7 +177,7 @@ test('malformed hook stdin degrades to empty input instead of crashing the gate'
 
 test('an empty session_id falls back to the env session for the running-task note', () => {
   const repo = makeRepo();
-  seedRunningJob(repo, 'sess-env');
+  seedRunningJob(repo, 'task-live', 'sess-env');
 
   const withFallback = run('node', [STOP_HOOK], {
     cwd: repo,
@@ -229,4 +205,97 @@ test('evaluateStopReview fails closed when the review machinery throws', () => {
 
   const passthrough = evaluateStopReview('/tmp', {}, () => ({ ok: true, reason: null }));
   assert.deepEqual(passthrough, { ok: true, reason: null });
+});
+
+test('the stop gate hands a last assistant message far past the argv limit to its review', async () => {
+  const repo = makeRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+  const setup = run(process.execPath, [SCRIPT, 'setup', '--enable-review-gate', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  // One argv element this size fails the spawn (E2BIG: 128 KiB on Linux);
+  // the prompt travels on stdin instead.
+  const head = 'Refactored the retry loop.';
+  const tail = 'Closing note: every retry path is covered.';
+  const message = `${head}\n${'x'.repeat(220 * 1024)}\n${tail}`;
+  const gate = run(process.execPath, [STOP_HOOK], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ cwd: repo, session_id: 'sess-large', last_assistant_message: message }),
+  });
+  assert.equal(gate.status, 0, gate.stderr);
+  const decision = JSON.parse(gate.stdout);
+  assert.equal(decision.decision, 'block');
+  assert.match(decision.reason, /Codex stop-time review found issues that still need fixes/);
+
+  const fakeState = await waitForFakeState(binDir, 'lastTurnStart');
+  const prompt = String(fakeState.lastTurnStart.prompt);
+  assert.match(prompt, /Run a stop-gate review of the previous Claude turn/);
+  assert.equal(prompt.includes(head), true);
+  assert.equal(prompt.includes(tail), true, 'the whole message reached the review');
+  assert.ok(prompt.length > 220 * 1024);
+});
+
+test('the Stop hook records its review as a stop-gate job that no resume picks up', async () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const setup = run(process.execPath, [SCRIPT, 'setup', '--enable-review-gate', '--json'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(setup.status, 0, setup.stderr);
+
+  const gate = run(process.execPath, [STOP_HOOK], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({
+      cwd: repo,
+      session_id: 'sess-stop-hook',
+      last_assistant_message: 'I updated the retry logic.',
+    }),
+  });
+  assert.equal(gate.status, 0, gate.stderr);
+
+  const state = requireCompanionState(repo, env);
+  const gateJob = state.jobs.find(
+    (job: Record<string, any>) => job.title === 'Codex Stop Gate Review',
+  );
+  assert.ok(gateJob, JSON.stringify(state.jobs));
+  assert.equal(gateJob.origin, STOP_GATE_ORIGIN);
+  assert.equal(gateJob.kindLabel, 'stop-gate');
+  assert.equal(gateJob.status, 'completed');
+  assert.ok(gateJob.threadId);
+  // Not a "Codex Companion Task" thread: the sessionless fallback's thread
+  // search must not find it either. The fake rewrites its state in place, so
+  // wait for a read that carries the named thread.
+  const gateThread = await waitFor(() =>
+    (readFakeState(binDir).threads ?? []).find(
+      (thread: Record<string, any>) => thread.id === gateJob.threadId && thread.name,
+    ),
+  );
+  assert.equal(gateThread.name, 'Codex Companion Stop Gate Review');
+
+  const candidate = run(process.execPath, [SCRIPT, 'task-resume-candidate', '--json'], {
+    cwd: repo,
+    env: { ...env, CODEX_COMPANION_SESSION_ID: 'sess-stop-hook' },
+  });
+  assert.equal(candidate.status, 0, candidate.stderr);
+  assert.equal(JSON.parse(candidate.stdout).available, false);
+
+  // No session id: the job index offers nothing and the Codex thread-list
+  // fallback skips the gate's thread.
+  const resume = run(process.execPath, [SCRIPT, 'task', '--resume-last', 'follow up'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(resume.status, 1, resume.stdout);
+  assert.match(resume.stderr, /No previous Codex task thread was found for this repository\./);
 });

@@ -94,7 +94,7 @@ test('parseArgs treats unknown flags, lone dash, and post -- tokens as positiona
   assert.deepEqual(positionals, ['--unknown', '-', '--model', 'raw']);
 });
 
-test('splitRawArgumentString honors quotes, escapes, and whitespace runs', () => {
+test('splitRawArgumentString groups quoted words and splits on whitespace runs', () => {
   assert.deepEqual(splitRawArgumentString('--model sol run the   task'), [
     '--model',
     'sol',
@@ -108,10 +108,59 @@ test('splitRawArgumentString honors quotes, escapes, and whitespace runs', () =>
     'in one',
     'pass',
   ]);
-  assert.deepEqual(splitRawArgumentString('escaped\\ space and\\"quote'), [
-    'escaped space',
-    'and"quote',
+  assert.deepEqual(splitRawArgumentString('--focus="two words" --json'), [
+    '--focus=two words',
+    '--json',
   ]);
-  assert.deepEqual(splitRawArgumentString('trailing\\'), ['trailing\\']);
   assert.deepEqual(splitRawArgumentString('   '), []);
+});
+
+test('splitRawArgumentString keeps a quote inside a word literal', () => {
+  // An apostrophe in a path or in prose opens nothing and swallows nothing.
+  assert.deepEqual(splitRawArgumentString("job-1 --workspace /home/o'brien/repo --json"), [
+    'job-1',
+    '--workspace',
+    "/home/o'brien/repo",
+    '--json',
+  ]);
+  assert.deepEqual(splitRawArgumentString("don't stop"), ["don't", 'stop']);
+  assert.deepEqual(splitRawArgumentString('"it\'s fine" 5"'), ["it's fine", '5"']);
+});
+
+test('splitRawArgumentString keeps every backslash except the one before a quote', () => {
+  assert.deepEqual(
+    splitRawArgumentString('--workspace C:\\dev\\repo --plan-file C:\\tmp\\plan.md'),
+    ['--workspace', 'C:\\dev\\repo', '--plan-file', 'C:\\tmp\\plan.md'],
+  );
+  assert.deepEqual(splitRawArgumentString('"C:\\Program Files\\repo" \'C:\\tmp\\plan.md\''), [
+    'C:\\Program Files\\repo',
+    'C:\\tmp\\plan.md',
+  ]);
+  // A UNC prefix keeps both backslashes, and a trailing backslash glues nothing on.
+  assert.deepEqual(splitRawArgumentString('--workspace \\\\wsl$\\Ubuntu\\home --json'), [
+    '--workspace',
+    '\\\\wsl$\\Ubuntu\\home',
+    '--json',
+  ]);
+  assert.deepEqual(splitRawArgumentString('--workspace C:\\repo\\ --json'), [
+    '--workspace',
+    'C:\\repo\\',
+    '--json',
+  ]);
+  assert.deepEqual(splitRawArgumentString('\\'), ['\\']);
+  // The one escape: a backslash makes the quote after it literal.
+  assert.deepEqual(splitRawArgumentString('"say \\"hi\\"" \\\'quoted'), ['say "hi"', "'quoted"]);
+});
+
+test('an inline --key=value splits on the first = only', () => {
+  const parsed = parseArgs(['--allow=Bash(FOO=1 make:*)', '--model=a=b', '--json=false'], {
+    valueOptions: ['model'],
+    arrayOptions: ['allow'],
+    booleanOptions: ['json'],
+  });
+  assert.deepEqual(parsed.options, {
+    allow: ['Bash(FOO=1 make:*)'],
+    model: 'a=b',
+    json: false,
+  });
 });

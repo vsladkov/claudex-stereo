@@ -11,7 +11,7 @@ import {
 } from '../scripts/provider-probe.ts';
 import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
 import { makeTempDir, run } from './helpers.ts';
-import { registerBrokerReaping } from './runtime-helpers.ts';
+import { registerBrokerReaping, waitForFakeState } from './runtime-helpers.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PROBE = path.join(ROOT, 'scripts', 'provider-probe.ts');
@@ -77,11 +77,10 @@ test('provider probe is registered as an npm script and parses its public CLI', 
   assert.throws(() => parseProviderProbeArgs(['--model', 'acme-code']), /--config is required/);
 });
 
-test('provider probe initializes config and exercises live tool and follow-up turns', () => {
+test('provider probe initializes config and exercises live tool and follow-up turns', async () => {
   const fixtureDir = makeTempDir();
   const binDir = makeTempDir();
   const configPath = path.join(fixtureDir, 'provider.toml');
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   fs.writeFileSync(configPath, STANZA, 'utf8');
   installFakeCodex(binDir, 'provider-probe');
   const env = {
@@ -97,7 +96,7 @@ test('provider probe initializes config and exercises live tool and follow-up tu
   assert.equal(parseOnly.status, 0, JSON.stringify(parseOnly, null, 2));
   assert.match(parseOnly.stdout, /Codex parsed the provider config/);
   assert.match(parseOnly.stdout, /Live endpoint check skipped/);
-  const parseState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const parseState = await waitForFakeState(binDir, 'configContents');
   assert.match(parseState.configContents, /^model = "acme-code"\nmodel_provider = "acme"/);
   assert.match(parseState.configContents, /wire_api = "responses"/);
   assert.equal(parseState.lastThreadStart, undefined);
@@ -109,7 +108,7 @@ test('provider probe initializes config and exercises live tool and follow-up tu
 
   assert.equal(live.status, 0, JSON.stringify(live, null, 2));
   assert.match(live.stdout, /Live provider probe passed/);
-  const liveState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const liveState = await waitForFakeState(binDir, 'lastThreadStart');
   assert.equal(liveState.lastThreadStart.model, 'acme-code');
   assert.equal(liveState.lastThreadStart.modelProvider, 'acme');
   assert.equal(liveState.turnStarts.length, 2);

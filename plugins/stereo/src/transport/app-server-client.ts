@@ -8,7 +8,7 @@ import type { Socket } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
 import { parseBrokerEndpoint } from '../broker/endpoint.ts';
 import { ensureBrokerSession, loadBrokerSession } from '../broker/lifecycle.ts';
-import { terminateProcessTree } from '../platform/process.ts';
+import { childTarget, resolveCommandLaunch, signalThenEscalate } from '../platform/process.ts';
 import { readPluginManifestVersion } from '../shared/plugin-manifest.ts';
 import {
   BROKER_ENDPOINT_ENV,
@@ -26,6 +26,7 @@ import type {
   CodexAppServerClientOptions,
   InitializeCapabilities,
 } from '../protocol/app-server.ts';
+import { errorMessage } from '../shared/errors.ts';
 
 type ProtocolError = Error & { data?: unknown; rpcCode?: number };
 
@@ -37,13 +38,20 @@ interface PendingRequest {
   method: string;
 }
 
+const BROKER_CLOSE_GRACE_MS = 2000;
 const MAX_STDERR_BYTES = 64 * 1024;
+// A direct codex child gets this long to act on stdin EOF, then the polite
+// signal, then the hard one after the kill grace; close() stops waiting for
+// its exit once the bound passes.
+const DIRECT_EOF_GRACE_MS = 50;
+const DIRECT_KILL_GRACE_MS = 2000;
+const DIRECT_CLOSE_BOUND_MS = 3000;
 
 export function readPluginVersion(manifestFile?: string): string {
   try {
     return readPluginManifestVersion(manifestFile);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     process.stderr.write(
       `Stereo: could not read plugin.json (${detail}); reporting client version 0.0.0.\n`,
     );
@@ -271,11 +279,15 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
   }
 
   async initialize(): Promise<void> {
-    this.proc = spawn('codex', ['app-server'], {
+    const env = this.options.env ?? process.env;
+    // No shell unless Windows resolves `codex` only to its npm `.cmd` shim;
+    // see resolveCommandLaunch.
+    const launch = resolveCommandLaunch('codex', ['app-server'], { env });
+    this.proc = spawn(launch.file, launch.args, {
       cwd: this.cwd,
-      env: this.options.env ?? process.env,
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: process.platform === 'win32' ? process.env.SHELL || true : false,
+      shell: launch.shell,
       windowsHide: true,
     });
 
@@ -334,55 +346,29 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
       this.readline.close();
     }
 
-    if (this.proc && !this.proc.killed) {
-      this.proc.stdin.end();
+    const proc = this.proc;
+    const target = proc ? childTarget(proc) : null;
+    if (proc && target?.isRunning()) {
+      proc.stdin.end();
+      // A codex that ignores stdin EOF and SIGTERM must not outlive close()
+      // (broker shutdown awaits it inside the SIGTERM handler): the polite
+      // signal, then the hard one while it still runs. On Windows through a
+      // `.cmd` shim the child is cmd.exe; the tree kill takes the grandchild.
       setTimeout(() => {
-        if (this.proc && !this.proc.killed && this.proc.exitCode === null) {
-          // On Windows with shell: true, the direct child is cmd.exe.
-          // Use terminateProcessTree to kill the entire tree including
-          // the grandchild node process.
-          if (process.platform === 'win32') {
-            try {
-              terminateProcessTree(this.proc.pid as number);
-            } catch {
-              // Best-effort cleanup inside an unref'd timer — swallow errors
-              // to avoid crashing the host process during shutdown.
-            }
-          } else {
-            this.proc.kill('SIGTERM');
-          }
+        if (target.isRunning()) {
+          signalThenEscalate(target, {
+            graceMs: DIRECT_KILL_GRACE_MS,
+            wait: 'timer',
+            stillNeeded: target.isRunning,
+          });
         }
-      }, 50).unref?.();
+      }, DIRECT_EOF_GRACE_MS).unref?.();
     }
 
-    // A codex that ignores stdin-EOF and SIGTERM must not wedge close()
-    // forever (broker shutdown awaits it inside the SIGTERM handler):
-    // escalate after a bounded grace, then resolve. The direct child is not
-    // detached, so on POSIX the process-group tree kill cannot deliver
-    // (ESRCH: not a group leader) — SIGKILL to the pid is the escalation
-    // that actually lands there.
-    const KILL_ESCALATION_MS = 3000;
     this.boundedExit = Promise.race([
       this.exitPromise,
       new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          if (this.proc && this.proc.exitCode === null) {
-            let delivered = false;
-            try {
-              delivered = terminateProcessTree(this.proc.pid as number).delivered;
-            } catch {
-              // Best-effort: the process may have just exited.
-            }
-            if (!delivered) {
-              try {
-                this.proc.kill('SIGKILL');
-              } catch {
-                // Already gone.
-              }
-            }
-          }
-          resolve();
-        }, KILL_ESCALATION_MS);
+        const timer = setTimeout(resolve, DIRECT_CLOSE_BOUND_MS);
         timer.unref?.();
         // If the child exits first, do not hold the timer alive.
         void this.exitPromise.then(() => {
@@ -471,16 +457,24 @@ class BrokerCodexAppServerClient extends AppServerClientBase {
   }
 
   async close(): Promise<void> {
-    if (this.closed) {
-      await this.exitPromise;
-      return;
+    if (!this.closed) {
+      this.closed = true;
+      if (this.socket) {
+        this.socket.end();
+      }
     }
-
-    this.closed = true;
-    if (this.socket) {
-      this.socket.end();
-    }
-    await this.exitPromise;
+    // A broker whose loop is blocked never answers the FIN; after a bounded
+    // grace the socket is destroyed locally so teardown cannot wedge on it.
+    await Promise.race([
+      this.exitPromise,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          this.socket?.destroy();
+          resolve();
+        }, BROKER_CLOSE_GRACE_MS);
+        timer.unref?.();
+      }),
+    ]);
   }
 
   override sendMessage(message: unknown): void {

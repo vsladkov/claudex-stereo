@@ -8,6 +8,7 @@ import {
   recordedPlanFingerprint,
   recordedPlanSlot,
 } from './state-helpers.ts';
+import { worktreeRemoveCommand } from './worktree.ts';
 import {
   clearTournamentState,
   nowIso,
@@ -159,7 +160,7 @@ export function handleTournamentState(argv: string[]): void {
     const worktreesRendered = worktreePaths
       .map(
         (worktreePath) =>
-          `Retained worktree ${worktreePath}; remove it with git -C "${workspaceRoot}" worktree remove --force "${worktreePath}".`,
+          `Retained worktree ${worktreePath}; remove it with ${worktreeRemoveCommand(workspaceRoot, worktreePath)}.`,
       )
       .join('\n');
     outputCommandResult(

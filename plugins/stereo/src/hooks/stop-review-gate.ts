@@ -1,14 +1,23 @@
 import process from 'node:process';
+import { runtimeLabel } from '../shared/runtime.ts';
 import { spawnSync } from 'node:child_process';
 
-import { getCodexAvailability } from '../runtime/index.ts';
+import { getCodexAvailability } from '../runtime/availability.ts';
+import { positiveIntEnvOr } from '../shared/env.ts';
 import { readStdinJsonIfPiped } from '../shared/fs.ts';
 import { loadPromptTemplate, interpolateTemplate } from '../shared/prompts.ts';
 import { COMPANION_ENTRY, PROMPTS_ROOT } from '../shared/paths.ts';
-import { disableStateFileWarnings, getConfig, listJobs } from '../workspace/state.ts';
+import {
+  disableStateFileWarnings,
+  isActiveJob,
+  loadState,
+  STOP_GATE_ORIGIN,
+} from '../workspace/state.ts';
+import type { JobRecord, StereoConfig } from '../workspace/state.ts';
 import { filterJobsForCurrentSession, sortJobsNewestFirst } from '../jobs/job-control.ts';
 import { SESSION_ID_ENV } from '../jobs/tracked-jobs.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
+import { errorMessage } from '../shared/errors.ts';
 
 // Must stay comfortably below the Stop hook timeout in hooks.json (900 s) so
 // spawnSync's ETIMEDOUT fires and the graceful "timed out" block is emitted
@@ -36,11 +45,7 @@ interface StopHookInput {
 }
 
 export function resolveStopReviewTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = Number.parseInt(env[STOP_REVIEW_TIMEOUT_ENV] ?? '', 10);
-  if (Number.isFinite(raw) && raw > 0) {
-    return raw;
-  }
-  return DEFAULT_STOP_REVIEW_TIMEOUT_MS;
+  return positiveIntEnvOr(env[STOP_REVIEW_TIMEOUT_ENV], DEFAULT_STOP_REVIEW_TIMEOUT_MS);
 }
 
 function readHookInput(): StopHookInput {
@@ -164,10 +169,15 @@ function runStopReview(cwd: string, input: StopHookInput = {}): StopReviewDecisi
     ...(input.session_id ? { [SESSION_ID_ENV]: input.session_id } : {}),
   };
   const timeoutMs = resolveStopReviewTimeoutMs();
-  const result = spawnSync(process.execPath, [scriptPath, 'task', '--json', prompt], {
+  // The prompt goes on stdin, never as one argv element: it embeds the last
+  // assistant message, and an argument past the OS limit (128 KiB on Linux)
+  // fails the spawn itself (E2BIG). The origin marks the job as the gate's.
+  const args = [scriptPath, 'task', '--json', '--origin', STOP_GATE_ORIGIN];
+  const result = spawnSync(process.execPath, args, {
     cwd,
     env: childEnv,
     encoding: 'utf8',
+    input: prompt,
     timeout: timeoutMs,
     maxBuffer: 32 * 1024 * 1024,
   });
@@ -182,7 +192,7 @@ export function evaluateStopReview(
   try {
     return runner(cwd, input);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     // Fail closed: with the gate enabled, a crash in the review machinery
     // must block the stop (exit 1 with no decision would fail open).
     return {
@@ -199,16 +209,29 @@ export function runStopReviewGateHook(): void {
   const input = readHookInput();
   const cwd = input.cwd || process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const workspaceRoot = resolveWorkspaceRoot(cwd);
-  const config = getConfig(workspaceRoot);
-
-  const jobs = sortJobsNewestFirst(
-    filterJobsForCurrentSession(listJobs(workspaceRoot), {
-      sessionId: input.session_id || undefined,
-    }),
-  );
-  const runningJob = jobs.find((job) => job.status === 'queued' || job.status === 'running');
+  let config: StereoConfig;
+  let jobs: JobRecord[];
+  try {
+    const state = loadState(workspaceRoot);
+    config = state.config;
+    jobs = sortJobsNewestFirst(
+      filterJobsForCurrentSession(state.jobs, {
+        sessionId: input.session_id || undefined,
+      }),
+    );
+  } catch (error) {
+    // A state file that cannot be read right now (an I/O error, never
+    // corruption) says nothing about the gate: skip it with a note rather
+    // than crash the hook.
+    const message = errorMessage(error);
+    logNote(
+      `Stereo could not read its workspace state (${message}); the stop-time review was skipped.`,
+    );
+    return;
+  }
+  const runningJob = jobs.find((job) => isActiveJob(job));
   const runningTaskNote = runningJob
-    ? `Codex task ${runningJob.id} is still running. Check /stereo:status and use /stereo:cancel ${runningJob.id} if you want to stop it before ending the session.`
+    ? `${runtimeLabel(runningJob.runtime)} task ${runningJob.id} is still running. Check /stereo:status and use /stereo:cancel ${runningJob.id} if you want to stop it before ending the session.`
     : null;
 
   if (!config.stopReviewGate) {

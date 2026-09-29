@@ -8,6 +8,7 @@ import {
   recordedPlanFingerprint,
   recordedPlanSlot,
 } from './state-helpers.ts';
+import { worktreeRemoveCommand } from './worktree.ts';
 import {
   clearImplementState,
   nowIso,
@@ -175,7 +176,7 @@ export function handleImplementState(argv: string[]): void {
         ? `Cleared the implementation state for this repository.\n${removed.map((filePath) => `- ${filePath}`).join('\n')}\n`
         : 'No implementation state for this repository. Nothing to clear.\n';
     const worktreeRendered = worktreePath
-      ? `Isolated worktree ${worktreePath}; remove it with git -C "${workspaceRoot}" worktree remove --force "${worktreePath}".\n`
+      ? `Isolated worktree ${worktreePath}; remove it with ${worktreeRemoveCommand(workspaceRoot, worktreePath)}.\n`
       : '';
     const rendered = `${clearRendered}${worktreeRendered}`;
     outputCommandResult(payload, rendered, options.json);

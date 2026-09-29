@@ -3,11 +3,16 @@ import type { StrandedReservationEntry } from '../runtime/reservations.ts';
 import { formatJobModel, resolveJobModel } from '../jobs/job-control.ts';
 import type { UsageGroup, UsageSnapshot } from '../jobs/job-control.ts';
 import type { SessionJobAnnouncement } from '../jobs/job-announcements.ts';
-import type { RoleDefaultEntry } from '../models/role-defaults.ts';
-import type { CatalogDriftReport } from '../models/catalog-cache.ts';
+import { compareModelVersions } from '../models/model-table.ts';
+import type { FamilyModels } from '../models/model-table.ts';
+import type { RoleDefaultEntry, RoleDefaultLaunch } from '../models/role-defaults.ts';
+import { runtimeLabel } from '../shared/runtime.ts';
+import type { CompanionRuntime } from '../shared/runtime.ts';
+import { recordLike } from '../shared/json.ts';
 import { MAX_COMPARE_PLAN_CHARS, MAX_COMPARE_PLAN_LINES } from '../shared/diff.ts';
 import type { PlanTextDiff } from '../shared/diff.ts';
 import { shorten } from '../shared/text.ts';
+import { isActiveJob } from '../workspace/state.ts';
 
 // Renderer inputs are typed from usage: jobs and stored payloads come from
 // state files written across plugin versions, so every field beyond the id is
@@ -32,6 +37,7 @@ export interface RenderableJob {
   progressPreview?: string[] | null;
   model?: string | null;
   modelDisplay?: string | null;
+  runtime?: CompanionRuntime | null;
   tokenUsage?: unknown;
 }
 
@@ -46,18 +52,60 @@ export interface ReviewRenderMeta {
   reviewLabel: string;
   targetLabel: string;
   reasoningSummary?: string[] | null;
+  /** Which runtime produced the review; absent means Codex (records before Claude jobs existed). */
+  runtime?: CompanionRuntime | null;
 }
 
 export interface PlanReviewRenderMeta {
   round?: number;
   reasoningSummary?: string[] | null;
+  runtime?: CompanionRuntime | null;
+}
+
+// The model listing setup and config render (never a JSON field): every
+// family per runtime, and in setup the Codex catalog it came from.
+export interface ModelListing {
+  claude: Record<string, FamilyModels>;
+  codex: Record<string, FamilyModels>;
+  catalogSource?: string | null;
+}
+
+function effortWord(effort: string | null | undefined): string {
+  return effort ? `effort ${effort}` : 'no effort';
+}
+
+// `claude:opus → claude-opus-5-5 (effort xhigh; also 4.8 xhigh)`, the other
+// versions newest first: a record enumerates whole-number keys ahead of the
+// rest (5, 6, 7, then 5.6), whatever order they were written in.
+function formatFamilyModels(prefix: string, family: string, models: FamilyModels): string {
+  const latest = models.versions[models.latest];
+  const others = Object.entries(models.versions)
+    .filter(([version]) => version !== models.latest)
+    .sort(([left], [right]) => compareModelVersions(right, left))
+    .map(([version, model]) => `${version} ${model.effort ?? 'no effort'}`);
+  const notes = [
+    effortWord(latest?.effort),
+    ...(others.length > 0 ? [`also ${others.join(', ')}`] : []),
+  ];
+  return `${prefix}:${family} → ${latest?.id ?? models.latest} (${notes.join('; ')})`;
+}
+
+// A version's effort is the default a role launch applies; a Codex task
+// without a role sends none, so Codex's own default applies there.
+function renderModelListing(listing: ModelListing): string[] {
+  return [
+    "Models (efforts are role-launch defaults; a Codex task without a role runs at Codex's own):",
+    ...(listing.catalogSource ? [`- Codex catalog: ${listing.catalogSource}`] : []),
+    ...(['claude', 'codex'] as const).flatMap((runtime) =>
+      Object.entries(listing[runtime]).map(
+        ([family, models]) => `- ${formatFamilyModels(runtime, family, models)}`,
+      ),
+    ),
+  ];
 }
 
 export interface StoredPairPlanState {
   plan?: unknown;
-  threadId?: unknown;
-  model?: unknown;
-  effort?: unknown;
   round?: unknown;
   verdict?: unknown;
   updatedAt?: unknown;
@@ -125,6 +173,10 @@ export interface NativeReviewRenderResult {
 export interface TaskRenderMeta {
   write?: boolean | null;
   touchedFiles?: unknown;
+  /** Non-zero: the run failed even if it produced a final message. */
+  status?: number | null;
+  /** Targets of denied calls worth naming with the failure (paths, commands). */
+  deniedTargets?: readonly string[] | null;
   // Accepted from the task workflow for parity with its payloads; the task
   // rendering itself does not use them.
   title?: string | null;
@@ -141,6 +193,7 @@ export interface StoredJobResultLike {
 
 export interface StoredJobLike {
   threadId?: string | null;
+  runtime?: CompanionRuntime | null;
   jobClass?: string | null;
   rendered?: string | null;
   errorMessage?: string | null;
@@ -173,6 +226,8 @@ export interface SetupRenderReport {
   codex: { detail: string };
   writeSandbox?: { available: boolean | null; detail: string } | null;
   auth: { detail: string };
+  claude?: { available: boolean; detail: string; version?: string | null } | null;
+  claudeAuth?: { loggedIn: boolean; detail: string } | null;
   rateLimits?: unknown;
   providers: {
     active: string | null;
@@ -249,13 +304,23 @@ export interface DoctorRenderReport {
     future: boolean;
     resetCommand: string;
   };
-  modelCatalog: CatalogDriftReport;
+  /** Active records whose worker process is gone; `/stereo:cancel <id>` settles one. */
+  stalledJobs: StalledJobEntry[];
   actionsTaken: string[];
   nextSteps: string[];
 }
 
+export interface StalledJobEntry {
+  id: string;
+  title: string | null;
+  status: string;
+  runtime: CompanionRuntime;
+  pid: number | null;
+}
+
 export interface ConfigRenderReport {
   roleDefaults: RoleDefaultEntry[];
+  claudeSandbox?: boolean;
   actionsTaken: string[];
   warnings: string[];
 }
@@ -555,11 +620,22 @@ function escapeMarkdownCell(value: unknown): string {
     .trim();
 }
 
-function formatCodexResumeCommand(job: RenderableJob | null | undefined): string | null {
-  if (!job?.threadId) {
+// Session wording per runtime: a Codex job resumes through the Codex CLI, a
+// Claude job through `claude --resume`.
+function sessionLabel(runtime: CompanionRuntime | null | undefined): string {
+  return `${runtimeLabel(runtime)} session ID`;
+}
+
+function formatResumeLine(
+  runtime: CompanionRuntime | null | undefined,
+  threadId: string | null | undefined,
+): string | null {
+  if (!threadId) {
     return null;
   }
-  return `codex resume ${job.threadId}`;
+  return runtime === 'claude'
+    ? `Resume in Claude: claude --resume ${threadId}`
+    : `Resume in Codex: codex resume ${threadId}`;
 }
 
 function finiteNonnegativeNumber(value: unknown): number | null {
@@ -637,13 +713,11 @@ export function formatTokenUsage(value: unknown): string | null {
 
 function appendActiveJobsTable(lines: string[], jobs: RenderableJob[]): void {
   lines.push('Active jobs:');
-  lines.push(
-    '| Job | Kind | Model | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |',
-  );
+  lines.push('| Job | Kind | Model | Status | Phase | Elapsed | Session ID | Summary | Actions |');
   lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |');
   for (const job of jobs) {
     const actions = [`/stereo:status ${job.id}`];
-    if (job.status === 'queued' || job.status === 'running') {
+    if (isActiveJob(job)) {
       actions.push(`/stereo:cancel ${job.id}`);
     }
     lines.push(
@@ -681,32 +755,26 @@ function pushJobDetails(lines: string[], job: RenderableJob, options: JobDetailO
     }
   }
   if (job.threadId && (options.showThread ?? true)) {
-    lines.push(`  Codex session ID: ${job.threadId}`);
+    lines.push(`  ${sessionLabel(job.runtime)}: ${job.threadId}`);
   }
   const tokenUsage = formatTokenUsage(job.tokenUsage);
   if (tokenUsage && (options.showThread ?? true)) {
     lines.push(`  ${tokenUsage}`);
   }
-  const resumeCommand = formatCodexResumeCommand(job);
-  if (resumeCommand && (options.showThread ?? true)) {
-    lines.push(`  Resume in Codex: ${resumeCommand}`);
+  const resumeLine = formatResumeLine(job.runtime, job.threadId);
+  if (resumeLine && (options.showThread ?? true)) {
+    lines.push(`  ${resumeLine}`);
   }
   if (job.logFile && options.showLog) {
     lines.push(`  Log: ${job.logFile}`);
   }
-  if ((job.status === 'queued' || job.status === 'running') && options.showCancelHint) {
+  if (isActiveJob(job) && options.showCancelHint) {
     lines.push(`  Cancel: /stereo:cancel ${job.id}`);
   }
-  if (job.status !== 'queued' && job.status !== 'running' && options.showResultHint) {
+  if (!isActiveJob(job) && options.showResultHint) {
     lines.push(`  Result: /stereo:result ${job.id}`);
   }
-  if (
-    job.status !== 'queued' &&
-    job.status !== 'running' &&
-    job.jobClass === 'task' &&
-    job.write &&
-    options.showReviewHint
-  ) {
+  if (!isActiveJob(job) && job.jobClass === 'task' && job.write && options.showReviewHint) {
     lines.push('  Review changes: /stereo:review --wait');
     lines.push('  Stricter review: /stereo:adversarial-review --wait');
   }
@@ -776,21 +844,6 @@ function storedPlanMetadataLines(
   const summary = storedPlanMetadataValue(record.summary);
   if (includeSummary && summary) {
     lines.push(`Summary: ${shorten(summary)}`);
-  }
-  const model = storedPlanMetadataValue(record.model);
-  const effort = storedPlanMetadataValue(record.effort);
-  const threadId = storedPlanMetadataValue(record.threadId);
-  const runtimeParts: string[] = [];
-  if (model) {
-    runtimeParts.push(`Model: ${model}${effort ? `@${effort}` : ''}`);
-  } else if (effort) {
-    runtimeParts.push(`Effort: ${effort}`);
-  }
-  if (threadId) {
-    runtimeParts.push(`Thread: ${threadId}`);
-  }
-  if (runtimeParts.length > 0) {
-    lines.push(runtimeParts.join(' · '));
   }
   const implementedAt = storedPlanMetadataValue(record.implementedAt);
   if (implementedAt) {
@@ -926,18 +979,12 @@ export function renderPlanSlotComparison(
   return `${lines.join('\n')}\n`;
 }
 
-function storedRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 export function renderImplementState(record: StoredImplementState | null): string {
   if (!record) {
     return 'No implementation state for this repository. Run /stereo:implement first.\n';
   }
 
-  const implementer = storedRecord(record.implementer);
+  const implementer = recordLike(record.implementer);
   const selection =
     storedPlanMetadataValue(record.implementerSelection) ??
     storedPlanMetadataValue(implementer?.selection) ??
@@ -947,8 +994,8 @@ export function renderImplementState(record: StoredImplementState | null): strin
   const effort =
     storedPlanMetadataValue(record.implementerEffort) ??
     storedPlanMetadataValue(implementer?.effort);
-  const plan = storedRecord(record.plan);
-  const worktree = storedRecord(record.worktree);
+  const plan = recordLike(record.plan);
+  const worktree = recordLike(record.worktree);
   const baselineDirtyCount = Array.isArray(record.baselineDirtyPaths)
     ? record.baselineDirtyPaths.length
     : 0;
@@ -994,9 +1041,9 @@ export function renderTournamentState(record: StoredTournamentState | null): str
   const baselineDirtyCount = Array.isArray(record.baselineDirtyPaths)
     ? record.baselineDirtyPaths.length
     : 0;
-  const plan = storedRecord(record.plan);
-  const winner = storedRecord(record.winner);
-  const handBack = storedRecord(record.handBack);
+  const plan = recordLike(record.plan);
+  const winner = recordLike(record.winner);
+  const handBack = recordLike(record.handBack);
   const lines = [
     '# Stereo Tournament State',
     '',
@@ -1006,7 +1053,7 @@ export function renderTournamentState(record: StoredTournamentState | null): str
     'Contestants:',
   ];
   for (const value of Array.isArray(record.contestants) ? record.contestants : []) {
-    const contestant = storedRecord(value);
+    const contestant = recordLike(value);
     lines.push(
       `- ${storedPlanMetadataValue(contestant?.label) ?? '-'} ${storedPlanMetadataValue(contestant?.selection) ?? '-'} (${storedPlanMetadataValue(contestant?.route) ?? '-'}) status ${storedPlanMetadataValue(contestant?.status) ?? '-'} job ${storedPlanMetadataValue(contestant?.jobId) ?? 'not applicable'} worktree ${storedPlanMetadataValue(contestant?.worktreePath) ?? '-'}`,
     );
@@ -1023,14 +1070,37 @@ export function renderTournamentState(record: StoredTournamentState | null): str
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
-export function renderConfigReport(report: ConfigRenderReport): string {
+export function renderConfigReport(
+  report: ConfigRenderReport,
+  launches: readonly RoleDefaultLaunch[] = [],
+  models: ModelListing | null = null,
+): string {
   const lines = ['# Stereo Config', '', 'Role defaults:'];
   for (const entry of report.roleDefaults) {
-    const effort = entry.effort ? ` (effort ${entry.effort})` : '';
-    const invalid = entry.invalidReason ? ' [invalid]' : '';
-    lines.push(`- ${entry.flag}: ${entry.model ?? 'not set'}${effort}${invalid}`);
+    const stored = `${entry.model ?? 'not set'}${entry.effort ? ` (effort ${entry.effort})` : ''}${
+      entry.invalidReason ? ' [invalid]' : ''
+    }`;
+    // What a model-less launch runs: the id it passes and the effort it runs
+    // at, naming the built-in when that is what runs.
+    const launch = launches.find((candidate) => candidate.flag === entry.flag);
+    const runs = entry.inline
+      ? ' (inline in the Claude session)'
+      : !launch
+        ? ''
+        : launch.error
+          ? ' → cannot run (see warnings)'
+          : ` → ${launch.model} (${effortWord(launch.effort)}${
+              launch.source === 'built-in' ? `, built-in ${launch.selection}` : ''
+            })`;
+    lines.push(`- ${entry.flag}: ${stored}${runs}`);
   }
 
+  if (typeof report.claudeSandbox === 'boolean') {
+    lines.push(`Claude sandbox: ${report.claudeSandbox ? 'on' : 'off'}`);
+  }
+  if (models) {
+    lines.push('', ...renderModelListing(models));
+  }
   if (report.actionsTaken.length > 0) {
     lines.push('', 'Actions taken:', ...report.actionsTaken.map((action) => `- ${action}`));
   }
@@ -1196,7 +1266,10 @@ function appendRateLimits(lines: string[], value: unknown): void {
   lines.push('');
 }
 
-export function renderSetupReport(report: SetupRenderReport): string {
+export function renderSetupReport(
+  report: SetupRenderReport,
+  models: ModelListing | null = null,
+): string {
   const configuredProviderLines = report.providers.configured.map((provider) => {
     const aliases = report.providers.aliases
       .filter((entry) => entry.providerId === provider.id)
@@ -1222,7 +1295,7 @@ export function renderSetupReport(report: SetupRenderReport): string {
           )
           .join(', ')})`;
   const lines = [
-    '# Codex Setup',
+    '# Stereo Setup',
     '',
     `Status: ${report.ready ? 'ready' : 'needs attention'}`,
     '',
@@ -1243,6 +1316,8 @@ export function renderSetupReport(report: SetupRenderReport): string {
         ]
       : []),
     `- auth: ${report.auth.detail}`,
+    ...(report.claude ? [`- claude: ${report.claude.detail}`] : []),
+    ...(report.claudeAuth ? [`- claude auth: ${report.claudeAuth.detail}`] : []),
     `- Model provider: ${report.providers.active ?? 'unknown'} (default)`,
     ...configuredProviderLines,
     `- session runtime: ${report.sessionRuntime.label}`,
@@ -1254,6 +1329,7 @@ export function renderSetupReport(report: SetupRenderReport): string {
     `- review gate: ${report.reviewGateEnabled ? 'enabled' : 'disabled'}`,
     `- role defaults: ${roleDefaultsSummary}`,
     '',
+    ...(models ? [...renderModelListing(models), ''] : []),
   ];
 
   appendRateLimits(lines, report.rateLimits);
@@ -1335,9 +1411,6 @@ export function renderDoctorReport(report: DoctorRenderReport): string {
             : 'valid'
       })`
     : 'not set';
-  const catalogStatus = report.modelCatalog.available
-    ? `${report.modelCatalog.path} (${report.modelCatalog.entries.length} registry models checked)`
-    : `${report.modelCatalog.path} (not checked: ${report.modelCatalog.reason ?? 'unavailable'})`;
 
   const lines = [
     renderSetupReport(report.setup).trimEnd(),
@@ -1371,27 +1444,18 @@ export function renderDoctorReport(report: DoctorRenderReport): string {
     lines.push(`- ${entry.path}`);
     lines.push(`  Remove: ${entry.removeCommand}`);
   }
+  const stalled = report.stalledJobs ?? [];
+  lines.push(`Stalled jobs: ${stalled.length === 0 ? 'none' : `${stalled.length} found`}`);
+  for (const job of stalled) {
+    const worker = job.pid ? `worker pid ${job.pid} is gone` : 'no worker was recorded';
+    lines.push(`- ${job.id} (${job.status}${job.title ? `, ${job.title}` : ''}): ${worker}`);
+  }
 
   lines.push(
     `SessionStart announcement watermark: ${watermarkStatus}`,
     `Announcement reset: ${report.jobAnnouncements.resetCommand}`,
-    `Model catalog: ${catalogStatus}`,
+    '',
   );
-  for (const entry of report.modelCatalog.entries) {
-    lines.push(
-      `- codex:${entry.alias} → ${entry.model}: ${
-        !entry.present
-          ? 'missing'
-          : entry.supportedInApi === true
-            ? 'supported in API'
-            : 'not supported in API'
-      }`,
-    );
-  }
-  for (const warning of report.modelCatalog.warnings) {
-    lines.push(`- Warning: ${warning}`);
-  }
-  lines.push('');
 
   if (report.actionsTaken.length > 0) {
     lines.push('Actions taken:');
@@ -1414,10 +1478,10 @@ export function renderDoctorReport(report: DoctorRenderReport): string {
 export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewRenderMeta): string {
   if (!parsedResult.parsed) {
     const lines = [
-      `# Codex ${meta.reviewLabel}`,
+      `# ${runtimeLabel(meta.runtime)} ${meta.reviewLabel}`,
       '',
       `Target: ${meta.targetLabel}`,
-      'Codex did not return valid structured JSON.',
+      'The reviewer did not return valid structured JSON.',
       '',
       `- Parse error: ${parsedResult.parseError}`,
     ];
@@ -1434,10 +1498,10 @@ export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewR
   const validationError = validateReviewResultShape(parsedResult.parsed);
   if (validationError) {
     const lines = [
-      `# Codex ${meta.reviewLabel}`,
+      `# ${runtimeLabel(meta.runtime)} ${meta.reviewLabel}`,
       '',
       `Target: ${meta.targetLabel}`,
-      'Codex returned JSON with an unexpected review shape.',
+      'The reviewer returned JSON with an unexpected review shape.',
       '',
       `- Validation error: ${validationError}`,
     ];
@@ -1456,7 +1520,7 @@ export function renderReviewResult(parsedResult: ParsedResultLike, meta: ReviewR
     (left, right) => severityRank(left.severity) - severityRank(right.severity),
   );
   const lines = [
-    `# Codex ${meta.reviewLabel}`,
+    `# ${runtimeLabel(meta.runtime)} ${meta.reviewLabel}`,
     '',
     `Target: ${meta.targetLabel}`,
     `Verdict: ${data.verdict}`,
@@ -1499,15 +1563,16 @@ export function renderPlanReviewResult(
   parsedResult: ParsedResultLike,
   meta: PlanReviewRenderMeta = {},
 ): string {
+  const label = runtimeLabel(meta.runtime);
   const heading =
     (meta.round as number) > 1
-      ? `# Codex Plan Review (round ${meta.round})`
-      : '# Codex Plan Review';
+      ? `# ${label} Plan Review (round ${meta.round})`
+      : `# ${label} Plan Review`;
   if (!parsedResult.parsed) {
     const lines = [
       heading,
       '',
-      'Codex did not return valid structured JSON.',
+      'The reviewer did not return valid structured JSON.',
       '',
       `- Parse error: ${parsedResult.parseError}`,
     ];
@@ -1526,7 +1591,7 @@ export function renderPlanReviewResult(
     const lines = [
       heading,
       '',
-      'Codex returned JSON with an unexpected plan-review shape.',
+      'The reviewer returned JSON with an unexpected plan-review shape.',
       '',
       `- Validation error: ${validationError}`,
     ];
@@ -1622,16 +1687,30 @@ export function renderTaskResult(
   meta: TaskRenderMeta | null | undefined,
 ): string {
   const rawOutput = typeof parsedResult?.rawOutput === 'string' ? parsedResult.rawOutput : '';
+  const failure = String(parsedResult?.failureMessage ?? '').trim();
+  const failed = typeof meta?.status === 'number' && meta.status !== 0;
   if (rawOutput) {
     const output = rawOutput.endsWith('\n') ? rawOutput : `${rawOutput}\n`;
-    if (meta?.write && Array.isArray(meta.touchedFiles) && meta.touchedFiles.length === 0) {
-      return `${output}\nNote: this write-capable run reported no file changes.\n`;
+    const notes: string[] = [];
+    // A run can report and still fail (a denied write, a truncated turn):
+    // the reason must be as visible as the report.
+    if (failed) {
+      notes.push(`Run failed: ${failure || 'the run ended with a non-zero status.'}`);
+      const denied = Array.isArray(meta?.deniedTargets) ? meta.deniedTargets : [];
+      if (denied.length > 0) {
+        notes.push(`Denied: ${denied.join(', ')}`);
+      }
     }
-    return output;
+    // touchedFiles lists edit-tool writes only; a shell command's are not tracked.
+    if (meta?.write && Array.isArray(meta.touchedFiles) && meta.touchedFiles.length === 0) {
+      notes.push(
+        'Note: this write-capable run recorded no edit-tool file changes; shell commands may still have changed files.',
+      );
+    }
+    return notes.length > 0 ? `${output}\n${notes.join('\n')}\n` : output;
   }
 
-  const message =
-    String(parsedResult?.failureMessage ?? '').trim() || 'Codex did not return a final message.';
+  const message = failure || 'The run did not return a final message.';
   return `${message}\n`;
 }
 
@@ -1655,7 +1734,7 @@ export function renderUsageReport(report: UsageSnapshot): string {
       ? `current session${report.sessionId ? ` ${report.sessionId}` : ''}`
       : 'workspace';
   const lines = [
-    '# Codex Usage',
+    '# Stereo Usage',
     '',
     `Window: ${report.window.countedJobs} counted of ${report.window.retainedJobs} retained jobs (retained-index cap ${report.window.maxRetainedJobs}); scope: ${scope}.`,
     'These totals are local job records, not Codex account usage, and not all-time history.',
@@ -1685,7 +1764,7 @@ export function renderStatusReport(
   options: StatusRenderOptions = {},
 ): string {
   const lines = [
-    '# Codex Status',
+    '# Stereo Status',
     '',
     `Session runtime: ${report.sessionRuntime.label}`,
     `Review gate: ${report.config.stopReviewGate ? 'enabled' : 'disabled'}`,
@@ -1756,11 +1835,11 @@ export function renderJobStatusReport(
   job: RenderableJob,
   options: JobStatusRenderOptions = {},
 ): string {
-  const lines = ['# Codex Job Status', ''];
+  const lines = ['# Stereo Job Status', ''];
   // A waited/polled non-terminal report repeats every few seconds: static
   // metadata (model, thread id, resume/log/result hints) only costs the
   // polling model input tokens, so it appears once the job is terminal.
-  const nonTerminal = job.status === 'queued' || job.status === 'running';
+  const nonTerminal = isActiveJob(job);
   pushJobDetails(lines, job, {
     showElapsed: nonTerminal,
     showDuration: !nonTerminal,
@@ -1794,11 +1873,19 @@ function fencedBlock(text: string, lang = 'text'): string[] {
   return [`${fence}${lang}`, String(text ?? ''), fence];
 }
 
+function formatCostLine(storedJob: StoredJobLike | null | undefined): string | null {
+  const claude = recordLike(recordLike(storedJob?.result)?.claude);
+  const cost = claude?.costUsd;
+  return typeof cost === 'number' && Number.isFinite(cost) ? `Cost: $${cost.toFixed(4)}` : null;
+}
+
 function withResultFooter(
   text: string,
   threadId: string | null,
   modelDisplay: string,
   tokenUsage: unknown,
+  runtime: CompanionRuntime | null | undefined = null,
+  costLine: string | null = null,
 ): string {
   const output = text.endsWith('\n') ? text : `${text}\n`;
   const footer = [`Model: ${modelDisplay}`];
@@ -1806,9 +1893,12 @@ function withResultFooter(
   if (tokenUsageLine) {
     footer.push(tokenUsageLine);
   }
+  if (costLine) {
+    footer.push(costLine);
+  }
   if (threadId) {
-    footer.push(`Codex session ID: ${threadId}`);
-    footer.push(`Resume in Codex: codex resume ${threadId}`);
+    footer.push(`${sessionLabel(runtime)}: ${threadId}`);
+    footer.push(formatResumeLine(runtime, threadId) as string);
   }
   return `${output}\n${footer.join('\n')}\n`;
 }
@@ -1831,7 +1921,15 @@ function rawStoredJobOutput(storedJob: StoredJobLike | null | undefined): string
   return '';
 }
 
-export function extractStoredJobReport(storedJob: StoredJobLike | null | undefined): string | null {
+export function extractStoredJobReport(
+  storedJob: StoredJobLike | null | undefined,
+  status?: string | null,
+): string | null {
+  // A failed job's raw output is the model's report without the reason it
+  // failed; the rendered body ends with the failure and denial lines.
+  if (status === 'failed' && storedJob?.rendered) {
+    return storedJob.rendered;
+  }
   return rawStoredJobOutput(storedJob) || storedJob?.rendered || null;
 }
 
@@ -1840,7 +1938,7 @@ export function renderStoredJobReport(
   storedJob: StoredJobLike | null | undefined,
   warning?: string | null,
 ): string {
-  const report = extractStoredJobReport(storedJob);
+  const report = extractStoredJobReport(storedJob, job.status);
   const text = report
     ? `${report.replace(/(?:\r?\n)+$/u, '')}\n`
     : `No stored report for ${job.id} (status: ${job.status}).\n`;
@@ -1860,6 +1958,8 @@ export function renderStoredJobResult(
       threadId,
       modelDisplay,
       storedJob?.tokenUsage ?? job.tokenUsage,
+      storedJob?.runtime ?? job.runtime ?? null,
+      formatCostLine(storedJob),
     );
   const taskClass = storedJob?.jobClass ?? job.jobClass ?? null;
   if (taskClass === 'task' && storedJob?.rendered) {
@@ -1884,7 +1984,12 @@ export function renderStoredJobResult(
     return renderWithFooter(storedJob.rendered);
   }
 
-  const lines = [`# ${job.title ?? 'Codex Result'}`, '', `Job: ${job.id}`, `Status: ${job.status}`];
+  const lines = [
+    `# ${job.title ?? 'Stereo Result'}`,
+    '',
+    `Job: ${job.id}`,
+    `Status: ${job.status}`,
+  ];
 
   if (job.summary) {
     lines.push(`Summary: ${job.summary}`);
@@ -1906,10 +2011,10 @@ export function renderCancelReport(
   warning?: string | null,
   killWarning?: string | null,
 ): string {
-  const lines = ['# Codex Cancel', '', `Cancelled ${job.id}.`, ''];
+  const lines = ['# Stereo Cancel', '', `Cancelled ${job.id}.`, ''];
 
   if (killWarning) {
-    lines.push(`- Warning: ${killWarning} The worker process may still be running.`);
+    lines.push(`- Warning: ${killWarning}`);
   }
   if (job.title) {
     lines.push(`- Title: ${job.title}`);

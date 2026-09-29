@@ -5,11 +5,10 @@ import process from 'node:process';
 import test from 'node:test';
 
 import { makeTempDir, run } from './helpers.ts';
-import { registerBrokerReaping, ROOT, SCRIPT } from './runtime-helpers.ts';
+import { ROOT, SCRIPT } from './runtime-helpers.ts';
+import { loadBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import { PLUGIN_MANIFEST_FILE } from '../plugins/stereo/src/shared/paths.ts';
 import { readPluginManifestVersion } from '../plugins/stereo/src/shared/plugin-manifest.ts';
-
-registerBrokerReaping();
 
 const MANIFEST = path.join(ROOT, 'plugins', 'stereo', '.claude-plugin', 'plugin.json');
 const manifestVersion: string = JSON.parse(fs.readFileSync(MANIFEST, 'utf8')).version;
@@ -29,12 +28,21 @@ test('version prints the shipped plugin manifest version as plain text and JSON'
   const json = runCompanion(['version', '--json']);
   assert.equal(json.status, 0, json.stderr);
   assert.deepEqual(JSON.parse(json.stdout), { version: manifestVersion });
+  assert.equal(loadBrokerSession(ROOT), null, 'version never starts a workspace broker');
 });
 
 test('the CLI usage surface lists the version subcommand', () => {
   const result = runCompanion(['help']);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /codex-companion\.ts version \[--json\]/);
+  // The two sandbox switches: the stored one on config, the per-run one on task.
+  assert.match(result.stdout, /codex-companion\.ts config .*\[--claude-sandbox on\|off\]/);
+  assert.match(result.stdout, /codex-companion\.ts task .*\[--sandbox\|--no-sandbox\]/);
+  assert.match(result.stdout, /codex-companion\.ts task .*\[--launch-args-file <path>\]/);
+  // The launches a pair command pins take a dry run.
+  for (const command of ['task', 'plan-review']) {
+    assert.match(result.stdout, new RegExp(`codex-companion\\.ts ${command} .*--dry-run`), command);
+  }
 });
 
 test('version rejects positional arguments with the --json error contract', () => {

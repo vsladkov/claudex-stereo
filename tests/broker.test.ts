@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -6,11 +5,16 @@ import process from 'node:process';
 import test from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
-import { makeTempDir } from './helpers.ts';
-import { readJsonIfReadable, registerBrokerReaping } from './runtime-helpers.ts';
+import { makeTempDir, processIsAlive, waitFor } from './helpers.ts';
+import {
+  brokerEndpointConnectable,
+  readJsonIfReadable,
+  registerBrokerReaping,
+  runNodeWithTimeout,
+} from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 import {
   createBrokerEndpoint,
@@ -26,6 +30,7 @@ import {
   sendBrokerShutdown,
   sendBrokerShutdownIfIdle,
   spawnBrokerProcess,
+  teardownBrokerSession,
   waitForBrokerEndpoint,
 } from '../plugins/stereo/src/broker/lifecycle.ts';
 import type { BrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
@@ -39,7 +44,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // to strand ~40 broker processes).
 registerBrokerReaping();
 const BROKER_SCRIPT = path.join(ROOT, 'plugins', 'stereo', 'scripts', 'app-server-broker.ts');
-const DEAD_PID = 2147483647;
+// What a streaming request gets while the broker waits out an abandoned turn.
+const ORPHAN_GATE_MESSAGE = 'Shared Codex broker is finishing an abandoned turn.';
 
 // Minimal shape of the JSONL frames the broker exchanges; payloads stay loose
 // on purpose so assertions read exactly like the pre-migration test.
@@ -102,30 +108,6 @@ function requestBrokerShutdownBounded(endpoint: string, timeoutMs = 750): Promis
     socket.once('error', finish);
     socket.once('close', finish);
   });
-}
-
-function processIsAlive(pid: number | undefined): boolean {
-  try {
-    process.kill(pid!, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException | null)?.code !== 'ESRCH';
-  }
-}
-
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  { timeoutMs = 5000, intervalMs = 25 }: { timeoutMs?: number; intervalMs?: number } = {},
-): Promise<boolean> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const value = await predicate();
-    if (value) {
-      return value;
-    }
-    await delay(intervalMs);
-  }
-  throw new Error('Timed out waiting for broker test condition.');
 }
 
 function createJsonlClient(endpoint: string) {
@@ -281,41 +263,6 @@ function createJsonlClient(endpoint: string) {
 
 type JsonlClient = ReturnType<typeof createJsonlClient>;
 
-function seedBrokerReservation(
-  t: TestContext,
-  codexHome: string,
-  threadId: string,
-  pid = DEAD_PID,
-): { path: string; token: string } {
-  const digest = crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32);
-  const lockPath = path.join(codexHome, 'companion-thread-locks', `${digest}.lock`);
-  const token = `broker-test-${crypto.randomUUID()}`;
-  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  fs.writeFileSync(
-    lockPath,
-    `${JSON.stringify({
-      token,
-      pid,
-      jobId: 'broker-test-owner',
-      threadId,
-      createdAt: new Date().toISOString(),
-    })}\n`,
-    'utf8',
-  );
-  t.after(() => {
-    for (const target of [lockPath, `${lockPath}.cleanup`]) {
-      try {
-        fs.unlinkSync(target);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
-          throw error;
-        }
-      }
-    }
-  });
-  return { path: lockPath, token };
-}
-
 async function initializeClient(client: JsonlClient): Promise<void> {
   const response = await client.request('initialize', {
     clientInfo: { name: 'broker-test', version: '1' },
@@ -323,6 +270,27 @@ async function initializeClient(client: JsonlClient): Promise<void> {
   });
   assert.equal(response.error, undefined);
   client.socket.write(`${JSON.stringify({ method: 'initialized', params: {} })}\n`);
+}
+
+// Starts a turn once the broker is through with an abandoned request whose
+// turn had already completed: busy until then, and never behind the orphan
+// gate, which such a request must not arm.
+async function startTurnWithoutOrphanGate(
+  client: JsonlClient,
+  threadId: string,
+  text: string,
+): Promise<void> {
+  await waitFor(
+    async () => {
+      const response = await client.request('turn/start', {
+        threadId,
+        input: [{ type: 'text', text, text_elements: [] }],
+      });
+      assert.notEqual(response.error?.message, ORPHAN_GATE_MESSAGE);
+      return response.error === undefined;
+    },
+    { timeoutMs: 4000, intervalMs: 100 },
+  );
 }
 
 async function startBroker(
@@ -525,7 +493,6 @@ test('a client that vanishes mid-turn gets its turn interrupted and the broker r
     ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, threadId);
   const turn = await owner.request('turn/start', {
     threadId,
     input: [{ type: 'text', text: 'abandon this stream', text_elements: [] }],
@@ -544,7 +511,6 @@ test('a client that vanishes mid-turn gets its turn interrupted and the broker r
     const state = readJsonIfReadable<Record<string, any>>(stateFile);
     return state?.lastInterrupt?.threadId === threadId;
   });
-  await waitFor(() => !fs.existsSync(reservation.path));
 
   // ...and become usable again for the next client once the turn resolves.
   const successor = createJsonlClient(broker.endpoint);
@@ -615,7 +581,6 @@ test('disconnecting before a delayed turn/start response arms recovery and frees
     ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, threadId);
   const abandonedResponse = owner
     .request('turn/start', {
       threadId,
@@ -638,8 +603,9 @@ test('disconnecting before a delayed turn/start response arms recovery and frees
     const state = readJsonIfReadable<Record<string, any>>(stateFile);
     return state?.lastInterrupt?.threadId === threadId;
   });
-  await waitFor(() => !fs.existsSync(reservation.path));
 
+  // The interrupted turn's completion precedes the answer to this
+  // thread/start in the app-server's output, so the gate is open by then.
   const successor = createJsonlClient(broker.endpoint);
   t.after(() => successor.close());
   await initializeClient(successor);
@@ -667,12 +633,10 @@ test('a dead client whose turn completes before the start response does not arm 
     ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, threadId);
   await owner.sendAndDestroy('turn/start', {
     threadId,
     input: [{ type: 'text', text: 'complete before response continuation', text_elements: [] }],
   });
-  await waitFor(() => !fs.existsSync(reservation.path));
 
   const successor = createJsonlClient(broker.endpoint);
   t.after(() => successor.close());
@@ -682,11 +646,7 @@ test('a dead client whose turn completes before the start response does not arm 
     sandbox: 'read-only',
     ephemeral: false,
   });
-  const successorTurn = await successor.request('turn/start', {
-    threadId: successorThread.result.thread.id,
-    input: [{ type: 'text', text: 'fast successor', text_elements: [] }],
-  });
-  assert.equal(successorTurn.error, undefined);
+  await startTurnWithoutOrphanGate(successor, successorThread.result.thread.id, 'fast successor');
 });
 
 test('a detached review completion before its delayed response uses the review thread id', async (t) => {
@@ -701,7 +661,6 @@ test('a detached review completion before its delayed response uses the review t
     ephemeral: false,
   });
   const sourceThreadId = started.result.thread.id;
-  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, sourceThreadId);
   const abandonedResponse = owner
     .request('review/start', {
       threadId: sourceThreadId,
@@ -716,7 +675,6 @@ test('a detached review completion before its delayed response uses the review t
   });
   owner.socket.destroy();
   await abandonedResponse;
-  await waitFor(() => !fs.existsSync(reservation.path));
 
   const successor = createJsonlClient(broker.endpoint);
   t.after(() => successor.close());
@@ -726,11 +684,11 @@ test('a detached review completion before its delayed response uses the review t
     sandbox: 'read-only',
     ephemeral: false,
   });
-  const successorTurn = await successor.request('turn/start', {
-    threadId: successorThread.result.thread.id,
-    input: [{ type: 'text', text: 'stream after detached review', text_elements: [] }],
-  });
-  assert.equal(successorTurn.error, undefined);
+  await startTurnWithoutOrphanGate(
+    successor,
+    successorThread.result.thread.id,
+    'stream after detached review',
+  );
 });
 
 test('same-socket streaming pipelining receives the broker busy error', async (t) => {
@@ -781,7 +739,6 @@ test('a disconnected request with no response transitions through the watchdog',
     ephemeral: false,
   });
   const threadId = started.result.thread.id;
-  const reservation = seedBrokerReservation(t, broker.env.CODEX_HOME, threadId);
   const abandonedResponse = owner
     .request('turn/start', {
       threadId,
@@ -817,7 +774,6 @@ test('a disconnected request with no response transitions through the watchdog',
     },
     { timeoutMs: 15_000, intervalMs: 200 },
   );
-  await waitFor(() => !fs.existsSync(reservation.path));
   const interrupted = await waitFor(() => {
     const state = readJsonIfReadable<Record<string, any>>(
       path.join(broker.binDir, 'fake-codex-state.json'),
@@ -969,6 +925,39 @@ test('guarded idle shutdown waits for a slow child exit before stale-session rec
   await sendBrokerShutdown(replacement!.endpoint);
 });
 
+test('a broker that never gets ready is killed only while its held handle says it runs', async () => {
+  const dir = makeTempDir();
+  const hanging = path.join(dir, 'hanging-broker.mjs');
+  fs.writeFileSync(hanging, 'setInterval(() => {}, 1000);\n', 'utf8');
+  const exiting = path.join(dir, 'exiting-broker.mjs');
+  fs.writeFileSync(exiting, 'process.exit(0);\n', 'utf8');
+  const killed: number[] = [];
+  const killProcess = (pid: number): void => {
+    killed.push(pid);
+    terminateProcessTree(pid);
+  };
+
+  // Still running when the readiness wait ends: stopped.
+  const hung = await ensureBrokerSession(makeTempDir(), {
+    scriptPath: hanging,
+    timeoutMs: 300,
+    killProcess,
+  });
+  assert.equal(hung, null);
+  assert.equal(killed.length, 1);
+  await waitFor(() => !processIsAlive(killed[0]), { timeoutMs: 3000 });
+
+  // Exited during the wait: its pid may name another process by now, so it
+  // is never signalled.
+  const exited = await ensureBrokerSession(makeTempDir(), {
+    scriptPath: exiting,
+    timeoutMs: 1500,
+    killProcess,
+  });
+  assert.equal(exited, null);
+  assert.equal(killed.length, 1);
+});
+
 test('broker propagates an unexpected child app-server death to front clients', async (t) => {
   const broker = await startBroker(t, 'die-mid-turn');
   const client = createJsonlClient(broker.endpoint);
@@ -1011,11 +1000,44 @@ test('parameterless broker shutdown remains unconditional with another client co
   await owner.closed;
 });
 
+test(
+  'a SIGTERMed broker still exits while a client never closes its end',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const broker = await startBroker(t);
+    // Half-open allowed: the broker's FIN is never answered, so only a
+    // destroy on the broker's side lets its server close.
+    const socket = net.createConnection({
+      path: parseBrokerEndpoint(broker.endpoint).path,
+      allowHalfOpen: true,
+    });
+    t.after(() => socket.destroy());
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    });
+    socket.resume();
+    // The broker's teardown may reset the connection; the client just holds on.
+    socket.on('error', () => {});
+    await delay(50);
+
+    process.kill(broker.child.pid!, 'SIGTERM');
+    await waitFor(() => !processIsAlive(broker.child.pid), { timeoutMs: 8000 });
+  },
+);
+
 test('busy guarded drain leaves the companion broker state untouched', async (t) => {
   const broker = await startBroker(t, 'review-ok', { saveState: true });
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
   await initializeClient(owner);
+  // A thread started and not yet turned: the owner is mid-operation.
+  const started = await owner.request('thread/start', {
+    cwd: broker.cwd,
+    sandbox: 'read-only',
+    ephemeral: false,
+  });
+  assert.equal(started.error, undefined);
   const before = loadBrokerSession(broker.cwd);
 
   const outcome: ShutdownOutcomeShape = await sendBrokerShutdownIfIdle(broker.endpoint);
@@ -1163,3 +1185,146 @@ test('the broker unix socket is owner-only', { skip: process.platform === 'win32
   assert.equal(target.kind, 'unix');
   assert.equal(fs.statSync(target.path).mode & 0o777, 0o600);
 });
+
+test('a client that initialized but started no thread keeps a guarded shutdown busy', async (t) => {
+  const broker = await startBroker(t);
+  // Between its initialize and its thread/start a client holds nothing in
+  // flight; a shutdown in that gap would close the socket under it.
+  const client = createJsonlClient(broker.endpoint);
+  t.after(() => client.close());
+  await initializeClient(client);
+
+  const outcome = await sendBrokerShutdownIfIdle(broker.endpoint);
+  assert.equal(outcome.accepted === false && outcome.busy, true, JSON.stringify(outcome));
+  assert.equal(processIsAlive(broker.pid), true);
+
+  // Gone, it no longer counts.
+  client.close();
+  await client.closed;
+  await waitFor(async () => (await sendBrokerShutdownIfIdle(broker.endpoint)).accepted);
+  assert.equal(processIsAlive(broker.pid), false);
+});
+
+test('a broker pinned to a path another listener holds exits without unlinking it', async (t) => {
+  const foreignDir = makeTempDir('foreign-listener-');
+  const foreignPath = path.join(foreignDir, 'foreign.sock');
+  const foreign = net.createServer((socket) => socket.end());
+  await new Promise<void>((resolve) => foreign.listen(foreignPath, () => resolve()));
+  t.after(() => foreign.close());
+
+  const binDir = makeTempDir('broker-bin-');
+  installFakeCodex(binDir);
+  const sessionDir = makeTempDir('broker-session-');
+  const pidFile = path.join(sessionDir, 'broker.pid');
+  const child = spawnBrokerProcess({
+    scriptPath: BROKER_SCRIPT,
+    cwd: makeTempDir('broker-workspace-'),
+    endpoint: `unix:${foreignPath}`,
+    pidFile,
+    logFile: path.join(sessionDir, 'broker.log'),
+    env: buildEnv(binDir),
+  });
+  t.after(() => {
+    if (processIsAlive(child.pid)) {
+      terminateProcessTree(child.pid!);
+    }
+  });
+
+  const exitedAlone = await waitFor(() => !processIsAlive(child.pid), { timeoutMs: 8000 }).catch(
+    () => false,
+  );
+  if (!exitedAlone) {
+    // Whatever keeps it alive, its own teardown must still leave the path.
+    process.kill(child.pid!, 'SIGTERM');
+    await waitFor(() => !processIsAlive(child.pid), { timeoutMs: 5000 });
+  }
+  assert.equal(fs.existsSync(foreignPath), true, 'the foreign socket survives');
+  assert.equal(await brokerEndpointConnectable(`unix:${foreignPath}`), true);
+  assert.equal(exitedAlone, true, 'a broker that could not listen exits by itself');
+  assert.equal(fs.existsSync(pidFile), false, 'its own pid file is removed');
+  assert.match(
+    fs.readFileSync(path.join(sessionDir, 'broker.log'), 'utf8'),
+    /broker server error: .*EADDRINUSE/,
+  );
+});
+
+test('teardown removes only a socket inside the session directory it was given', () => {
+  // An endpoint pinned through CODEX_COMPANION_APP_SERVER_ENDPOINT arrives
+  // with no session directory at all.
+  const pinnedDir = makeTempDir('pinned-endpoint-');
+  const pinned = path.join(pinnedDir, 'pinned.sock');
+  fs.writeFileSync(pinned, '');
+  teardownBrokerSession({ endpoint: `unix:${pinned}`, pidFile: null, logFile: null });
+  assert.equal(fs.existsSync(pinned), true);
+
+  // A session whose record names a socket outside its own directory.
+  const sessionDir = makeTempDir('broker-session-');
+  const pidFile = path.join(sessionDir, 'broker.pid');
+  fs.writeFileSync(pidFile, '1\n');
+  teardownBrokerSession({ endpoint: `unix:${pinned}`, pidFile, logFile: null, sessionDir });
+  assert.equal(fs.existsSync(pinned), true);
+  assert.equal(fs.existsSync(pidFile), false);
+
+  // The companion's own layout: everything inside the session dir goes.
+  const ownDir = makeTempDir('broker-session-');
+  const ownSocket = path.join(ownDir, 'broker.sock');
+  const ownPid = path.join(ownDir, 'broker.pid');
+  const ownLog = path.join(ownDir, 'broker.log');
+  for (const file of [ownSocket, ownPid, ownLog]) {
+    fs.writeFileSync(file, '');
+  }
+  teardownBrokerSession({
+    endpoint: `unix:${ownSocket}`,
+    pidFile: ownPid,
+    logFile: ownLog,
+    sessionDir: ownDir,
+  });
+  assert.equal(fs.existsSync(ownDir), false);
+});
+
+test(
+  'the shutdown probe never waits on a listener that accepts but never reads',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const sessionDir = makeTempDir();
+    const endpoint = createBrokerEndpoint(sessionDir);
+    const held: net.Socket[] = [];
+    const server = net.createServer((socket) => {
+      // Never read: a half-close from the probe would never be answered.
+      socket.pause();
+      held.push(socket);
+    });
+    await new Promise<void>((resolve) => server.listen(endpoint.slice('unix:'.length), resolve));
+    t.after(() => {
+      for (const socket of held) {
+        socket.destroy();
+      }
+      server.close();
+    });
+
+    const source = `
+const { sendBrokerShutdownIfIdle } = await import(process.env.LIFECYCLE_URL);
+const outcome = await sendBrokerShutdownIfIdle(process.env.ENDPOINT, { timeoutMs: 300 });
+process.stdout.write(JSON.stringify(outcome));
+`;
+    const outcome = await runNodeWithTimeout(['--input-type=module', '-e', source], {
+      env: {
+        ...process.env,
+        LIFECYCLE_URL: pathToFileURL(
+          path.join(ROOT, 'plugins', 'stereo', 'src', 'broker', 'lifecycle.ts'),
+        ).href,
+        ENDPOINT: endpoint,
+      },
+      timeoutMs: 8000,
+    });
+    assert.equal(outcome.timedOut, false, 'the probe process exited on its own');
+    assert.equal(outcome.status, 0, outcome.stderr);
+    const response = JSON.parse(outcome.stdout);
+    assert.equal(response.accepted, false);
+    assert.equal(response.timedOut, true);
+    // The in-process call agrees.
+    const inProcess = await sendBrokerShutdownIfIdle(endpoint, { timeoutMs: 200 });
+    assert.equal(inProcess.accepted, false);
+    assert.equal(inProcess.accepted === false && inProcess.timedOut, true);
+  },
+);

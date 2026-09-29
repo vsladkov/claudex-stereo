@@ -26,9 +26,10 @@ Execution mode:
   call, but do not treat them as part of the natural-language task text. If `--model` starts with
   `claude:`, stop before invoking the subagent and explain that `/stereo:rescue` is a Codex bridge:
   `stereo:codex-rescue` only forwards to the companion `task` runtime. For Claude-routed work, ask
-  this session directly; use `/stereo:quick --implementer claude:<alias>` or
-  `/stereo:implement --implementer claude:<alias>` for a contained Claude implementer; or use
-  `/stereo:adversarial-review --model claude:<alias>` for a Claude review.
+  this session directly; use `/stereo:quick --implementer claude:<family>[-<version>]` or
+  `/stereo:implement --implementer claude:<family>[-<version>]` for a contained Claude implementer
+  job; or use `/stereo:review --model claude:<family>[-<version>]` or
+  `/stereo:adversarial-review --model claude:<family>[-<version>]` for a Claude review job.
 - If the request includes `--resume`, do not ask whether to continue. The user already chose.
 - If the request includes `--fresh`, do not ask whether to continue. The user already chose.
 - Otherwise, before starting Codex, check for a resumable rescue thread from this Claude session by running:
@@ -37,7 +38,7 @@ Execution mode:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task-resume-candidate --json
 ```
 
-- If that helper reports `available: true`, use `AskUserQuestion` exactly once to ask whether to continue the current Codex thread or start a new one.
+- If that helper reports `available: true` (its candidate is always a role-less Codex rescue thread from this session: a job that ran a pair role — planner, implementer, or a reviewer — is never offered, and neither is a Claude session), use `AskUserQuestion` exactly once to ask whether to continue the current Codex thread or start a new one.
 - The two choices must be:
   - `Continue current Codex thread`
   - `Start a new Codex thread`
@@ -55,6 +56,7 @@ Operating rules:
 - Do not ask the subagent to inspect files, monitor progress, poll `/stereo:status`, fetch `/stereo:result`, call `/stereo:cancel`, summarize output, or do follow-up work of its own.
 - Model, effort, `--resume`, and `--fresh` handling belongs to the subagent's `codex-cli-runtime`
   skill: leave those flags in the forwarded request untouched and never treat them as task text.
-  The runtime rejects `claude:*` values, so a Claude selection must never be forwarded.
-- If the helper reports that Codex is missing or unauthenticated, stop and tell the user to run `/stereo:setup`.
+  A Claude selection is rejected by this command; `--role` is not a rescue concept, so a Claude
+  selection must never be forwarded.
+- If the forwarded `task` call reports that Codex is missing or unauthenticated, stop and tell the user to run `/stereo:setup` (`task-resume-candidate` never probes Codex).
 - If the user did not supply a request, ask what Codex should investigate or fix.

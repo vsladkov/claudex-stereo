@@ -5,24 +5,21 @@ import type {
   TokenUsageBreakdown,
   Turn,
 } from '../protocol/app-server.ts';
+import { parsePositiveIntEnv } from '../shared/env.ts';
 import { shorten } from '../shared/text.ts';
 import { extractThreadId, extractTurnId } from './threads.ts';
 import type { AppServerClient } from './threads.ts';
+import { errorMessage } from '../shared/errors.ts';
 
-export const TURN_INACTIVITY_TIMEOUT_ENV = 'CODEX_TURN_INACTIVITY_TIMEOUT_MS';
+// One inactivity budget for both runtimes.
+export const TURN_INACTIVITY_TIMEOUT_ENV = 'STEREO_TURN_INACTIVITY_TIMEOUT_MS';
 const DEFAULT_TURN_INACTIVITY_TIMEOUT_MS = 1_800_000;
 const MAX_NOTIFICATION_ERROR_SAMPLES = 20;
+// The tail of a failed command's output a task job keeps, on both runtimes.
+export const MAX_COMMAND_OUTPUT_CHARS = 2000;
 
 export function resolveTurnInactivityTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env[TURN_INACTIVITY_TIMEOUT_ENV];
-  if (raw == null || raw.trim() === '') {
-    return DEFAULT_TURN_INACTIVITY_TIMEOUT_MS;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_TURN_INACTIVITY_TIMEOUT_MS;
-  }
-  return parsed > 0 ? parsed : 0;
+  return parsePositiveIntEnv(env[TURN_INACTIVITY_TIMEOUT_ENV], DEFAULT_TURN_INACTIVITY_TIMEOUT_MS);
 }
 
 export type FileChangeItem = Extract<ThreadItem, { type: 'fileChange' }>;
@@ -33,6 +30,10 @@ export interface ProgressUpdate {
   phase: string | null;
   threadId?: string | null;
   turnId?: string | null;
+  /** A headless Claude child's pid, so a cancel can reach it outside the worker's group. */
+  childPid?: number | null;
+  /** That child's start token, noted at spawn: tells it from a later process on its pid. */
+  childStart?: string | null;
   stderrMessage?: string | null;
   logTitle?: string | null;
   logBody?: string | null;
@@ -75,7 +76,6 @@ export interface TurnCaptureState {
   rejectCompletion: (error: unknown) => void;
   finalTurn: Turn | null;
   completed: boolean;
-  inferredCompletion: boolean;
   finalAnswerSeen: boolean;
   pendingCollaborations: Set<string>;
   activeSubagentTurns: Set<string>;
@@ -185,7 +185,12 @@ export function emitProgress(
   onProgress: ProgressReporter | null | undefined,
   message: string | null | undefined,
   phase: string | null = null,
-  extra: { threadId?: string | null; turnId?: string | null } = {},
+  extra: {
+    threadId?: string | null;
+    turnId?: string | null;
+    childPid?: number | null;
+    childStart?: string | null;
+  } = {},
 ): void {
   if (!onProgress || !message) {
     return;
@@ -222,7 +227,7 @@ export function emitLogEvent(
   });
 }
 
-export function labelForThread(
+function labelForThread(
   state: TurnCaptureState,
   threadId: string | null | undefined,
 ): string | null {
@@ -239,7 +244,7 @@ export interface RegisterThreadOptions {
   agentRole?: string | null;
 }
 
-export function registerThread(
+function registerThread(
   state: TurnCaptureState,
   threadId: string | null | undefined,
   options: RegisterThreadOptions = {},
@@ -363,7 +368,6 @@ export function createTurnCaptureState(
     rejectCompletion,
     finalTurn: null,
     completed: false,
-    inferredCompletion: false,
     finalAnswerSeen: false,
     pendingCollaborations: new Set(),
     activeSubagentTurns: new Set(),
@@ -698,7 +702,6 @@ export function scheduleInferredCompletion(state: TurnCaptureState): void {
     if (state.pendingCollaborations.size > 0 || state.activeSubagentTurns.size > 0) {
       return;
     }
-    state.inferredCompletion = true;
     completeTurn(state, null, { inferred: true });
   }, state.timer.inferredCompletionDelayMs);
   handle.unref?.();
@@ -958,7 +961,7 @@ export async function captureTurn<R extends { turn?: Turn | null }>(
       // line handler (an uncaught exception); record it and keep going.
       // Deliberately not state.error: that field carries Codex-reported
       // turn failures and would flip the run's status.
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = errorMessage(error);
       state.droppedNotifications += 1;
       if (state.notificationErrors.length < MAX_NOTIFICATION_ERROR_SAMPLES) {
         state.notificationErrors.push({ method: message?.method ?? null, message: detail });

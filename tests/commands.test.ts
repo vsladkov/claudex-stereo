@@ -4,8 +4,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 
-import { SESSION_END_BUDGET_MS } from '../plugins/stereo/src/hooks/session-lifecycle.ts';
-
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PLUGIN_ROOT = path.join(ROOT, 'plugins', 'stereo');
 
@@ -40,11 +38,17 @@ test('the command surface is exactly the fifteen stereo commands', () => {
 
 test('every command wires the companion entry point it documents', () => {
   const wiring: Record<string, RegExp | RegExp[]> = {
-    'adversarial-review.md': /codex-companion\.ts" adversarial-review "\$ARGUMENTS"/,
-    'cancel.md': /codex-companion\.ts" cancel "\$ARGUMENTS"/,
-    'config.md': /codex-companion\.ts" config "\$ARGUMENTS"/,
-    'doctor.md': /codex-companion\.ts" doctor "\$ARGUMENTS --json"/,
-    'implement.md': /task --background --json --write --thread/,
+    'adversarial-review.md': /codex-companion\.ts" adversarial-review <reviewArgs> <focusFileArg>/,
+    'cancel.md':
+      /codex-companion\.ts" cancel --args-stdin <<'STEREO_ARGS_Q7X2'\n\$ARGUMENTS\nSTEREO_ARGS_Q7X2\n/,
+    'config.md':
+      /codex-companion\.ts" config --args-stdin <<'STEREO_ARGS_Q7X2'\n\$ARGUMENTS\nSTEREO_ARGS_Q7X2\n/,
+    'doctor.md': /codex-companion\.ts" doctor --json <doctorFlags>/,
+    'implement.md': [
+      /plan-state --json <slotArg>/,
+      /implement-state --record --state-file '<statePayloadFile>' --json <slotArg>/,
+      /implement-state --json/,
+    ],
     'plan-state.md': [
       /codex-companion\.ts" plan-state\b/,
       /plan-state --list/,
@@ -52,25 +56,29 @@ test('every command wires the companion entry point it documents', () => {
       /plan-state --clear/,
       /plan-state --mark-implemented/,
     ],
-    'plan.md': [/plan-review --background --json --round 1/, /plan-store --json/],
+    'plan.md': [
+      /plan-state --metadata --json <slotArg>/,
+      /plan-state --json <slotArg>/,
+      /plan-store --json/,
+    ],
     'quick.md': [
-      /plan-review --background --json --round 1/,
-      /task --background --json --write --thread/,
+      /plan-state --metadata --json <slotArg>/,
+      /plan-state --mark-implemented --json <slotArg>/,
     ],
     'rescue.md': /task-resume-candidate --json/,
-    'result.md': /codex-companion\.ts" result "\$ARGUMENTS"/,
-    'review.md': /codex-companion\.ts" review "\$ARGUMENTS"/,
-    'setup.md': /codex-companion\.ts" setup "\$ARGUMENTS --json"/,
-    'status.md': /codex-companion\.ts" status "\$ARGUMENTS"/,
+    'result.md':
+      /codex-companion\.ts" result --args-stdin <<'STEREO_ARGS_Q7X2'\n\$ARGUMENTS\nSTEREO_ARGS_Q7X2\n/,
+    'review.md': /codex-companion\.ts" review <reviewArgs> <focusFileArg>/,
+    'setup.md': /codex-companion\.ts" setup --json <setupFlags>/,
+    'status.md':
+      /codex-companion\.ts" status --args-stdin <<'STEREO_ARGS_Q7X2'\n\$ARGUMENTS\nSTEREO_ARGS_Q7X2\n/,
     'tournament.md': [
-      /task --background --json --write --model <contestantModel>/,
       /plan-state --json <slotArg>/,
-      /tournament-state --record --state-file "<statePayloadFile>"/,
+      /tournament-state --record --state-file '<statePayloadFile>'/,
       /tournament-state --json/,
-      /worktree add --detach/,
-      /subagent_type: "stereo:implementer"/,
     ],
-    'transfer.md': /codex-companion\.ts" transfer "\$ARGUMENTS"/,
+    'transfer.md':
+      /codex-companion\.ts" transfer --args-stdin <<'STEREO_ARGS_Q7X2'\n\$ARGUMENTS\nSTEREO_ARGS_Q7X2\n/,
   };
   for (const [file, required] of Object.entries(wiring)) {
     const source = read(path.join('commands', file));
@@ -81,607 +89,415 @@ test('every command wires the companion entry point it documents', () => {
   }
 });
 
-test('companion invocations quote raw slash-command arguments consistently', () => {
+test('raw slash-command arguments reach the companion only through a quoted stdin heredoc', () => {
+  // `$ARGUMENTS` is substituted as literal text, so it must never sit in a shell
+  // string: its own line inside a heredoc with a quoted delimiter keeps every
+  // character (an apostrophe, `$`, a backtick) away from the shell.
   for (const file of fs.readdirSync(path.join(PLUGIN_ROOT, 'commands'))) {
     const lines = read(path.join('commands', file)).split('\n');
     for (const [index, line] of lines.entries()) {
-      if (line.includes('codex-companion.ts') && line.includes('$ARGUMENTS')) {
-        assert.match(line, /"\$ARGUMENTS( [^"]*)?"/, `${file}:${index + 1}`);
+      if (!line.includes('$ARGUMENTS') || !lines[index - 1]?.includes('codex-companion.ts')) {
+        continue;
+      }
+      assert.equal(line, '$ARGUMENTS', `${file}:${index + 1}`);
+      assert.match(
+        lines[index - 1] as string,
+        /--args-stdin <<'STEREO_ARGS_Q7X2'$/,
+        `${file}:${index}`,
+      );
+      assert.equal(lines[index + 1], 'STEREO_ARGS_Q7X2', `${file}:${index + 2}`);
+    }
+    for (const [index, line] of lines.entries()) {
+      if (line.includes('codex-companion.ts')) {
+        assert.doesNotMatch(line, /\$ARGUMENTS/, `${file}:${index + 1}`);
       }
     }
   }
 });
 
-test('directly-wired commands disable model invocation of the command file', () => {
-  for (const file of [
-    'adversarial-review.md',
-    'cancel.md',
-    'config.md',
-    'doctor.md',
-    'implement.md',
-    'plan-state.md',
-    'plan.md',
-    'quick.md',
-    'rescue.md',
-    'result.md',
-    'review.md',
-    'setup.md',
-    'status.md',
-    'tournament.md',
-    'transfer.md',
-  ]) {
+test('the review commands compose one foreground and one background companion line', () => {
+  for (const file of ['adversarial-review.md', 'review.md']) {
+    const lines = read(path.join('commands', file))
+      .split('\n')
+      .filter((line) => line.startsWith('node ') && line.includes('codex-companion.ts'));
+    assert.equal(lines.length, 2, `${file} has one foreground and one background line`);
+    for (const line of lines) {
+      assert.match(line, /<reviewArgs>( --background)? <focusFileArg>$/, file);
+    }
+  }
+});
+
+test('every command disables model invocation of the command file', () => {
+  for (const file of fs.readdirSync(path.join(PLUGIN_ROOT, 'commands'))) {
     assert.match(read(path.join('commands', file)), /^disable-model-invocation:\s*true$/m, file);
   }
 });
 
-test('pair commands load the canonical routing skill and keep workflow wiring', () => {
-  const continuationSection = 'Continuing an agent across review rounds';
-  const routing = read('skills/model-routing/SKILL.md');
+const ROUTING_DIR = path.join('skills', 'model-routing');
+
+// Companion invocations, list-indented or not, without the entry-point prefix.
+function nodeLines(source: string): string[] {
+  return source
+    .split('\n')
+    .map((line) => line.trimStart())
+    .filter((line) => line.startsWith('node ') && line.includes('codex-companion.ts'))
+    .map((line) =>
+      line.replace(/^node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.ts" /, ''),
+    );
+}
+
+test('the routing files keep the shared job protocol and launch wiring', () => {
+  const routing = read(path.join(ROUTING_DIR, 'SKILL.md'));
+  const planProcedures = read(path.join(ROUTING_DIR, 'plan-procedures.md'));
+  const implementProcedures = read(path.join(ROUTING_DIR, 'implement-procedures.md'));
+  const worktreeProcedure = read(path.join(ROUTING_DIR, 'worktree-procedure.md'));
+
+  // One job protocol for both runtimes: a bounded brief poll, then one full result fetch.
+  assert.deepEqual(nodeLines(routing), [
+    'config --json',
+    'status <jobId> --wait --timeout-ms 90000 --brief',
+    'result <jobId> --json',
+  ]);
+  // Named Claude roles are companion jobs; no Agent-tool template remains.
+  assert.match(routing, /\|\s*`claude:<family>\[-<version>\]`\s*\|/);
+  assert.match(routing, /\|\s*`claude:session`\s*\|/);
   assert.match(
     routing,
-    /status <jobId> --wait --timeout-ms 90000 \| grep -E 'Phase\|Elapsed\|\^ \{4\}'/,
+    /--role <planner\|implementer\|plan-reviewer\|implementation-reviewer\|reviewer\|adversarial-reviewer>/,
   );
-  assert.match(routing, /result <jobId> --json/);
-  for (const role of [
-    'planner',
-    'plan-reviewer',
-    'implementer',
-    'implementation-reviewer',
-    'reviewer',
-    'adversarial-reviewer',
-  ]) {
-    assert.match(routing, new RegExp(`subagent_type: "stereo:${role}"`), role);
-  }
-  assert.ok(
-    (routing.match(/run_in_background: false/g) ?? []).length >= 6,
-    'all routing-skill Agent templates must stay foreground',
-  );
-  assert.equal(
-    (routing.match(/^model: "<sonnet\|opus\|haiku\|fable>"$/gm) ?? []).length,
-    6,
-    'all explicit Claude aliases must keep passing an invocation-level model',
-  );
-  assert.match(routing, /\|\s*`claude:inherit`\s*\|/);
-  assert.match(routing, new RegExp(`^## ${continuationSection}$`, 'm'));
-  assert.equal(
-    (routing.match(/--findings-file "<findingsPayloadFile>"/g) ?? []).length,
-    1,
-    'the canonical Claude persistence rule must deliver findings separately',
-  );
-  for (const [flag, placeholder] of [
-    ['--summary-file', 'summaryPayloadFile'],
-    ['--open-questions-file', 'openQuestionsPayloadFile'],
-    ['--residual-risks-file', 'residualRisksPayloadFile'],
-  ] as const) {
-    assert.equal(
-      (routing.match(new RegExp(`${flag} "<${placeholder}>"`, 'g')) ?? []).length,
-      1,
-      `the canonical Claude persistence rule must wire ${flag} once`,
-    );
-  }
-  assert.doesNotMatch(routing, /--summary '/);
-  assert.match(routing, /`<slotArg>` is `--slot <slot>`/);
-
-  const plan = read('commands/plan.md');
-  assert.match(plan, /skills\/model-routing\/SKILL\.md/);
-  assert.match(
-    plan,
-    /plan-review --background --json --thread <planReviewThreadId> --round <n> <slotArg>/,
-  );
-  assert.match(plan, /plan-store --json/);
-  assert.match(plan, /schemas\/plan-review-output\.schema\.json/);
-  assert.match(plan, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
-  assert.match(plan, /`<plannerSelectionArgs>` = `--model/);
-  assert.match(plan, /`<reviewSelectionArgs>` =\s*\n?\s*`--model/);
-  assert.match(plan, /config --json/);
-  assert.match(
-    plan,
-    /plan-review --background --json --round 1 <slotArg> <reviewSelectionArgs> --plan-file "<planFile>"/,
-  );
-  const planReviewLaunchLines = plan
-    .split('\n')
-    .filter((line) => line.includes('plan-review --background'));
-  assert.equal(planReviewLaunchLines.length, 4);
-  for (const line of planReviewLaunchLines) {
-    assert.match(line, /<slotArg>/);
-  }
-  assert.match(plan, /`<slotArg>` = `--slot <slot>`/);
-  assert.equal(
-    (plan.match(/^node .*plan-store .* < "<planFile>"$/gm) ?? []).length,
-    1,
-    'Plan intake must persist the user-provided plan bytes by stdin redirect',
-  );
-  assert.equal(
-    (plan.match(/--plan-file "<payloadFile>"/g) ?? []).length,
-    3,
-    'Plan must deliver all three review payloads by file',
-  );
-  assert.equal(
-    (plan.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
-    1,
-    'Plan must deliver its draft task payload by file',
-  );
-  assert.equal(
-    (plan.match(/^node .*plan-store .* < "<payloadFile>"$/gm) ?? []).length,
-    2,
-    'Plan must deliver both stored-plan payloads by stdin redirect',
-  );
-  assert.equal(
-    (plan.match(/--findings-file "<findingsPayloadFile>"/g) ?? []).length,
-    2,
-    'Plan review-only and external intake must deliver findings separately while draft-only stays findings-free',
-  );
-  assert.equal(
-    (plan.match(/--summary-file "<summaryPayloadFile>"/g) ?? []).length,
-    3,
-    'all Plan persistence paths must deliver summaries by file',
-  );
-  assert.equal(
-    (plan.match(/--open-questions-file "<openQuestionsPayloadFile>"/g) ?? []).length,
-    2,
-    'both reviewed Plan persistence paths must deliver questions by file',
-  );
-  assert.equal(
-    (plan.match(/--residual-risks-file "<residualRisksPayloadFile>"/g) ?? []).length,
-    2,
-    'both reviewed Plan persistence paths must deliver risks by file',
-  );
-  assert.doesNotMatch(plan, /--summary '/);
-  assert.doesNotMatch(plan, /<<'CODEX_PAIR_/);
-  const planHint = plan.match(/^argument-hint:.*$/m)?.[0] ?? '';
-  for (const flag of [
-    '--draft-only',
-    '--review-only',
-    '--plan-file',
-    '--planner-effort',
-    '--plan-reviewer-effort',
-    '--slot',
-  ]) {
-    assert.match(planHint, new RegExp(flag));
-  }
-
-  const implement = read('commands/implement.md');
-  assert.match(implement, /skills\/model-routing\/SKILL\.md/);
-  assert.match(implement, /plan-state --json/);
-  assert.match(implement, /config --json/);
-  assert.match(implement, /plan-state --mark-implemented/);
-  assert.match(implement, /Define `<slotArg>` as `--slot <slot>`/);
-  assert.match(implement, /implement-state --record[^\n]*<slotArg>/);
-  assert.match(implement, /task --background --json --write --model <effectiveModel> <effortArg>/);
-  assert.match(implement, /approved outside\s+this Codex thread/);
-  assert.match(implement, /reviewed but unapproved/);
-  assert.equal(
-    (implement.match(/Latest stored review findings:/g) ?? []).length,
-    3,
-    'both Codex variants and the Claude implementer must receive unapproved findings',
-  );
-  assert.equal(
-    (implement.match(/^Advisory review findings/gm) ?? []).length,
-    3,
-    'both approved Codex variants and the Claude implementer must receive advisory findings',
-  );
-  assert.match(implement, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
-  assert.match(implement, /^allowed-tools:.*\bEdit\b/m);
-  assert.match(implement, /^allowed-tools:.*Bash\(npm:\*\)/m);
-  assert.equal(
-    (implement.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
-    5,
-    'Implement must deliver all five Codex task payloads by file',
-  );
-  assert.doesNotMatch(implement, /<<'CODEX_PAIR_/);
-  assert.match(implement, /Compare `git rev-parse HEAD` with `baselineCommit`/);
-  assert.match(implement, /implementationReviewThreadId/);
-  assert.match(implement, /schemas\/implementation-review-output\.schema\.json/);
-  for (const action of ['record', 'update', 'complete']) {
-    assert.match(
-      implement,
-      new RegExp(`implement-state --${action} --state-file "<statePayloadFile>"`),
-    );
-  }
-  assert.match(implement, /implement-state --clear --json/);
-  const implementHint = implement.match(/^argument-hint:.*$/m)?.[0] ?? '';
-  for (const flag of [
-    '--implement-only',
-    '--review-only',
-    '--implementer-effort',
-    '--implementation-reviewer',
-    '--implementation-reviewer-effort',
-    '--resume',
-    '--base',
-    '--isolated',
-    '--slot',
-  ]) {
-    assert.match(implementHint, new RegExp(flag));
-  }
-  assert.doesNotMatch(implementHint, /--impl-reviewer\b/);
-  const implementLines = implement.split('\n');
-  const standaloneStart = implementLines.findIndex(
-    (line) => line === '## Standalone implementation-review step',
-  );
-  const standaloneEnd = implementLines.findIndex(
-    (line, index) => index > standaloneStart && line.startsWith('## '),
-  );
-  const isolatedTaskLines = implementLines.filter(
-    (line, index) =>
-      line.startsWith('node ') &&
-      line.includes('task --background') &&
-      (line.includes('--write') || line.includes('--output-schema')) &&
-      !(index > standaloneStart && index < standaloneEnd),
-  );
-  assert.equal(isolatedTaskLines.length, 4);
-  for (const line of isolatedTaskLines) {
-    assert.match(line, /<isolationArgs>/);
-  }
-  const standaloneTaskLine = implementLines
-    .slice(standaloneStart, standaloneEnd)
-    .find(
-      (line) =>
-        line.startsWith('node ') &&
-        line.includes('task --background') &&
-        line.includes('--output-schema'),
-    );
-  assert.ok(standaloneTaskLine);
-  assert.doesNotMatch(standaloneTaskLine, /<isolationArgs>/);
-  assert.equal(
-    (
-      implement.match(
-        /^node .*task --background.*--output-schema "\$\{CLAUDE_PLUGIN_ROOT\}\/schemas\/implementation-review-output\.schema\.json".*--prompt-file "<payloadFile>"$/gm,
-      ) ?? []
-    ).length,
-    2,
-    'both implementation-review task templates must keep runtime schema enforcement',
-  );
-
-  const tournament = read('commands/tournament.md');
-  assert.match(tournament, /skills\/model-routing\/SKILL\.md/);
-  assert.match(tournament, /config --json/);
-  assert.match(tournament, /plan-state --json <slotArg>/);
-  assert.match(tournament, /implement-state --json/);
-  assert.match(tournament, /schemas\/implementation-review-output\.schema\.json/);
-  assert.match(tournament, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
-  assert.match(tournament, /^allowed-tools:.*Bash\(npm:\*\)/m);
-  assert.equal(
-    (tournament.match(/run_in_background: false/g) ?? []).length,
-    2,
-    'both foreground Agent templates must stay explicit',
-  );
-  assert.match(tournament, /subagent_type: "stereo:implementer"/);
-  assert.match(tournament, /subagent_type: "stereo:implementation-reviewer"/);
-  assert.equal(
-    (tournament.match(/^\s*model: "<sonnet\|opus\|haiku\|fable>"$/gm) ?? []).length,
-    2,
-    'both foreground Agent templates must pass an invocation-level model',
-  );
-  assert.match(tournament, /`c1` = `codex:astra`/);
-  assert.match(tournament, /`c2` = `claude:opus`/);
-  assert.equal(
-    (tournament.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
-    2,
-    'Tournament must deliver its implementer and reviewer payloads by file',
-  );
-  const tournamentTaskLines = tournament
-    .split('\n')
-    .filter((line) => line.startsWith('node ') && line.includes('task --background'));
-  assert.equal(tournamentTaskLines.length, 2);
-  for (const line of tournamentTaskLines) {
-    assert.match(line, /<isolationArgs>/);
-  }
-  assert.match(tournament, /git -C "<mainRoot>" apply --3way --check/);
-  assert.match(tournament, /worktree remove --force/);
-  const tournamentHint = tournament.match(/^argument-hint:.*$/m)?.[0] ?? '';
-  for (const flag of [
-    '--implementer',
-    '--implementer-effort',
-    '--implementation-reviewer',
-    '--effort',
-    '--resume',
-    '--slot',
-  ]) {
-    assert.match(tournamentHint, new RegExp(flag));
-  }
-  assert.match(tournament, /plan-state --mark-implemented/);
-  assert.doesNotMatch(tournament, /implement-state --record/);
-
-  const quick = read('commands/quick.md');
-  const countContractTag = (source: string, tag: string): number =>
-    (source.match(new RegExp(`^\\s*<${tag}>\\s*$`, 'gm')) ?? []).length;
-  const contractTagCounts = (source: string) => ({
-    actionSafety: countContractTag(source, 'action_safety'),
-    completeness: countContractTag(source, 'completeness_contract'),
-    verification: countContractTag(source, 'verification_loop'),
-    compactOutput: countContractTag(source, 'compact_output_contract'),
-  });
-  assert.deepEqual(contractTagCounts(implement), {
-    actionSafety: 2,
-    completeness: 2,
-    verification: 3,
-    compactOutput: 3,
-  });
-  assert.deepEqual(contractTagCounts(quick), {
-    actionSafety: 2,
-    completeness: 2,
-    verification: 3,
-    compactOutput: 3,
-  });
-  assert.deepEqual(contractTagCounts(tournament), {
-    actionSafety: 1,
-    completeness: 1,
-    verification: 2,
-    compactOutput: 1,
-  });
-  assert.match(quick, /skills\/model-routing\/SKILL\.md/);
-  assert.match(quick, /plan-state --metadata --json/);
-  assert.match(quick, /config --json/);
-  assert.match(quick, /plan-state --mark-implemented/);
-  assert.match(quick, /plan-store --json/);
-  assert.match(quick, /^allowed-tools:.*\bWrite\b.*\bAgent\b.*$/m);
-  assert.match(quick, /^allowed-tools:.*\bEdit\b/m);
-  assert.match(quick, /^allowed-tools:.*Bash\(npm:\*\)/m);
-  assert.match(quick, /`<plannerSelectionArgs>` = `--model/);
-  assert.match(quick, /`<reviewSelectionArgs>` =\s*\n?\s*`--model/);
-  assert.match(quick, /`<slotArg>` = `--slot <slot>`/);
-  const quickPlanReviewLines = quick
-    .split('\n')
-    .filter((line) => line.includes('plan-review --background'));
-  assert.equal(quickPlanReviewLines.length, 2);
-  for (const line of quickPlanReviewLines) {
-    assert.match(line, /<slotArg>/);
-  }
-  assert.equal(
-    (quick.match(/--plan-file "<payloadFile>"/g) ?? []).length,
-    2,
-    'Quick must deliver both plan-review payloads by file',
-  );
-  assert.equal(
-    (quick.match(/--prompt-file "<payloadFile>"/g) ?? []).length,
-    5,
-    'Quick must deliver all five Codex task payloads by file',
-  );
-  const quickIsolatedTaskLines = quick
-    .split('\n')
-    .filter(
-      (line) =>
-        line.startsWith('node ') &&
-        line.includes('task --background') &&
-        (line.includes('--write') || line.includes('--output-schema')),
-    );
-  assert.equal(quickIsolatedTaskLines.length, 4);
-  for (const line of quickIsolatedTaskLines) {
-    assert.match(line, /<isolationArgs>/);
-  }
-  assert.equal(
-    (quick.match(/^node .*plan-store .* < "<payloadFile>"$/gm) ?? []).length,
-    1,
-    'Quick must deliver its stored-plan payload by stdin redirect',
-  );
-  assert.equal(
-    (quick.match(/--findings-file "<findingsPayloadFile>"/g) ?? []).length,
-    1,
-    'Quick must deliver terminal Claude review findings separately',
-  );
-  assert.equal(
-    (quick.match(/--summary-file "<summaryPayloadFile>"/g) ?? []).length,
-    1,
-    'Quick must deliver its terminal Claude review summary by file',
-  );
-  assert.equal(
-    (quick.match(/--open-questions-file "<openQuestionsPayloadFile>"/g) ?? []).length,
-    1,
-    'Quick must deliver terminal Claude review questions by file',
-  );
-  assert.equal(
-    (quick.match(/--residual-risks-file "<residualRisksPayloadFile>"/g) ?? []).length,
-    1,
-    'Quick must deliver terminal Claude review risks by file',
-  );
-  assert.doesNotMatch(quick, /--summary '/);
-  assert.doesNotMatch(quick, /<<'CODEX_PAIR_/);
-  assert.match(quick, /plannerThreadId/);
-  assert.match(quick, /planReviewThreadId/);
-  assert.match(quick, /implementationThreadId/);
-  assert.match(quick, /implementationReviewThreadId/);
-  assert.equal(
-    (quick.match(/^Advisory review findings/gm) ?? []).length,
-    2,
-    'both approved Codex variants must receive advisory findings',
-  );
-  const quickHint = quick.match(/^argument-hint:.*$/m)?.[0] ?? '';
-  for (const flag of [
-    '--planner-effort',
-    '--plan-reviewer-effort',
-    '--implementer-effort',
-    '--implementation-reviewer',
-    '--implementation-reviewer-effort',
-    '--slot',
-    '--isolated',
-    '--max-plan-rounds',
-    '--max-fix-rounds',
-  ]) {
-    assert.match(quickHint, new RegExp(flag));
-  }
-  assert.doesNotMatch(quickHint, /--impl-reviewer\b/);
-  assert.equal(
-    (
-      quick.match(
-        /^node .*task --background.*--output-schema "\$\{CLAUDE_PLUGIN_ROOT\}\/schemas\/implementation-review-output\.schema\.json".*--prompt-file "<payloadFile>"$/gm,
-      ) ?? []
-    ).length,
-    1,
-    'the Quick implementation-review task template must keep runtime schema enforcement',
-  );
-  for (const [file, source] of [
-    ['plan.md', plan],
-    ['implement.md', implement],
-    ['quick.md', quick],
-  ] as const) {
-    assert.equal(
-      source.includes(`"${continuationSection}" rule`),
-      true,
-      `${file} must cite the canonical continuation rule`,
-    );
-  }
-
-  for (const [file, source] of [
-    ['plan.md', plan],
-    ['quick.md', quick],
-    ['skills/model-routing/SKILL.md', routing],
-  ] as const) {
-    assert.match(
-      source,
-      /^node .*plan-store .*--thread.*\|--no-thread.*$/m,
-      `${file} must make stored thread ownership explicit`,
-    );
-  }
-
-  const adversarial = read('commands/adversarial-review.md');
-  assert.match(adversarial, /skills\/model-routing\/SKILL\.md/);
-  assert.match(adversarial, /prompts\/adversarial-review\.md/);
-  assert.match(adversarial, /schemas\/review-output\.schema\.json/);
-  assert.match(adversarial, /^allowed-tools:.*\bAgent\b.*$/m);
-  assert.match(adversarial, /`claude:inherit`/);
-  assert.match(adversarial, /omit the Agent\s+`model` parameter/);
-  const adversarialHint = adversarial.match(/^argument-hint:.*$/m)?.[0] ?? '';
-  assert.match(adversarialHint, /--pr/);
-  assert.match(adversarialHint, /--effort/);
-  assert.match(adversarial, /^allowed-tools:.*Bash\(gh:\*\)/m);
-
-  const nativeReview = read('commands/review.md');
-  assert.match(nativeReview, /skills\/model-routing\/SKILL\.md/);
-  assert.match(nativeReview, /prompts\/review\.md/);
-  assert.match(nativeReview, /schemas\/review-output\.schema\.json/);
-  assert.match(nativeReview, /`stereo:reviewer`/);
-  assert.match(nativeReview, /^allowed-tools:.*\bAgent\b.*$/m);
-  assert.match(nativeReview, /run_in_background: false/);
-  assert.match(nativeReview, /\/stereo:adversarial-review/);
-  assert.match(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /--pr/);
-  assert.match(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /focus/);
-  assert.doesNotMatch(nativeReview.match(/^argument-hint:.*$/m)?.[0] ?? '', /--effort/);
-  assert.match(nativeReview, /^allowed-tools:.*Bash\(gh:\*\)/m);
-
-  const status = read('commands/status.md');
-  assert.match(status.match(/^argument-hint:.*$/m)?.[0] ?? '', /--usage/);
-  assert.match(status.match(/^argument-hint:.*$/m)?.[0] ?? '', /--workspace/);
-  const resultCommand = read('commands/result.md');
-  assert.match(resultCommand.match(/^argument-hint:.*$/m)?.[0] ?? '', /--report/);
-  assert.match(resultCommand.match(/^argument-hint:.*$/m)?.[0] ?? '', /--workspace/);
-  assert.match(read('commands/cancel.md').match(/^argument-hint:.*$/m)?.[0] ?? '', /--workspace/);
-});
-
-test('pair commands fill the canonical role briefs', () => {
-  const plan = read('commands/plan.md');
-  const implement = read('commands/implement.md');
-  const quick = read('commands/quick.md');
-  const tournament = read('commands/tournament.md');
-
-  for (const [file, source] of [
-    ['plan.md', plan],
-    ['quick.md', quick],
-  ] as const) {
-    assert.match(source, /prompts\/plan-draft\.md/, `${file} must load the planner brief`);
-    assert.match(source, /prompts\/plan-review\.md/, `${file} must load the plan-review brief`);
-    for (const token of [
-      '{{TASK_TEXT}}',
-      '{{SIZE_CONTRACT}}',
-      '{{PLAN_INPUT}}',
-      '{{ROUND_NUMBER}}',
-      '{{REVISION_CONTEXT}}',
-      '{{REPO_MAP}}',
-    ]) {
-      assert.equal(source.includes(token), true, `${file} must name the ${token} fill`);
+  for (const file of fs.readdirSync(path.join(PLUGIN_ROOT, ROUTING_DIR))) {
+    const source = read(path.join(ROUTING_DIR, file));
+    for (const removed of [/subagent_type/, /run_in_background/, /\|\s*`claude:inherit`\s*\|/]) {
+      assert.doesNotMatch(source, removed, file);
     }
   }
 
+  // The planner draft, its retry, both plan-review rounds, and the canonical inline
+  // persist, which reads the plan from stdin, names no thread (plan-store takes
+  // none), and delivers every metadata array by its own file.
+  const planLines = nodeLines(planProcedures);
+  assert.deepEqual(planLines.slice(0, 4), [
+    "task --background --json <plannerSelectionArgs> --prompt-file '<payloadFile>'",
+    "task --background --json --thread <plannerThreadId> <plannerSelectionArgs> --prompt-file '<retryPayloadFile>'",
+    "plan-review --background --json --round 1 <slotArg> <reviewSelectionArgs> --plan-file '<payloadFile>'",
+    "plan-review --background --json --thread <planReviewThreadId> --round <n> <slotArg> <reviewSelectionArgs> --plan-file '<payloadFile>'",
+  ]);
+  assert.equal(planLines.length, 5);
+  const persist = planLines[4] ?? '';
+  assert.match(persist, /^plan-store .* < '<payloadFile>'$/);
+  assert.doesNotMatch(persist, /--(no-)?thread\b/);
+  for (const flag of [
+    '--summary-file',
+    '--findings-file',
+    '--open-questions-file',
+    '--residual-risks-file',
+  ]) {
+    assert.match(persist, new RegExp(`${flag} '<[A-Za-z]+PayloadFile>'`), flag);
+  }
+
+  // Every implementer turn and every implementation review replays its pinned
+  // launch arguments, with the worktree flags on the command line beside them;
+  // the review keeps runtime schema enforcement.
+  assert.deepEqual(
+    nodeLines(implementProcedures).filter((line) => line.includes('--background')),
+    [
+      "task --background --json --write --launch-args-file '<launchArgsFile>' <isolationArgs> --prompt-file '<payloadFile>'",
+      "task --background --json --write --thread <implementationThreadId> --launch-args-file '<launchArgsFile>' <isolationArgs> --prompt-file '<payloadFile>'",
+      "task --background --json --launch-args-file '<reviewLaunchArgsFile>' --output-schema \"${CLAUDE_PLUGIN_ROOT}/schemas/implementation-review-output.schema.json\" <isolationArgs> --prompt-file '<payloadFile>'",
+    ],
+  );
+
+  // Isolated worktrees are created and removed by the companion's worktree subcommand.
+  assert.deepEqual(nodeLines(worktreeProcedure), [
+    "worktree create --main '<mainRoot>' --json",
+    "worktree remove --main '<mainRoot>' --path '<worktreePath>' --json",
+  ]);
+  assert.match(worktreeProcedure, /git -C '<mainRoot>' apply --3way --check '<patchFile>'/);
+  assert.match(worktreeProcedure, /--cwd '<worktreePath>' --workspace '<mainRoot>'/);
+});
+
+test('pair commands keep their durable-state wiring and cite every launch', () => {
+  const plan = read('commands/plan.md');
+  const implement = read('commands/implement.md');
+  const quick = read('commands/quick.md');
+  const tournament = read('commands/tournament.md');
+
+  assert.deepEqual(
+    nodeLines(plan).filter((line) => line.startsWith('plan-store')),
+    [
+      "plan-store --json <slotArg> --verdict 'draft' --round 0 --summary-file '<summaryPayloadFile>' < '<payloadFile>'",
+    ],
+    'Plan keeps only its draft-only store, delivered by stdin redirect',
+  );
+  for (const action of ['record', 'update', 'complete']) {
+    assert.match(
+      implement,
+      new RegExp(`implement-state --${action} --state-file '<statePayloadFile>'`),
+    );
+  }
+  assert.match(implement, /implement-state --clear --json/);
+  assert.doesNotMatch(tournament, /implement-state --record/);
+  assert.doesNotMatch(quick, /plan-store --json/);
+
   for (const [file, source] of [
+    ['plan.md', plan],
     ['implement.md', implement],
     ['quick.md', quick],
     ['tournament.md', tournament],
   ] as const) {
-    assert.match(
-      source,
-      /prompts\/implementation-review\.md/,
-      `${file} must load the implementation-review brief`,
+    const allowedTools = source.match(/^allowed-tools:.*$/m)?.[0] ?? '';
+    assert.match(allowedTools, /\bWrite\b/, file);
+    // The orchestrator never edits: Claude writes stay in the contained implementer role.
+    assert.doesNotMatch(allowedTools, /\bEdit\b/, file);
+    if (file !== 'plan.md') {
+      assert.match(allowedTools, /Bash\(npm:\*\)/, file);
+    }
+    // Every draft, review, and implementer launch is cited from the procedures.
+    assert.equal(
+      nodeLines(source).filter((line) => line.includes('--background')).length,
+      0,
+      `${file} cites every background launch from the procedures`,
     );
+    // Effort is per role on the pair commands.
+    assert.doesNotMatch(
+      source.match(/^argument-hint:.*$/m)?.[0] ?? '',
+      /\[--effort <effort>\]/,
+      `${file} has no command-wide --effort`,
+    );
+  }
+
+  for (const [file, brief] of [
+    ['review.md', 'review.md'],
+    ['adversarial-review.md', 'adversarial-review.md'],
+  ] as const) {
+    const source = read(path.join('commands', file));
+    assert.match(source.replace(/\s+/g, ' '), /"Standalone review procedure"/, file);
+    assert.match(source, new RegExp(`prompts/${brief.replace('.', '\\.')}`), file);
+    assert.match(source, /schemas\/review-output\.schema\.json/, file);
+    // The review commands pre-approve only `gh pr view` and the read-only git
+    // subcommands their procedure runs, never the whole of `gh` or `git`.
+    const allowedTools = source.match(/^allowed-tools:.*$/m)?.[0] ?? '';
+    assert.match(allowedTools, /Bash\(gh pr view:\*\)/, file);
+    assert.doesNotMatch(allowedTools, /Bash\((gh|git):\*\)/, file);
+    for (const rule of allowedTools.matchAll(/Bash\(git ([a-z-]+)[^)]*\)/g)) {
+      assert.ok(
+        [
+          'status',
+          'diff',
+          'log',
+          'show',
+          'rev-parse',
+          'check-ref-format',
+          'show-ref',
+          'symbolic-ref',
+        ].includes(rule[1] ?? ''),
+        `${file}: ${rule[0]} is not a read subcommand the review procedure runs`,
+      );
+    }
+  }
+  const reviewProcedure = read(path.join(ROUTING_DIR, 'review-procedure.md'));
+  assert.match(
+    reviewProcedure,
+    /gh pr view '<n>' --json number,headRefName,headRefOid,baseRefName,state,url/,
+  );
+  assert.match(reviewProcedure, /git rev-parse --verify 'origin\/<baseRefName>\^\{commit\}'/);
+});
+
+test('every quoted routing heading resolves in a routing file its reader loads', () => {
+  const routingFiles = fs
+    .readdirSync(path.join(PLUGIN_ROOT, ROUTING_DIR))
+    .filter((file) => file.endsWith('.md'))
+    .sort();
+  assert.deepEqual(routingFiles, [
+    'SKILL.md',
+    'implement-procedures.md',
+    'pair-procedures.md',
+    'plan-procedures.md',
+    'review-procedure.md',
+    'worktree-procedure.md',
+  ]);
+  const headings = new Map(
+    routingFiles.map((file) => [
+      file,
+      new Set(
+        [...read(path.join(ROUTING_DIR, file)).matchAll(/^#{1,6} (.+)$/gm)].map((match) =>
+          (match[1] ?? '').trim(),
+        ),
+      ),
+    ]),
+  );
+  // No heading is defined twice, so a citation names exactly one section.
+  const allHeadings = routingFiles.flatMap((file) => [...(headings.get(file) ?? [])]);
+  assert.deepEqual(
+    allHeadings.filter((heading, index) => allHeadings.indexOf(heading) !== index),
+    [],
+  );
+  // A citation is a capitalized phrase in double quotes ("Launch errors"),
+  // possibly wrapped across lines; code such as "${CLAUDE_PLUGIN_ROOT}/..."
+  // or "Bash(npm test)" never matches.
+  const citations = (source: string): string[] => [
+    ...new Set(
+      [...source.replace(/\s+/g, ' ').matchAll(/"([A-Z][A-Za-z-]*(?: [A-Za-z-]+)*)"/g)].map(
+        (match) => match[1] ?? '',
+      ),
+    ),
+  ];
+  const assertResolves = (label: string, source: string, readable: readonly string[]): void => {
+    const available = new Set(readable.flatMap((file) => [...(headings.get(file) ?? [])]));
+    for (const citation of citations(source)) {
+      assert.ok(
+        available.has(citation),
+        `${label} cites "${citation}", which is not a heading of ${readable.join(' or ')}`,
+      );
+    }
+  };
+
+  // Which routing files each routed command reads (worktree-procedure.md only
+  // for an isolated run in implement and quick, always in tournament).
+  const readers: Record<string, readonly string[]> = {
+    'plan.md': ['SKILL.md', 'pair-procedures.md', 'plan-procedures.md'],
+    'implement.md': [
+      'SKILL.md',
+      'pair-procedures.md',
+      'implement-procedures.md',
+      'worktree-procedure.md',
+    ],
+    'quick.md': [
+      'SKILL.md',
+      'pair-procedures.md',
+      'plan-procedures.md',
+      'implement-procedures.md',
+      'worktree-procedure.md',
+    ],
+    'tournament.md': [
+      'SKILL.md',
+      'pair-procedures.md',
+      'implement-procedures.md',
+      'worktree-procedure.md',
+    ],
+    'review.md': ['review-procedure.md'],
+    'adversarial-review.md': ['review-procedure.md'],
+  };
+  for (const file of fs.readdirSync(path.join(PLUGIN_ROOT, 'commands'))) {
+    const source = read(path.join('commands', file));
+    const readable = routingFiles.filter((routingFile) =>
+      source.includes(`skills/model-routing/${routingFile}`),
+    );
+    assert.deepEqual(readable, [...(readers[file] ?? [])].sort(), `${file} routing files`);
+    assertResolves(`commands/${file}`, source, readable);
+  }
+  // Each second-tier file cites only what its readers also load; the
+  // implementation procedures cite the worktree procedure for isolated mode only.
+  const secondTier: Record<string, readonly string[]> = {
+    'pair-procedures.md': ['SKILL.md', 'pair-procedures.md'],
+    'plan-procedures.md': ['SKILL.md', 'pair-procedures.md', 'plan-procedures.md'],
+    'implement-procedures.md': [
+      'SKILL.md',
+      'pair-procedures.md',
+      'implement-procedures.md',
+      'worktree-procedure.md',
+    ],
+    'worktree-procedure.md': [
+      'SKILL.md',
+      'pair-procedures.md',
+      'implement-procedures.md',
+      'worktree-procedure.md',
+    ],
+    'review-procedure.md': ['review-procedure.md'],
+    'SKILL.md': routingFiles.filter((file) => file !== 'review-procedure.md'),
+  };
+  for (const [file, readable] of Object.entries(secondTier)) {
+    assertResolves(file, read(path.join(ROUTING_DIR, file)), readable);
+  }
+});
+
+test('pair commands fill the canonical role briefs', () => {
+  const planProcedures = read(path.join(ROUTING_DIR, 'plan-procedures.md'));
+  const implementProcedures = read(path.join(ROUTING_DIR, 'implement-procedures.md'));
+  const tournament = read('commands/tournament.md');
+
+  // The planner and plan-review briefs are filled once, in the plan procedures;
+  // plan and quick each supply their own size contract.
+  assert.match(planProcedures, /prompts\/plan-draft\.md/);
+  assert.match(planProcedures, /prompts\/plan-review\.md/);
+  assert.match(planProcedures, /schemas\/plan-review-output\.schema\.json/);
+  for (const token of [
+    '{{TASK_TEXT}}',
+    '{{SIZE_CONTRACT}}',
+    '{{PLAN_INPUT}}',
+    '{{ROUND_NUMBER}}',
+    '{{REVISION_CONTEXT}}',
+    '{{REPO_MAP}}',
+  ]) {
+    assert.equal(planProcedures.includes(token), true, `the plan procedures fill ${token}`);
+  }
+  for (const file of ['plan.md', 'quick.md']) {
+    assert.equal(read(path.join('commands', file)).includes('{{SIZE_CONTRACT}}'), true, file);
+  }
+
+  // The implementation-review brief is filled in the implementation
+  // procedures; the per-contestant (tournament) fill is its own.
+  assert.match(implementProcedures, /prompts\/implementation-review\.md/);
+  assert.match(implementProcedures, /schemas\/implementation-review-output\.schema\.json/);
+  for (const [file, source] of [
+    ['tournament.md', tournament],
+    ['implement-procedures.md', implementProcedures],
+  ] as const) {
     for (const token of [
       '{{PLAN_INPUT}}',
       '{{BASELINE_CONTEXT}}',
       '{{REVIEW_CONTEXT}}',
       '{{HOST_RESULTS}}',
+      '{{GRANTED_COMMANDS}}',
     ]) {
       assert.equal(source.includes(token), true, `${file} must name the ${token} fill`);
     }
   }
-
-  assert.doesNotMatch(read('prompts/plan-review.md'), /You are Codex/);
-  assert.doesNotMatch(read('prompts/adversarial-review.md'), /You are Codex/);
 });
 
-test('pair agents keep their role-specific tool and output contracts', () => {
-  const expectedAgents = [
-    'adversarial-reviewer.md',
-    'codex-rescue.md',
-    'implementation-reviewer.md',
-    'implementer.md',
-    'plan-reviewer.md',
-    'planner.md',
-    'reviewer.md',
+test('role definitions live outside agents/ and keep their tool and output contracts', () => {
+  // Claude Code registers every agents/*.md as an Agent type; the six roles
+  // run only as companion jobs, so only the rescue bridge lives there.
+  assert.deepEqual(fs.readdirSync(path.join(PLUGIN_ROOT, 'agents')).sort(), ['codex-rescue.md']);
+  const roles = [
+    'adversarial-reviewer',
+    'implementation-reviewer',
+    'implementer',
+    'plan-reviewer',
+    'planner',
+    'reviewer',
   ];
-  assert.deepEqual(fs.readdirSync(path.join(PLUGIN_ROOT, 'agents')).sort(), expectedAgents);
-
-  const implementer = read('agents/implementer.md');
-  assert.match(implementer, /^tools:\s*Read, Glob, Grep, Edit, Write, Bash$/m);
-  const implementerFrontmatter = implementer.match(/^---\n[\s\S]*?\n---/)?.[0] ?? '';
-  assert.match(implementerFrontmatter, /\bBash\b/);
-  assert.doesNotMatch(implementerFrontmatter, /WebFetch|WebSearch/);
-
-  const planReviewer = read('agents/plan-reviewer.md');
-  assert.match(planReviewer, /schemas\/plan-review-output\.schema\.json/);
-  assert.match(planReviewer, /"section"/);
-  assert.match(planReviewer, /"confidence"/);
-
-  const adversarialReviewer = read('agents/adversarial-reviewer.md');
-  assert.match(adversarialReviewer, /schemas\/review-output\.schema\.json/);
-
-  assert.match(read('agents/reviewer.md'), /schemas\/review-output\.schema\.json/);
-
-  const implementationReviewer = read('agents/implementation-reviewer.md');
-  assert.match(implementationReviewer, /schemas\/implementation-review-output\.schema\.json/);
-
-  assert.doesNotThrow(() => JSON.parse(read('schemas/implementation-review-output.schema.json')));
+  assert.deepEqual(
+    fs.readdirSync(path.join(PLUGIN_ROOT, 'roles')).sort(),
+    roles.map((role) => `${role}.md`),
+  );
+  for (const role of roles) {
+    const frontmatter = read(`roles/${role}.md`).match(/^---\n[\s\S]*?\n---/)?.[0] ?? '';
+    // Model and effort are pinned per run by the companion, never by the role.
+    assert.doesNotMatch(frontmatter, /^(model|effort):/m, role);
+    assert.match(
+      frontmatter,
+      role === 'implementer'
+        ? /^tools:\s*Read, Glob, Grep, Edit, Write, Bash$/m
+        : /^tools:\s*Read, Glob, Grep, Bash$/m,
+      role,
+    );
+  }
+  for (const [role, schema] of [
+    ['plan-reviewer', 'plan-review-output'],
+    ['implementation-reviewer', 'implementation-review-output'],
+    ['reviewer', 'review-output'],
+    ['adversarial-reviewer', 'review-output'],
+  ] as const) {
+    assert.match(read(`roles/${role}.md`), new RegExp(`schemas/${schema}\\.schema\\.json`), role);
+    assert.doesNotThrow(() => JSON.parse(read(`schemas/${schema}.schema.json`)));
+  }
 
   const rescueAgent = read('agents/codex-rescue.md');
   assert.match(rescueAgent, /^tools:\s*Read, Bash$/m);
   const rescueFrontmatter = rescueAgent.match(/^---\n[\s\S]*?\n---/)?.[0] ?? '';
   for (const skill of ['codex-cli-runtime', 'codex-prompting', 'codex-result-handling']) {
     assert.match(rescueFrontmatter, new RegExp(`^  - ${skill}$`, 'm'));
-  }
-  assert.match(read('commands/result.md'), /codex-result-handling/);
-  const rescueRuntime = read('skills/codex-cli-runtime/SKILL.md');
-  for (const [file, source] of [
-    ['agents/codex-rescue.md', rescueAgent],
-    ['skills/codex-cli-runtime/SKILL.md', rescueRuntime],
-  ] as const) {
-    assert.doesNotMatch(source, /return nothing/i, file);
-    assert.match(source, /\/stereo:setup/, file);
-  }
-
-  for (const file of [
-    'adversarial-reviewer.md',
-    'implementation-reviewer.md',
-    'plan-reviewer.md',
-    'planner.md',
-    'reviewer.md',
-  ]) {
-    assert.match(
-      read(path.join('agents', file)),
-      /^tools:\s*Read, Glob, Grep, Bash, WebFetch, WebSearch$/m,
-      file,
-    );
-  }
-
-  for (const file of expectedAgents.filter((file) => file !== 'codex-rescue.md')) {
-    const source = read(path.join('agents', file));
-    assert.match(source, /^model:\s*inherit$/m, file);
-    assert.match(source, /run_in_background: false/, file);
   }
 });
 
@@ -695,6 +511,12 @@ test('rescue routes through the subagent transport, never Skill recursion', () =
   assert.match(rescue, /subagent_type: "stereo:codex-rescue"/);
   assert.match(rescue, /do not call `Skill\(stereo:codex-rescue\)`/i);
   assert.doesNotMatch(rescue, /^context:\s*fork\b/m);
+  // The forwarder passes flags as arguments and the task text on stdin, never
+  // inside a shell string.
+  const runtime = read('skills/codex-cli-runtime/SKILL.md');
+  assert.match(runtime, /^node .*codex-companion\.ts" task <taskFlags> <<'STEREO_EOF'$/m);
+  assert.match(runtime, /^STEREO_EOF$/m);
+  assert.doesNotMatch(runtime, /task "<raw arguments>"/);
 });
 
 test('hooks keep session-end cleanup and stop gating enabled', () => {
@@ -715,6 +537,21 @@ test('hooks keep session-end cleanup and stop gating enabled', () => {
   assert.ok(sessionStart);
   assert.ok(sessionEnd);
   assert.equal(sessionStart.timeout, 5);
-  assert.equal(typeof sessionEnd.timeout, 'number');
-  assert.equal(SESSION_END_BUDGET_MS + 5000 <= sessionEnd.timeout * 1000, true);
+  // The SessionEnd hook only starts the sweep.
+  assert.equal(sessionEnd.timeout, 5);
+});
+
+test('only the rescue bridge still launches an agent; every other command is companion-only', () => {
+  const commandDir = path.join(PLUGIN_ROOT, 'commands');
+  for (const file of fs.readdirSync(commandDir).filter((name) => name.endsWith('.md'))) {
+    const source = read(path.join('commands', file));
+    const allowedTools = source.match(/^allowed-tools:.*$/m)?.[0] ?? '';
+    if (file === 'rescue.md') {
+      assert.match(allowedTools, /\bAgent\b/, file);
+      assert.match(source, /subagent_type: "stereo:codex-rescue"/, file);
+      continue;
+    }
+    assert.doesNotMatch(allowedTools, /\bAgent\b/, file);
+    assert.doesNotMatch(source, /subagent_type|run_in_background/, file);
+  }
 });

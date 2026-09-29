@@ -2,138 +2,120 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  builtinCatalog,
+  loadCodexCatalog,
+  writeCodexCatalogCache,
+} from '../plugins/stereo/src/models/catalog.ts';
+import type { CodexCatalog } from '../plugins/stereo/src/models/catalog.ts';
+import {
   MODEL_REGISTRY,
-  defaultPairEffort,
+  defaultModelEffort,
   modelProviderFor,
   normalizeReasoningEffort,
-  normalizeRequestedModel,
+  parseCodexSelection,
   parseQualifiedModel,
   registryEntryForModel,
+  resolveCodexSelection,
 } from '../plugins/stereo/src/models/registry.ts';
+import { parseFamilySelection } from '../plugins/stereo/src/models/model-table.ts';
+import { accountCatalogModels, catalogEntry, catalogFixture } from './helpers.ts';
 
-test('normalizeRequestedModel resolves the documented aliases to exact models', () => {
-  assert.equal(normalizeRequestedModel('astra'), 'gpt-6-astra');
-  assert.equal(normalizeRequestedModel('sol'), 'gpt-5.6-sol');
-  assert.equal(normalizeRequestedModel('terra'), 'gpt-5.6-terra');
-  assert.equal(normalizeRequestedModel('luna'), 'gpt-5.6-luna');
-  assert.equal(normalizeRequestedModel('mini'), 'gpt-5.4-mini');
-  assert.equal(normalizeRequestedModel('kimi'), 'kimi-k3');
-  assert.equal(normalizeRequestedModel('qwen'), 'qwen3.7-plus');
-  assert.equal(normalizeRequestedModel('deepseek'), 'deepseek-v4-pro');
-  assert.equal(normalizeRequestedModel('glm'), 'glm-5.2');
-});
+// The test process has its own CODEX_HOME (env-bootstrap), so seeding it the
+// way a launch-ready check does gives every default resolution below the
+// same catalog the fake Codex serves.
+writeCodexCatalogCache(accountCatalogModels(), { fetchedAt: '2026-09-24T00:00:00.000Z' });
+
+// The two-step selection API, as the commands use it: parse before the
+// runtime probe, resolve against the loaded catalog after it.
+function resolveRequested(
+  model: unknown,
+  options: { catalog?: ReturnType<typeof loadCodexCatalog> } = {},
+): string | null {
+  const selection = parseCodexSelection(model);
+  return selection ? resolveCodexSelection(selection, options.catalog ?? loadCodexCatalog()) : null;
+}
 
 test('normalizeRequestedModel strips one optional codex: runtime prefix', () => {
-  assert.equal(normalizeRequestedModel('codex:astra'), 'gpt-6-astra');
-  assert.equal(normalizeRequestedModel('codex:sol'), 'gpt-5.6-sol');
-  assert.equal(normalizeRequestedModel('  CODEX:Glm  '), 'glm-5.2');
-  assert.equal(normalizeRequestedModel('codex:gpt-5.6-sol@azure'), 'gpt-5.6-sol@azure');
-  assert.equal(normalizeRequestedModel('codex:my-local-model'), 'my-local-model');
+  assert.equal(resolveRequested('codex:astra'), 'gpt-6-astra');
+  assert.equal(resolveRequested('codex:sol'), 'gpt-6-sol');
+  assert.equal(resolveRequested('  CODEX:Glm  '), 'glm-5.2');
+  assert.equal(resolveRequested('codex:gpt-5.6-sol@azure'), 'gpt-5.6-sol@azure');
+  assert.equal(resolveRequested('codex:my-local-model'), 'my-local-model');
   // Exactly one strip, which keeps a literal codex:-prefixed id addressable.
-  assert.equal(normalizeRequestedModel('codex:codex:latest'), 'codex:latest');
+  assert.equal(resolveRequested('codex:codex:latest'), 'codex:latest');
 });
 
 test('normalizeRequestedModel rejects empty and Claude selections under codex:', () => {
   assert.throws(
-    () => normalizeRequestedModel('codex:'),
+    () => resolveRequested('codex:'),
     new Error('Unsupported model "codex:". Use codex:<model> or a bare Codex model id.'),
   );
   assert.throws(
-    () => normalizeRequestedModel('codex:   '),
+    () => resolveRequested('codex:   '),
     new Error('Unsupported model "codex:". Use codex:<model> or a bare Codex model id.'),
   );
   assert.throws(
-    () => normalizeRequestedModel('codex:claude:opus'),
+    () => resolveRequested('codex:claude:opus'),
     new Error(
       'Unsupported model "codex:claude:opus". The codex: prefix addresses Codex runtime models; claude: selections are not Codex models.',
     ),
   );
   assert.throws(
-    () => normalizeRequestedModel('CODEX:CLAUDE:session'),
+    () => resolveRequested('CODEX:CLAUDE:session'),
     new Error(
       'Unsupported model "CODEX:CLAUDE:session". The codex: prefix addresses Codex runtime models; claude: selections are not Codex models.',
     ),
   );
 });
 
-test('normalizeRequestedModel rejects bare Claude routes before Codex model resolution', () => {
-  assert.throws(
-    () => normalizeRequestedModel('claude:opus'),
-    new Error(
-      'Unsupported model "claude:opus". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
-    ),
-  );
-  assert.throws(
-    () => normalizeRequestedModel('claude:session'),
-    new Error(
-      'Unsupported model "claude:session". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
-    ),
-  );
-  assert.throws(
-    () => normalizeRequestedModel('CLAUDE:Sonnet'),
-    new Error(
-      'Unsupported model "CLAUDE:Sonnet". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
-    ),
-  );
-  assert.throws(
-    () => normalizeRequestedModel('claude:opus@anthropic'),
-    new Error(
-      'Unsupported model "claude:opus@anthropic". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.',
-    ),
-  );
-  assert.throws(
-    () => normalizeRequestedModel('codex:claude:opus'),
-    new Error(
-      'Unsupported model "codex:claude:opus". The codex: prefix addresses Codex runtime models; claude: selections are not Codex models.',
-    ),
+test('parseCodexSelection needs no catalog and resolveCodexSelection needs no re-parse', () => {
+  assert.equal(parseCodexSelection(null), null);
+  assert.equal(parseCodexSelection('   '), null);
+  assert.deepEqual(parseCodexSelection(' Codex:Sol-5.6@Azure '), {
+    normalized: 'Codex:Sol-5.6@Azure',
+    key: 'sol-5.6',
+    bareModel: 'Sol-5.6',
+    modelProvider: 'Azure',
+  });
+  assert.throws(() => parseCodexSelection('m@a@b'), /Use <model> or <model>@<provider>/);
+  const older = catalogFixture([catalogEntry('gpt-5.6-sol')]);
+  assert.equal(resolveCodexSelection(parseCodexSelection('sol')!, older), 'gpt-5.6-sol');
+  assert.equal(
+    resolveCodexSelection(parseCodexSelection('Sol-5.6@azure')!, older),
+    'gpt-5.6-sol@azure',
   );
 });
 
 test('normalizeRequestedModel matches aliases case-insensitively and trims whitespace', () => {
-  assert.equal(normalizeRequestedModel('  SOL  '), 'gpt-5.6-sol');
-  assert.equal(normalizeRequestedModel('Terra'), 'gpt-5.6-terra');
-  assert.equal(normalizeRequestedModel('\tLuNa\n'), 'gpt-5.6-luna');
-  assert.equal(normalizeRequestedModel(' Mini'), 'gpt-5.4-mini');
-  assert.equal(normalizeRequestedModel(' KiMi '), 'kimi-k3');
-  assert.equal(normalizeRequestedModel('QWEN'), 'qwen3.7-plus');
+  assert.equal(resolveRequested('  SOL  '), 'gpt-6-sol');
+  assert.equal(resolveRequested('Terra'), 'gpt-5.6-terra');
+  assert.equal(resolveRequested('\tLuNa\n'), 'gpt-6-luna');
+  assert.equal(resolveRequested(' KiMi '), 'kimi-k3');
+  assert.equal(resolveRequested('QWEN'), 'qwen3.7-plus');
 });
 
 test('normalizeRequestedModel passes unknown models through with original casing', () => {
-  assert.equal(normalizeRequestedModel('gpt-5.5'), 'gpt-5.5');
-  assert.equal(normalizeRequestedModel('GPT-5.6-Sol-Custom'), 'GPT-5.6-Sol-Custom');
-  assert.equal(normalizeRequestedModel('  my-local-model  '), 'my-local-model');
+  assert.equal(resolveRequested('gpt-5.5'), 'gpt-5.5');
+  assert.equal(resolveRequested('GPT-5.6-Sol-Custom'), 'GPT-5.6-Sol-Custom');
+  assert.equal(resolveRequested('  my-local-model  '), 'my-local-model');
 });
 
-test('normalizeRequestedModel resolves only the model side of qualified selections', () => {
-  assert.equal(normalizeRequestedModel('kimi@custom'), 'kimi-k3@custom');
-  assert.equal(normalizeRequestedModel(' SOL@azure '), 'gpt-5.6-sol@azure');
-  assert.equal(normalizeRequestedModel('Unregistered-X@my-provider'), 'Unregistered-X@my-provider');
-  assert.equal(normalizeRequestedModel('claude-sonnet-4@anthropic'), 'claude-sonnet-4@anthropic');
+test('a family or alias selection resolves only the model side of qualified selections', () => {
+  assert.equal(resolveRequested('kimi@custom'), 'kimi-k3@custom');
+  assert.equal(resolveRequested(' SOL@azure '), 'gpt-6-sol@azure');
+  assert.equal(resolveRequested('Unregistered-X@my-provider'), 'Unregistered-X@my-provider');
+  assert.equal(resolveRequested('claude-sonnet-4@anthropic'), 'claude-sonnet-4@anthropic');
 });
 
-test('normalizeRequestedModel returns null for null and empty input', () => {
-  assert.equal(normalizeRequestedModel(null), null);
-  assert.equal(normalizeRequestedModel(undefined), null);
-  assert.equal(normalizeRequestedModel(''), null);
-  assert.equal(normalizeRequestedModel('   '), null);
+test('a null or empty selection resolves to null for null and empty input', () => {
+  assert.equal(resolveRequested(null), null);
+  assert.equal(resolveRequested(undefined), null);
+  assert.equal(resolveRequested(''), null);
+  assert.equal(resolveRequested('   '), null);
 });
 
-test('defaultPairEffort honors registry overrides and defaults raw gpt-* models to max', () => {
-  assert.equal(defaultPairEffort('gpt-5.6'), 'max');
-  assert.equal(defaultPairEffort('gpt-6-astra'), 'max');
-  assert.equal(defaultPairEffort('gpt-5.6-sol'), 'max');
-  assert.equal(defaultPairEffort('gpt-5.6-terra'), 'max');
-  assert.equal(defaultPairEffort('gpt-5.5'), 'max');
-  assert.equal(defaultPairEffort('gpt-5.4-mini'), 'xhigh');
-  assert.equal(defaultPairEffort('gpt-5.60'), 'max');
-  assert.equal(defaultPairEffort('some-chat-model'), null);
-  assert.equal(defaultPairEffort('gpt-5.6-custom@azure'), 'max');
-  assert.equal(defaultPairEffort('gpt-5.5@azure'), 'max');
-  assert.equal(defaultPairEffort('some-chat-model@local'), null);
-});
-
-test('normalizeReasoningEffort accepts the seven valid efforts', () => {
-  for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
+test('normalizeReasoningEffort accepts the valid efforts', () => {
+  for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']) {
     assert.equal(normalizeReasoningEffort(effort), effort);
   }
   assert.equal(normalizeReasoningEffort('  MAX  '), 'max');
@@ -157,21 +139,19 @@ test('normalizeReasoningEffort rejects unknown efforts with the exact error text
   );
 });
 
-test('registry entries drive defaultPairEffort ahead of the gpt-* fallback rule', () => {
-  // Every registry row's declared effort is what defaultPairEffort returns
-  // for its resolved model - the row is authoritative, not the string rule.
+test('registry entries drive defaultModelEffort ahead of the gpt-* fallback rule', () => {
   for (const entry of Object.values(MODEL_REGISTRY)) {
-    assert.equal(defaultPairEffort(entry.model), entry.defaultPairEffort);
+    // A row that names no effort takes none.
+    assert.equal(defaultModelEffort(entry.model), null);
     assert.deepEqual(registryEntryForModel(entry.model), entry);
   }
-  // Unregistered OpenAI models still use the gpt-* fallback.
   assert.equal(registryEntryForModel('gpt-5.6-nova'), null);
-  assert.equal(defaultPairEffort('gpt-5.6-nova'), 'max');
+  assert.equal(defaultModelEffort('gpt-5.6-nova'), 'xhigh');
   assert.deepEqual(registryEntryForModel('kimi-k3'), MODEL_REGISTRY.kimi);
-  assert.equal(defaultPairEffort('kimi-k3'), null);
+  assert.equal(defaultModelEffort('kimi-k3'), null);
 });
 
-test('provider models omit pair effort and route exact registered model ids', () => {
+test('provider models omit a default effort and route exact registered model ids', () => {
   const expectedProviders = {
     'kimi-k3': 'moonshot',
     'qwen3.7-plus': 'dashscope',
@@ -180,7 +160,7 @@ test('provider models omit pair effort and route exact registered model ids', ()
   };
 
   for (const [model, provider] of Object.entries(expectedProviders)) {
-    assert.equal(defaultPairEffort(model), null);
+    assert.equal(defaultModelEffort(model), null);
     assert.equal(modelProviderFor(model), provider);
   }
 
@@ -197,7 +177,6 @@ test('parseQualifiedModel splits explicit providers and preserves unqualified id
     model: 'unregistered-x',
     modelProvider: 'myprov',
   });
-
   const registrySelection = parseQualifiedModel('kimi-k3');
   assert.equal(
     registrySelection.modelProvider ?? modelProviderFor(registrySelection.model),
@@ -217,4 +196,143 @@ test('parseQualifiedModel rejects malformed qualified selections', () => {
       new Error(`Unsupported model "${model}". Use <model> or <model>@<provider>.`),
     );
   }
+});
+
+test('family selections resolve to the latest version in the catalog, aliases to their ids, and version pins hold', () => {
+  assert.equal(resolveRequested('astra'), 'gpt-6-astra');
+  assert.equal(resolveRequested('sol'), 'gpt-6-sol');
+  assert.equal(resolveRequested('terra'), 'gpt-5.6-terra');
+  assert.equal(resolveRequested('luna'), 'gpt-6-luna');
+  assert.equal(resolveRequested('kimi'), 'kimi-k3');
+  assert.equal(resolveRequested('qwen'), 'qwen3.7-plus');
+  assert.equal(resolveRequested('deepseek'), 'deepseek-v4-pro');
+  assert.equal(resolveRequested('glm'), 'glm-5.2');
+  assert.equal(resolveRequested('sol-5.6'), 'gpt-5.6-sol');
+  assert.equal(resolveRequested('codex:sol-6'), 'gpt-6-sol');
+  assert.equal(resolveRequested('astra-6'), 'gpt-6-astra');
+  assert.equal(resolveRequested('Luna-5.6@azure'), 'gpt-5.6-luna@azure');
+  // A catalog that still only lists the 5.6 generation changes what "latest" means.
+  const older = catalogFixture([catalogEntry('gpt-5.6-sol'), catalogEntry('gpt-5.6-terra')]);
+  assert.equal(resolveRequested('sol', { catalog: older }), 'gpt-5.6-sol');
+  assert.equal(resolveRequested('codex:terra', { catalog: older }), 'gpt-5.6-terra');
+  // The family grammar itself, minus the family-less gpt-<version> ids.
+  assert.deepEqual(parseFamilySelection('sol-5.6'), { family: 'sol', version: '5.6' });
+  assert.deepEqual(parseFamilySelection('nova'), { family: 'nova', version: null });
+  assert.equal(parseFamilySelection('gpt-5.5'), null);
+  assert.equal(parseFamilySelection('kimi-k3'), null);
+  // Three-segment versions resolve like any other.
+  const patched = catalogFixture([catalogEntry('gpt-5.6.1-sol'), catalogEntry('gpt-5.6-sol')]);
+  assert.equal(resolveRequested('sol', { catalog: patched }), 'gpt-5.6.1-sol');
+  assert.equal(resolveRequested('sol-5.6.1', { catalog: patched }), 'gpt-5.6.1-sol');
+});
+
+test('a family word the catalog cannot resolve is refused, naming what it lists', () => {
+  assert.throws(
+    () => resolveRequested('codex:sol-4'),
+    new Error(
+      'Cannot resolve "codex:sol-4": the Codex model catalog lists sol versions 6 (gpt-6-sol), 5.6 (gpt-5.6-sol). Use a listed codex:<family>[-<version>], or <id>@<provider> for another provider\'s model.',
+    ),
+  );
+  // A family word the live catalog does not list would fail inside Codex
+  // after the job record exists; it is refused here with the family list.
+  for (const selection of ['nova', 'nova-6', 'codex:atsra', 'mini']) {
+    assert.throws(
+      () => resolveRequested(selection),
+      /lists no (nova|atsra|mini) family, only codex:astra, codex:luna, codex:sol, codex:terra\. .*<id>@<provider>/,
+    );
+  }
+  // A provider-qualified id is not an OpenAI model, so the catalog cannot
+  // vouch for or against its family word: it passes through raw.
+  assert.equal(resolveRequested('llama3@ollama'), 'llama3@ollama');
+  assert.equal(resolveRequested('codex:nova-6@azure'), 'nova-6@azure');
+  assert.equal(resolveRequested('sol@azure'), 'gpt-6-sol@azure');
+  // Raw ids the family grammar does not claim, and ids the catalog lists
+  // itself, still pass through.
+  assert.equal(resolveRequested('gpt-6-sol'), 'gpt-6-sol');
+  assert.equal(resolveRequested('gpt-reserve'), 'gpt-reserve');
+  assert.equal(resolveRequested('gpt-5.5'), 'gpt-5.5');
+  // A word with a digit the catalog does not list is a custom provider's raw
+  // id, before or after any fetch; only a purely alphabetic word is a typo.
+  for (const catalog of [loadCodexCatalog(), builtinCatalog()]) {
+    assert.equal(resolveRequested('codex:llama3', { catalog }), 'llama3');
+    assert.equal(resolveRequested('qwen3', { catalog }), 'qwen3');
+    assert.equal(resolveRequested('codex:mistral:7b', { catalog }), 'mistral:7b');
+  }
+  // A family the catalog grows into resolves without a code change.
+  const grown = catalogFixture([catalogEntry('gpt-6-nova'), catalogEntry('gpt-6-astra')]);
+  assert.equal(resolveRequested('nova', { catalog: grown }), 'gpt-6-nova');
+});
+
+test('before any fetch only the snapshot resolves, and a refusal names the failed fetch', () => {
+  const floor: CodexCatalog = { ...builtinCatalog(), fetchFailure: 'connection refused' };
+  assert.throws(
+    () => resolveRequested('codex:sol', { catalog: floor }),
+    new Error(
+      'Cannot resolve "codex:sol": fetching the Codex model catalog failed (connection refused), and the built-in snapshot lists no sol family, only codex:astra. Use a listed codex:<family>[-<version>], or <id>@<provider> for another provider\'s model.',
+    ),
+  );
+  for (const selection of ['sol-5.6', 'astra-7']) {
+    assert.throws(
+      () => resolveRequested(selection, { catalog: builtinCatalog() }),
+      /no Codex model catalog has been fetched yet \(\/stereo:setup fetches it\), and the built-in snapshot lists/,
+      selection,
+    );
+  }
+  // What the snapshot or the registry resolves, full ids, and provider-qualified ids pass.
+  assert.equal(resolveRequested('astra', { catalog: floor }), 'gpt-6-astra');
+  assert.equal(resolveRequested('codex:astra-6', { catalog: floor }), 'gpt-6-astra');
+  assert.equal(resolveRequested('kimi', { catalog: floor }), 'kimi-k3');
+  assert.equal(resolveRequested('gpt-5.6-sol', { catalog: floor }), 'gpt-5.6-sol');
+  assert.equal(resolveRequested('sol@azure', { catalog: floor }), 'sol@azure');
+});
+
+test('defaultModelEffort takes the catalog tier for gpt-* ids, provider suffix or not, and none for other ids', () => {
+  // How the tier steps down is defaultCatalogEffort's (codex-catalog.test.ts).
+  const catalog = catalogFixture([
+    catalogEntry('gpt-6-astra'),
+    catalogEntry('gpt-5-astra', { efforts: ['low', 'medium', 'high'] }),
+  ]);
+  assert.equal(defaultModelEffort('gpt-6-astra', { catalog }), 'xhigh');
+  assert.equal(defaultModelEffort('gpt-5-astra', { catalog }), 'high');
+  assert.equal(defaultModelEffort('gpt-5-astra@azure', { catalog }), 'high');
+  assert.equal(defaultModelEffort('gpt-8-unknown', { catalog }), 'xhigh');
+  assert.equal(defaultModelEffort('some-chat-model', { catalog }), null);
+  assert.equal(defaultModelEffort('some-chat-model@local', { catalog }), null);
+  // Registry rows decide for third-party models, whatever the catalog lists.
+  assert.equal(defaultModelEffort('kimi-k3', { catalog }), null);
+});
+
+test('a registry model id resolves as itself before the family grammar can claim it', () => {
+  // `glm-5.2` is family-shaped; a `codex:glm` job records it, and a resume
+  // passes it back, so it must never read as "family glm, version 5.2".
+  for (const catalog of [loadCodexCatalog(), catalogFixture(accountCatalogModels())]) {
+    for (const selection of ['glm-5.2', 'codex:glm-5.2', 'GLM-5.2', 'codex:GLM-5.2']) {
+      assert.equal(resolveRequested(selection, { catalog }), 'glm-5.2', selection);
+    }
+    assert.equal(resolveRequested('glm-5.2@zhipu', { catalog }), 'glm-5.2@zhipu');
+    assert.equal(resolveRequested('KIMI-K3', { catalog }), 'kimi-k3');
+  }
+  // The provider row is found in any case too.
+  assert.equal(modelProviderFor('GLM-5.2'), 'zhipu');
+  assert.equal(registryEntryForModel('Kimi-K3')?.modelProvider, 'moonshot');
+});
+
+test('a Codex version pin takes dashes between its segments, like the Claude grammar', () => {
+  assert.deepEqual(parseFamilySelection('astra-6-1'), { family: 'astra', version: '6.1' });
+  assert.deepEqual(parseFamilySelection('sol-5-6-1'), { family: 'sol', version: '5.6.1' });
+  const catalog = catalogFixture([
+    catalogEntry('gpt-6.1-astra'),
+    catalogEntry('gpt-6-astra'),
+    catalogEntry('gpt-5.6-sol'),
+  ]);
+  assert.equal(resolveRequested('codex:astra-6-1', { catalog }), 'gpt-6.1-astra');
+  assert.equal(resolveRequested('astra-6.1', { catalog }), 'gpt-6.1-astra');
+  assert.equal(resolveRequested('codex:sol-5-6', { catalog }), 'gpt-5.6-sol');
+  assert.throws(
+    () => resolveRequested('codex:astra-6-2', { catalog }),
+    /^Error: Cannot resolve "codex:astra-6-2": the Codex model catalog lists astra versions/,
+  );
+  // Third-party ids with a non-numeric segment keep falling through raw.
+  assert.equal(parseFamilySelection('kimi-k3'), null);
+  assert.equal(parseFamilySelection('deepseek-v4-pro'), null);
 });

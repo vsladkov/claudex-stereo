@@ -3,48 +3,50 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import test from 'node:test';
-import type { TestContext } from 'node:test';
 
-import { makeTempDir } from './helpers.ts';
+import { makeTempDir, run, seedState, useTempCodexHome } from './helpers.ts';
+import { SCRIPT } from './runtime-helpers.ts';
+import { loadBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import {
+  buildBriefJobStatus,
   buildSingleJobSnapshot,
   buildStatusSnapshot,
   buildUsageSnapshot,
   enrichJob,
   filterJobsForCurrentSession,
   formatJobModel,
+  getJobTypeLabel,
+  jobKindLabel,
   readJobProgressPreview,
+  renderBriefJobStatus,
   resolveCancelableJob,
   resolveResultJob,
   sortJobsNewestFirst,
+  waitForJobSnapshot,
 } from '../plugins/stereo/src/jobs/job-control.ts';
 import {
+  STOP_GATE_ORIGIN,
   listJobs,
   resolveJobFile,
-  saveState,
+  updateState,
   writeJobFile,
 } from '../plugins/stereo/src/workspace/state.ts';
+import { resolveThreadReservationDir } from '../plugins/stereo/src/workspace/thread-lock-io.ts';
+import { settleJob } from '../plugins/stereo/src/jobs/job-lifecycle.ts';
 import type { JobRecord } from '../plugins/stereo/src/workspace/state.ts';
+import {
+  assertSameRoleResume,
+  buildTaskRunMetadata,
+  findLatestResumableTaskJob,
+  resumeOwnerRole,
+} from '../plugins/stereo/src/workflows/task.ts';
+import type { ResumeOwner } from '../plugins/stereo/src/workflows/task.ts';
 
 const DEAD_PID = 2147483647;
 const IS_WINDOWS = process.platform === 'win32';
 
-function useTempCodexHome(t: TestContext): string {
-  const previous = process.env.CODEX_HOME;
-  const codexHome = makeTempDir('codex-home-');
-  process.env.CODEX_HOME = codexHome;
-  t.after(() => {
-    if (previous === undefined) {
-      delete process.env.CODEX_HOME;
-    } else {
-      process.env.CODEX_HOME = previous;
-    }
-  });
-  return codexHome;
-}
-
 function seedJobs(workspace: string, jobs: JobRecord[]): void {
-  saveState(workspace, {
+  seedState(workspace, {
     version: 1,
     config: { stopReviewGate: false },
     jobs,
@@ -290,6 +292,41 @@ test('resolveResultJob repairs a stale running index from a terminal per-job rec
   assert.equal(indexed?.phase, 'done');
 });
 
+test('the result repair never overwrites a row a cancel settled meanwhile', (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  const running = jobAt('task-cancel-race', 10, { status: 'running', phase: 'running', pid: 4242 });
+  seedJobs(workspace, [running]);
+  const jobFile = resolveJobFile(workspace, running.id);
+  writeJobFile(workspace, running.id, {
+    ...running,
+    status: 'completed',
+    phase: 'done',
+    pid: null,
+  });
+
+  // A cancel settles the row right after the repair read the finished job file.
+  const originalRead = fs.readFileSync;
+  let cancelled = false;
+  t.mock.method(fs, 'readFileSync', ((file: fs.PathOrFileDescriptor, options?: unknown) => {
+    const text = originalRead(file, options as Parameters<typeof fs.readFileSync>[1]);
+    if (!cancelled && String(file) === jobFile) {
+      cancelled = true;
+      updateState(workspace, (state) => {
+        const row = state.jobs.find((job) => job.id === running.id);
+        Object.assign(row ?? {}, { status: 'cancelled', phase: 'cancelled', pid: null });
+      });
+    }
+    return text;
+  }) as typeof fs.readFileSync);
+
+  resolveResultJob(workspace, running.id);
+  t.mock.restoreAll();
+  assert.equal(cancelled, true);
+  const indexed = listJobs(workspace).find((job) => job.id === running.id);
+  assert.equal(indexed?.status, 'cancelled', 'the cancel stands');
+});
+
 test('resolveResultJob rejects ambiguous prefixes', (t) => {
   useTempCodexHome(t);
   const workspace = makeTempDir();
@@ -316,7 +353,7 @@ test('resolveCancelableJob reports missing and inactive references distinctly', 
   seedJobs(workspace, [jobAt('task-finished', 5)]);
   assert.throws(
     () => resolveCancelableJob(workspace, '', { env: {} }),
-    /No active Codex jobs to cancel/,
+    /No active companion jobs to cancel/,
   );
 });
 
@@ -398,6 +435,96 @@ test('enrichJob marks running jobs with dead pids as stalled', { skip: IS_WINDOW
   assert.notEqual(finished.phase, 'stalled');
 });
 
+test(
+  'status --wait stops at a stalled job and scans for stranded reservations once',
+  { skip: IS_WINDOWS },
+  async (t) => {
+    const codexHome = useTempCodexHome(t);
+    const workspace = makeTempDir();
+    seedJobs(workspace, [jobAt('task-stalled-wait', 1, { status: 'running', pid: DEAD_PID })]);
+    // A record the scan cannot validate, for it to list.
+    const lockDir = resolveThreadReservationDir();
+    assert.ok(lockDir.startsWith(codexHome));
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(path.join(lockDir, `${'a'.repeat(32)}.lock.cleanup`), '{}\n', 'utf8');
+    const originalReaddir = fs.readdirSync;
+    let scans = 0;
+    t.mock.method(fs, 'readdirSync', ((dir: fs.PathLike, options?: unknown) => {
+      if (String(dir) === lockDir) {
+        scans += 1;
+      }
+      return originalReaddir(dir, options as Parameters<typeof fs.readdirSync>[1]);
+    }) as typeof fs.readdirSync);
+
+    const startedAt = Date.now();
+    const snapshot = await waitForJobSnapshot(workspace, 'task-stalled-wait', {
+      timeoutMs: 60_000,
+      pollIntervalMs: 100,
+    });
+    assert.ok(Date.now() - startedAt < 10_000, 'a stalled job ends the wait at once');
+    assert.equal(snapshot.job.phase, 'stalled');
+    assert.equal(snapshot.waitTimedOut, false);
+    assert.deepEqual(
+      snapshot.strandedReservations.map((entry) => entry.kind),
+      ['unreadable'],
+    );
+    assert.equal(scans, 1, 'one scan, after the loop');
+
+    // The one-line --brief answer shows none, so none is scanned.
+    scans = 0;
+    const brief = await waitForJobSnapshot(workspace, 'task-stalled-wait', {
+      timeoutMs: 60_000,
+      pollIntervalMs: 100,
+      strandedReservations: false,
+    });
+    assert.deepEqual(brief.strandedReservations, []);
+    assert.equal(scans, 0);
+  },
+);
+
+test('a job that settles between the index read and the worker check is reported settled, not stalled', async (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  const running = jobAt('task-settling', 1, { status: 'running', pid: DEAD_PID });
+  seedJobs(workspace, [running]);
+  writeJobFile(workspace, running.id, running);
+  // The worker settles its job and exits just as the poll checks its pid.
+  const originalKill = process.kill;
+  t.mock.method(process, 'kill', ((pid: number, signal?: string | number) => {
+    if (pid !== DEAD_PID) {
+      return originalKill.call(process, pid, signal);
+    }
+    settleJob(workspace, running.id, { terminal: { status: 'completed', phase: 'done' } });
+    throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+  }) as typeof process.kill);
+
+  const snapshot = await waitForJobSnapshot(workspace, running.id, {
+    timeoutMs: 60_000,
+    pollIntervalMs: 100,
+    strandedReservations: false,
+  });
+  t.mock.restoreAll();
+  assert.equal(snapshot.job.status, 'completed');
+  assert.equal(snapshot.job.phase, 'done');
+  assert.equal(snapshot.waitTimedOut, false);
+});
+
+test('status --wait with a 0 timeout answers at once', async (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  seedJobs(workspace, [jobAt('task-live-wait', 1, { status: 'running', pid: process.pid })]);
+  const startedAt = Date.now();
+  const snapshot = await waitForJobSnapshot(workspace, 'task-live-wait', {
+    timeoutMs: '0',
+    pollIntervalMs: '0',
+    strandedReservations: false,
+  });
+  assert.ok(Date.now() - startedAt < 5000, 'no default window was waited out');
+  assert.equal(snapshot.timeoutMs, 0);
+  assert.equal(snapshot.waitTimedOut, true);
+  assert.equal(snapshot.job.status, 'running');
+});
+
 test('readJobProgressPreview tails large logs without losing recent lines', () => {
   const dir = makeTempDir();
   const logFile = path.join(dir, 'job.log');
@@ -434,5 +561,236 @@ test('readJobProgressPreview drops a partial multi-byte character at the tail cu
   assert.equal(
     preview.some((line) => line.includes('�')),
     false,
+  );
+});
+
+test('the brief status is status, phase, and whole elapsed seconds', () => {
+  const now = Date.parse('2026-03-18T15:10:00.000Z');
+  const running = enrichJob(
+    jobAt('run', 0, {
+      status: 'running',
+      phase: 'verifying',
+      startedAt: '2026-03-18T15:06:56.000Z',
+      pid: process.pid,
+    }),
+  );
+  const brief = buildBriefJobStatus(running, now);
+  assert.deepEqual(brief, {
+    jobId: 'run',
+    status: 'running',
+    phase: 'verifying',
+    elapsedSeconds: 184,
+  });
+  assert.equal(renderBriefJobStatus(brief), 'running verifying 184s\n');
+
+  // A finished job counts to its completion, not to now.
+  const done = enrichJob(
+    jobAt('done', 0, {
+      phase: 'done',
+      startedAt: '2026-03-18T15:00:00.000Z',
+      completedAt: '2026-03-18T15:06:42.000Z',
+    }),
+  );
+  assert.equal(renderBriefJobStatus(buildBriefJobStatus(done, now)), 'completed done 402s\n');
+
+  const undated = enrichJob({ id: 'undated', status: 'queued' });
+  assert.equal(buildBriefJobStatus(undated, now).elapsedSeconds, 0);
+});
+
+test('status --brief combines with --wait and --timeout-ms and prints one line', (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  const startedAtMs = Date.now() - 184_000;
+  const startedAt = new Date(startedAtMs).toISOString();
+  seedJobs(workspace, [
+    jobAt('task-live', 0, { status: 'running', phase: 'verifying', startedAt, pid: process.pid }),
+    jobAt('task-done', 1, {
+      phase: 'done',
+      startedAt: '2026-03-18T15:00:00.000Z',
+      completedAt: '2026-03-18T15:06:42.000Z',
+    }),
+  ]);
+  // The status command starts no broker: a plain CLI spawn.
+  const status = (args: string[]) =>
+    run(process.execPath, [SCRIPT, 'status', ...args, '--cwd', workspace]);
+  // A running job's whole seconds lie between the elapsed time just before
+  // and just after the spawn: no fixed bound a slow Windows node start breaks.
+  const elapsedAround = <T>(work: () => T): { value: T; low: number; high: number } => {
+    const low = Math.round((Date.now() - startedAtMs) / 1000);
+    const value = work();
+    return { value, low, high: Math.round((Date.now() - startedAtMs) / 1000) };
+  };
+  const assertElapsed = (seconds: number, bounds: { low: number; high: number }) =>
+    assert.ok(
+      seconds >= bounds.low && seconds <= bounds.high,
+      `${seconds}s outside [${bounds.low}, ${bounds.high}]`,
+    );
+
+  // The window ends while the job still runs: the line says so.
+  const waited = elapsedAround(() =>
+    status(['task-live', '--wait', '--timeout-ms', '300', '--brief']),
+  );
+  assert.equal(waited.value.status, 0, waited.value.stderr);
+  const line = /^running verifying (\d+)s\n$/.exec(waited.value.stdout);
+  assert.ok(line, waited.value.stdout);
+  assertElapsed(Number(line[1]), waited);
+
+  const json = elapsedAround(() =>
+    status(['task-live', '--wait', '--timeout-ms', '300', '--brief', '--json']),
+  );
+  assert.equal(json.value.status, 0, json.value.stderr);
+  const payload = JSON.parse(json.value.stdout);
+  assert.deepEqual(Object.keys(payload), ['jobId', 'status', 'phase', 'elapsedSeconds']);
+  assert.equal(payload.jobId, 'task-live');
+  assert.equal(payload.status, 'running');
+  assert.equal(payload.phase, 'verifying');
+  assertElapsed(payload.elapsedSeconds, json);
+
+  // A finished job answers at once, well inside a long window.
+  const startedAt2 = Date.now();
+  const done = status(['task-done', '--wait', '--timeout-ms', '90000', '--brief']);
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.stdout, 'completed done 402s\n');
+  assert.ok(Date.now() - startedAt2 < 30_000, 'no wait for a finished job');
+  assert.deepEqual(JSON.parse(status(['task-done', '--brief', '--json']).stdout), {
+    jobId: 'task-done',
+    status: 'completed',
+    phase: 'done',
+    elapsedSeconds: 402,
+  });
+
+  const missing = status(['--brief']);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /`status --brief` requires a job id\./);
+  // What keeps this file on the Windows lane: status never starts a broker.
+  assert.equal(loadBrokerSession(workspace), null);
+});
+
+test('result --report --json carries the effort, touched files, and dropped notifications', (t) => {
+  useTempCodexHome(t);
+  const workspace = makeTempDir();
+  const withEffort = jobAt('task-effort', 0);
+  const withoutEffort = jobAt('task-no-effort', 1);
+  seedJobs(workspace, [withEffort, withoutEffort]);
+  writeJobFile(workspace, withEffort.id, {
+    ...withEffort,
+    result: {
+      rawOutput: 'Done.',
+      effort: 'xhigh',
+      touchedFiles: ['src/a.ts', 'README.md'],
+      droppedNotifications: 3,
+    },
+  });
+  writeJobFile(workspace, withoutEffort.id, { ...withoutEffort, result: { rawOutput: 'Done.' } });
+
+  const report = (id: string) =>
+    JSON.parse(
+      run(process.execPath, [SCRIPT, 'result', id, '--report', '--json', '--cwd', workspace])
+        .stdout,
+    );
+  const full = report('task-effort');
+  assert.equal(full.effort, 'xhigh');
+  // The run's own facts travel beside the report when it recorded them.
+  assert.deepEqual(full.touchedFiles, ['src/a.ts', 'README.md']);
+  assert.equal(full.droppedNotifications, 3);
+  const bare = report('task-no-effort');
+  assert.equal(bare.effort, null);
+  assert.equal(Object.hasOwn(bare, 'touchedFiles'), false);
+  assert.equal(Object.hasOwn(bare, 'droppedNotifications'), false);
+  assert.equal(loadBrokerSession(workspace), null, 'result never starts a broker');
+});
+
+test('the stop-gate origin names the task, not its prompt text', () => {
+  assert.deepEqual(buildTaskRunMetadata({ prompt: 'anything', origin: STOP_GATE_ORIGIN }), {
+    title: 'Codex Stop Gate Review',
+    summary: 'Stop-gate review of previous Claude turn',
+  });
+  const prompt = '<task>\nRun a stop-gate review of the previous Claude turn.\n</task>';
+  assert.equal(buildTaskRunMetadata({ prompt }).title, 'Codex Task');
+});
+
+test('stop-gate jobs are labelled stop-gate and skipped by the resume lookup', () => {
+  assert.equal(jobKindLabel('task', 'task', null, STOP_GATE_ORIGIN), 'stop-gate');
+  assert.equal(jobKindLabel('task', 'task', null), 'rescue');
+  assert.equal(jobKindLabel('task', 'task', 'implementer', STOP_GATE_ORIGIN), 'implementer');
+  const gate: JobRecord = {
+    id: 'task-gate',
+    status: 'completed',
+    kind: 'task',
+    jobClass: 'task',
+    origin: STOP_GATE_ORIGIN,
+    threadId: 'thr_gate',
+    updatedAt: '2026-09-25T10:05:00.000Z',
+  };
+  const rescue: JobRecord = {
+    id: 'task-rescue',
+    status: 'completed',
+    kind: 'task',
+    jobClass: 'task',
+    threadId: 'thr_rescue',
+    updatedAt: '2026-09-25T10:00:00.000Z',
+  };
+  assert.equal(getJobTypeLabel(gate), 'stop-gate');
+  assert.equal(findLatestResumableTaskJob([gate, rescue])?.id, 'task-rescue');
+  assert.equal(findLatestResumableTaskJob([gate]), null);
+});
+
+test('a role resumes only a thread its own role ran, on either runtime', () => {
+  const owner = (patch: Partial<JobRecord>, runtime: 'claude' | 'codex' = 'codex'): ResumeOwner => {
+    const job = jobAt('owner-job', 1, patch);
+    return { job, runtime, role: typeof job.role === 'string' ? job.role : null };
+  };
+  // A record from before roles were recorded takes the role its kind implies.
+  assert.equal(
+    resumeOwnerRole(owner({ kind: 'plan-review', jobClass: 'review' })),
+    'plan-reviewer',
+  );
+  assert.equal(resumeOwnerRole(owner({ kind: 'adversarial-review' })), 'adversarial-reviewer');
+  assert.equal(resumeOwnerRole(owner({ kind: 'review', jobClass: 'review' })), 'reviewer');
+  assert.equal(
+    resumeOwnerRole(owner({ kind: 'task', jobClass: 'task', role: 'implementer' })),
+    'implementer',
+  );
+  assert.equal(resumeOwnerRole(owner({ kind: 'task', jobClass: 'task' })), null);
+  assert.equal(resumeOwnerRole(null), null);
+
+  assert.throws(
+    () =>
+      assertSameRoleResume(
+        owner({ kind: 'plan-review', jobClass: 'review' }),
+        'thr_1',
+        'implementer',
+      ),
+    {
+      message:
+        'Thread thr_1 belongs to plan-reviewer job owner-job; a role resumes only its own thread or session, so run the implementer without --thread.',
+    },
+  );
+  assert.throws(
+    () =>
+      assertSameRoleResume(
+        owner({ kind: 'task', jobClass: 'task', role: 'implementer' }, 'claude'),
+        'sess-1',
+        'implementation-reviewer',
+      ),
+    /^Error: Session sess-1 belongs to implementer job owner-job;/,
+  );
+  // The same role continues its own thread (an implementer's fix turn).
+  assert.doesNotThrow(() =>
+    assertSameRoleResume(
+      owner({ kind: 'task', jobClass: 'task', role: 'implementer' }),
+      'thr_2',
+      'implementer',
+    ),
+  );
+  // A run without a role never takes over a role's thread.
+  assert.throws(() => assertSameRoleResume(owner({ kind: 'plan-review' }), 'thr_3', null), {
+    message:
+      'Thread thr_3 belongs to plan-reviewer job owner-job; resume it with --role plan-reviewer.',
+  });
+  // Nothing to judge: an unknown id, or a role-less task.
+  assert.doesNotThrow(() => assertSameRoleResume(null, 'thr_4', 'implementer'));
+  assert.doesNotThrow(() =>
+    assertSameRoleResume(owner({ kind: 'task', jobClass: 'task' }), 'thr_5', 'implementer'),
   );
 });

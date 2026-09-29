@@ -1,19 +1,19 @@
 ---
 description: Show or change this repository's default Claude/Codex model for each Stereo role
-argument-hint: '[--planner <model>] [--planner-effort <effort>] [--plan-reviewer <model>] [--plan-reviewer-effort <effort>] [--implementer <model>] [--implementer-effort <effort>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <effort>] [--clear <key>]...'
+argument-hint: '[--planner <model>] [--planner-effort <effort>] [--plan-reviewer <model>] [--plan-reviewer-effort <effort>] [--implementer <model>] [--implementer-effort <effort>] [--implementation-reviewer <model>] [--implementation-reviewer-effort <effort>] [--claude-sandbox on|off] [--clear <key>]...'
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-!`node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config "$ARGUMENTS"`
+```!
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" config --args-stdin <<'STEREO_ARGS_Q7X2'
+$ARGUMENTS
+STEREO_ARGS_Q7X2
+```
 
 Present the command output verbatim. Relay every warning with the exact role and stored value it
 names.
 
 `--clear <key>` may be repeated, and `--clear roles` clears every stored role default at once.
-
-Explicit role flags take precedence over stored workspace defaults, which take precedence over
-built-in defaults. The built-in defaults are `claude:fable` for the planner, `codex:astra` for the
-plan reviewer, `claude:opus` for the implementer, and `codex:astra` for the implementation
-reviewer, shared by the two phase commands and `/stereo:quick` alike. An unset role uses that
-command's built-in default.
+`--claude-sandbox on|off` stores whether a named Claude implementer runs under Claude Code's own
+Bash sandbox (off by default).

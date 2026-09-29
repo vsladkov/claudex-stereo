@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { errorCode } from '../platform/process.ts';
+import { errorCode } from '../shared/errors.ts';
 import { ensureAbsolutePath } from '../shared/fs.ts';
 
 export const TRANSCRIPT_PATH_ENV = 'CODEX_COMPANION_TRANSCRIPT_PATH';

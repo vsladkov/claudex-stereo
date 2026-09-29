@@ -2,7 +2,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { processHasExited } from '../platform/process.ts';
+import {
+  PROCESS_MARKERS,
+  PROCESS_OPS,
+  currentProcessOwner,
+  processMaybeOurs,
+  recordNamesThisProcess,
+  recordedProcessGone,
+} from '../platform/process.ts';
+import type { ProcessOps, RecordedProcess } from '../platform/process.ts';
+import { writeFileExclusive, writeTextAtomic } from '../shared/fs.ts';
+import { optionalString, recordedPid } from '../shared/json.ts';
 import {
   claimAndDeleteThreadLock,
   readReservationRecord,
@@ -11,20 +21,23 @@ import {
   threadReservationPath,
 } from '../workspace/thread-lock-io.ts';
 import type { StoredReservationRecord } from '../workspace/thread-lock-io.ts';
+import { errorCode, errorMessage } from '../shared/errors.ts';
 
-const THREAD_RESERVATION_DEATH_WAIT_MS = 2500;
-const THREAD_RESERVATION_POLL_MS = 50;
+// Exclusive creates of a lock that keeps vanishing before it can be read.
+const RESERVATION_CREATE_ATTEMPTS = 3;
 
 export { resolveCodexHome } from '../workspace/thread-lock-io.ts';
 
 export interface ThreadReservationMeta {
-  pid?: number;
   jobId?: string | null;
+  /** The headless Claude child driving the session, when it already exists. */
+  child?: RecordedProcess | null;
 }
 
 export interface ThreadReservation {
   token: string;
   pid: number;
+  pidStart: string;
   jobId: string | null;
   threadId: string;
   createdAt: string;
@@ -32,70 +45,32 @@ export interface ThreadReservation {
   cleanupPath: string;
 }
 
-export type LiveReservationPhase = 'pre-turn' | 'in-flight' | 'post-turn';
-
-const liveReservations = new Map<ThreadReservation, LiveReservationPhase>();
-
-export interface ReleaseReservationResult {
-  released: boolean;
-  status: 'none' | 'missing' | 'token-mismatch' | 'released';
-  path?: string;
-}
-
-export interface CancelledJobReservationResult {
-  released: boolean;
-  status:
-    | 'none-found'
-    | 'owner-still-running'
-    | 'claim-skipped'
-    | 'mismatch-skipped'
-    | 'released'
-    | 'scan-released';
-  path?: string;
-  detail?: string;
-}
+// The reservations this process holds, for the signal path to release.
+const liveReservations = new Set<ThreadReservation>();
 
 export interface StrandedReservationEntry {
-  kind:
-    'stranded-reservation' | 'stranded-cleanup' | 'orphaned-claim' | 'unreadable' | 'scan-error';
-  lockPath?: string;
-  claimPath?: string;
-  threadId?: string;
-  jobId?: string | null;
-  pid?: number;
+  kind: 'unreadable' | 'scan-error';
+  /** unreadable: the records that could not be validated. */
   paths?: string[];
+  /** scan-error: the directory that could not be read, or the record that could not be removed. */
   path?: string;
   detail?: string;
-}
-
-export interface PidLivenessOptions {
-  isProcessAlive?: (pid: number) => unknown;
-}
-
-export interface ReservationOwnerDeathOptions extends PidLivenessOptions {
-  timeoutMs?: number;
-  pollMs?: number;
-  duringDeathWait?: () => unknown | Promise<unknown>;
-}
-
-export interface CancelledJobCleanupOptions extends ReservationOwnerDeathOptions {
-  beforeUnlink?: (context: {
-    lockPath: string;
-    cleanupPath: string;
-    current: StoredReservationRecord;
-  }) => unknown | Promise<unknown>;
 }
 
 interface ReservationLockRecord {
   pid: number;
+  pidStart?: string | null;
   token: string;
   threadId: string;
   jobId?: string | null;
   createdAt?: string;
+  childPid?: number | null;
+  childPidStart?: string | null;
 }
 
 interface ReservationClaimRecord {
   pid: number;
+  pidStart?: string | null;
   jobId?: string | null;
   createdAt?: string;
 }
@@ -142,37 +117,90 @@ function readValidatedReservationRecord(
 ):
   | ValidatedReservationRecord<ReservationLockRecord>
   | ValidatedReservationRecord<ReservationClaimRecord> {
-  try {
-    const record = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
-    if (!isValidReservationRecord(record, kind)) {
-      return { state: 'invalid', detail: `Invalid ${kind} reservation record.` };
-    }
-    return { state: 'valid', record };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'ENOENT') {
-      return { state: 'missing' };
-    }
+  const record = readReservationRecord(recordPath);
+  if (!record) {
+    return { state: 'missing' };
+  }
+  if (record.invalid) {
     return {
       state: 'invalid',
-      detail: error instanceof Error ? error.message : String(error),
+      detail: errorMessage(record.error),
     };
   }
+  if (!isValidReservationRecord(record, kind)) {
+    return { state: 'invalid', detail: `Invalid ${kind} reservation record.` };
+  }
+  return {
+    state: 'valid',
+    record: record as unknown as ReservationLockRecord & ReservationClaimRecord,
+  };
 }
 
-function pidIsAlive(pid: number | null | undefined, options: PidLivenessOptions = {}): boolean {
+// Whether a recorded owner or claimant may still run (processMaybeOurs: one
+// that may still run keeps what it holds): the full identity check a
+// takeover makes.
+function pidIsAlive(record: { pid?: number | null; pidStart?: unknown }, ops: ProcessOps): boolean {
+  const pid = record.pid;
   // A reservation without a finite recorded pid is reapable (dead), while
   // processHasExited treats a non-finite pid as not exited. This inversion is deliberate.
-  if (!Number.isFinite(pid)) {
+  if (typeof pid !== 'number' || !Number.isFinite(pid)) {
     return false;
   }
-  if (options.isProcessAlive) {
-    return Boolean(options.isProcessAlive(pid as number));
+  const start = optionalString(record.pidStart);
+  // This very process is alive and, by construction, a companion, unless
+  // the record names an earlier process that had the same pid.
+  if (pid === process.pid) {
+    return recordNamesThisProcess(start);
   }
-  return !processHasExited(pid as number);
+  // Pids are reused: a lock is held by a companion run and a claim by a run
+  // or a status scan, all of them the companion CLI, so a live pid that
+  // provably runs something else, or whose identity contradicts the record,
+  // belongs to someone else and the record it names is dead. An identity
+  // that cannot be checked still counts as alive.
+  return processMaybeOurs(pid, PROCESS_MARKERS.worker, { ops, expectedStart: start });
+}
+
+// Whether a recorded owner or claimant may still run by the cheap rule the
+// stranded-reservation scan uses (recordedProcessGone: no ps or PowerShell
+// probe on a status poll).
+function mayStillRun(record: { pid?: unknown; pidStart?: unknown }, ops: ProcessOps): boolean {
+  return !recordedProcessGone(record.pid, record.pidStart, ops);
+}
+
+// The Claude child a dead owner left behind, when it may still be running
+// (processMaybeOurs, the identity check): the session it drives cannot be
+// handed to a new run until it is stopped, or while it cannot be verified as
+// gone.
+function liveClaudeChild(
+  record: { childPid?: unknown; childPidStart?: unknown },
+  ops: ProcessOps,
+): number | null {
+  const childPid = recordedPid(record.childPid);
+  if (childPid === null) {
+    return null;
+  }
+  const alive = processMaybeOurs(childPid, PROCESS_MARKERS.claude, {
+    ops,
+    expectedStart: optionalString(record.childPidStart),
+  });
+  return alive ? childPid : null;
+}
+
+// The pid named here may not be the Claude process any more (an identity
+// that could not be checked counts as possibly running): the user checks it
+// before ending it.
+function orphanedClaudeChildError(
+  owner: { pid?: number | null; jobId?: string | null },
+  childPid: number,
+  threadId: string,
+): Error {
+  return new Error(
+    `A previous companion run (job ${displayReservationValue(owner.jobId)}, pid ${displayReservationValue(owner.pid)}) is gone, and the Claude process it started (pid ${childPid}) may still be running on thread or session ${threadId}. Check that pid ${childPid} is that Claude process, end it if so (for example \`kill ${childPid}\`, or Task Manager on Windows), then retry.`,
+  );
 }
 
 function strandedReservationSortPath(entry: StrandedReservationEntry): string {
-  return entry.lockPath ?? entry.claimPath ?? entry.path ?? entry.paths?.[0] ?? '';
+  return entry.path ?? entry.paths?.[0] ?? '';
 }
 
 function unreadableReservationEntry(paths: string[]): StrandedReservationEntry {
@@ -183,20 +211,42 @@ function unreadableReservationEntry(paths: string[]): StrandedReservationEntry {
   };
 }
 
-export function listStrandedThreadReservations(): StrandedReservationEntry[] {
+// The scan's reap of a dead claimant's claim. A claim still there
+// afterwards, still naming a claimant that is gone, could not be removed.
+function reapDeadClaim(claimPath: string, ops: ProcessOps): void {
+  const claimantRuns = (claimant: { pid?: unknown; pidStart?: unknown }): boolean =>
+    mayStillRun(claimant, ops);
+  if (reapDeadCleanupClaim(claimPath, { isClaimantAlive: claimantRuns })) {
+    return;
+  }
+  const left = readValidatedReservationRecord(claimPath, 'claim');
+  if (left.state === 'valid' && !claimantRuns(left.record)) {
+    throw new Error('a cleanup claim whose process is gone could not be removed');
+  }
+}
+
+// The reservations a crash left behind, judged by the cheap rule (a live pid
+// that cannot be told apart holds on). What is dead is reaped here, as the
+// next acquire would: a dead claimant's claim, and a dead owner's lock unless
+// it records a Claude child that is not provably gone. Such a lock stays,
+// unlisted, for the next acquire of its thread or session, which checks the
+// child's identity. Listed: only what could not be validated or removed.
+export function listStrandedThreadReservations(
+  ops: ProcessOps = PROCESS_OPS,
+): StrandedReservationEntry[] {
   const lockDir = resolveThreadReservationDir();
   let entries: string[];
   try {
     entries = fs.readdirSync(lockDir);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'ENOENT') {
+    if (errorCode(error) === 'ENOENT') {
       return [];
     }
     return [
       {
         kind: 'scan-error',
         path: lockDir,
-        detail: error instanceof Error ? error.message : String(error),
+        detail: errorMessage(error),
       },
     ];
   }
@@ -230,6 +280,13 @@ export function listStrandedThreadReservations(): StrandedReservationEntry[] {
   }
 
   const stranded: StrandedReservationEntry[] = [];
+  const attempt = (recordPath: string, reap: () => unknown): void => {
+    try {
+      reap();
+    } catch (error) {
+      stranded.push({ kind: 'scan-error', path: recordPath, detail: errorMessage(error) });
+    }
+  };
   for (const pair of pairs.values()) {
     const lock: ValidatedReservationRecord<ReservationLockRecord> = pair.lock
       ? readValidatedReservationRecord(pair.lockPath, 'lock')
@@ -252,53 +309,21 @@ export function listStrandedThreadReservations(): StrandedReservationEntry[] {
 
     const owner = lock.state === 'valid' ? lock.record : null;
     const claimant = claim.state === 'valid' ? claim.record : null;
-    const ownerAlive = owner ? pidIsAlive(owner.pid) : false;
-    const claimantAlive = claimant ? pidIsAlive(claimant.pid) : false;
-
-    if (owner && claimant) {
-      if (claimantAlive) {
+    if (claimant) {
+      // A claimant that may still run is a cleaner at work: the pair is its
+      // to settle.
+      if (mayStillRun(claimant, ops)) {
         continue;
       }
-      if (ownerAlive) {
-        stranded.push({
-          kind: 'orphaned-claim',
-          claimPath: pair.claimPath,
-          jobId: claimant.jobId ?? null,
-          pid: claimant.pid,
-        });
-        continue;
-      }
-      stranded.push({
-        kind: 'stranded-cleanup',
-        lockPath: pair.lockPath,
-        claimPath: pair.claimPath,
-        threadId: owner.threadId,
-        jobId: owner.jobId ?? null,
-        pid: owner.pid,
-      });
-      continue;
+      attempt(pair.claimPath, () => reapDeadClaim(pair.claimPath, ops));
     }
-
-    if (owner) {
-      if (!ownerAlive) {
-        stranded.push({
-          kind: 'stranded-reservation',
-          lockPath: pair.lockPath,
-          threadId: owner.threadId,
-          jobId: owner.jobId ?? null,
-          pid: owner.pid,
-        });
-      }
-      continue;
-    }
-
-    if (claimant && !claimantAlive) {
-      stranded.push({
-        kind: 'orphaned-claim',
-        claimPath: pair.claimPath,
-        jobId: claimant.jobId ?? null,
-        pid: claimant.pid,
-      });
+    if (
+      owner &&
+      !mayStillRun(owner, ops) &&
+      (recordedPid(owner.childPid) === null ||
+        recordedProcessGone(owner.childPid, owner.childPidStart, ops))
+    ) {
+      attempt(pair.lockPath, () => reapDeadOwnerLock(pair.lockPath, owner, ops));
     }
   }
 
@@ -329,14 +354,8 @@ export function describeStrandedReservation(
   entry: StrandedReservationEntry | null | undefined,
 ): string {
   switch (entry?.kind) {
-    case 'stranded-reservation':
-      return `A crashed Codex run (job ${displayReservationValue(entry.jobId)}, pid ${displayReservationValue(entry.pid)}) left thread ${displayReservationValue(entry.threadId)} reserved. Delete \`${entry.lockPath}\` to release it.`;
-    case 'stranded-cleanup':
-      return `A crashed Codex run (job ${displayReservationValue(entry.jobId)}, pid ${displayReservationValue(entry.pid)}) left thread ${displayReservationValue(entry.threadId)} reserved with an abandoned cleanup claim. Delete both \`${entry.lockPath}\` and \`${entry.claimPath}\` to release it.`;
-    case 'orphaned-claim':
-      return `A crashed reservation cleanup (job ${displayReservationValue(entry.jobId)}, pid ${displayReservationValue(entry.pid)}) left an orphaned claim. Delete only \`${entry.claimPath}\`; do not delete any accompanying live thread lock.`;
     case 'unreadable':
-      return `Thread reservation data at ${joinCodePaths(entry.paths ?? [])} could not be validated. Inspect the affected file${entry.paths?.length === 1 ? '' : 's'}, then delete only invalid records after confirming no live Codex run owns them.`;
+      return `Thread reservation data at ${joinCodePaths(entry.paths ?? [])} could not be validated. Inspect the affected file${entry.paths?.length === 1 ? '' : 's'}, then delete only invalid records after confirming no live companion run owns them.`;
     case 'scan-error':
       return `Thread reservations could not be scanned at \`${entry.path}\`: ${entry.detail || 'unknown filesystem error'}. Inspect and repair that path.`;
     default:
@@ -344,58 +363,119 @@ export function describeStrandedReservation(
   }
 }
 
+// Removes a lock whose recorded owner is dead, under the cleanup claim
+// (claimAndDeleteThreadLock), so a concurrent acquirer either wins the claim
+// or sees it and waits for the retry; a stale claim's claimant gets the
+// identity-checked probe the owner check uses, so a claim whose pid was
+// reused is reaped. The caller found this owner dead, and its Claude child
+// gone, before the claim: every probe happens there, none under the claim,
+// where the record is re-read and its token compared with the one the caller
+// judged. A lock the dead owner's successor already replaced (another token)
+// is left alone. True when the lock was removed.
+function reapDeadOwnerLock(
+  lockPath: string,
+  owner: { pid?: number | null; token?: string | null },
+  ops: ProcessOps,
+): boolean {
+  return claimAndDeleteThreadLock(lockPath, {
+    isClaimantAlive: (claimant) => pidIsAlive(claimant, ops),
+    verify: (current) =>
+      !current.invalid &&
+      typeof current.token === 'string' &&
+      current.token === owner.token &&
+      current.pid === owner.pid,
+  });
+}
+
+// `ops`: the process seams the owner, claimant, and child checks go through
+// (the host's by default).
 export function acquireThreadReservation(
   threadId: string | null | undefined,
   meta: ThreadReservationMeta = {},
+  ops: ProcessOps = PROCESS_OPS,
 ): ThreadReservation {
   const normalizedThreadId = String(threadId ?? '').trim();
   if (!normalizedThreadId) {
-    throw new Error('A thread id is required to reserve a Codex thread.');
+    throw new Error('A thread or session id is required to reserve it for a run.');
   }
 
   const lockDir = resolveThreadReservationDir();
   const lockPath = threadReservationPath(normalizedThreadId);
   const cleanupPath = `${lockPath}.cleanup`;
+  const reclaimingError = (): Error =>
+    new Error(
+      `Session or thread ${normalizedThreadId} is busy or being reclaimed by another companion run; retry in a moment.`,
+    );
   const record = {
     token: crypto.randomUUID(),
-    pid: Number.isFinite(meta.pid) ? (meta.pid as number) : process.pid,
+    ...currentProcessOwner(),
     jobId: meta.jobId ?? null,
     threadId: normalizedThreadId,
     createdAt: new Date().toISOString(),
+    ...(meta.child ? { childPid: meta.child.pid, childPidStart: meta.child.start } : {}),
   };
   fs.mkdirSync(lockDir, { recursive: true });
 
   if (
     fs.existsSync(cleanupPath) &&
-    !reapDeadCleanupClaim(cleanupPath, { isProcessAlive: (pid) => pidIsAlive(pid) })
+    !reapDeadCleanupClaim(cleanupPath, { isClaimantAlive: (claimant) => pidIsAlive(claimant, ops) })
   ) {
     throw new Error(
-      `Reservation cleanup is already in progress for thread ${normalizedThreadId}. Wait for it to finish; if it appears stuck, run \`/stereo:setup\` to list stranded reservations and safe remedies.`,
+      `Reservation cleanup is already in progress for thread or session ${normalizedThreadId}. Retry in a moment; if it appears stuck, run \`/stereo:setup\`, which removes what a dead run left behind and lists what it could not read or remove.`,
     );
   }
 
-  try {
-    fs.writeFileSync(lockPath, `${JSON.stringify(record)}\n`, { encoding: 'utf8', flag: 'wx' });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'EEXIST') {
-      throw error;
-    }
-
-    const owner = readReservationRecord(lockPath);
-    if (!owner || owner.invalid) {
-      throw new Error(
-        `A Codex thread reservation exists but could not be read. Delete ${lockPath} to release it, then retry.`,
-      );
-    }
-    const ownerJob = owner.jobId ?? 'unknown';
-    if (pidIsAlive(owner.pid)) {
-      throw new Error(
-        `Thread ${normalizedThreadId} is already being used by another Codex run (job ${ownerJob}). Wait for it or cancel it first.`,
-      );
-    }
-    throw new Error(
-      `A previous Codex run (job ${ownerJob}, pid ${owner.pid ?? 'unknown'}) appears to have crashed while reserving thread ${normalizedThreadId}. Delete ${lockPath} to release it, then retry.`,
+  const tryAcquire = (): boolean => writeFileExclusive(lockPath, `${JSON.stringify(record)}\n`);
+  // A lock the filesystem would not let us read says nothing about its
+  // owner, who may well be alive: a retry is asked for, never a delete. Only
+  // contents that stay unparsable are damage a delete can repair.
+  const unreadableError = (owner: { transient?: true; error?: unknown }): Error =>
+    owner.transient
+      ? new Error(
+          `The reservation for thread or session ${normalizedThreadId} could not be read (${errorMessage(
+            owner.error,
+          )}). Retry in a moment.`,
+        )
+      : new Error(
+          `A thread or session reservation exists but could not be read. Delete ${lockPath} to release it, then retry.`,
+        );
+  const busyError = (ownerJob: string | null | undefined): Error =>
+    new Error(
+      `Thread or session ${normalizedThreadId} is already being used by another companion run (job ${ownerJob ?? 'unknown'}). Wait for it or cancel it first.`,
     );
+  // A lock whose run released it between the create and the read is gone by
+  // then: the create is tried again, a few times, rather than the missing
+  // lock reported as one that could not be read.
+  let acquired = tryAcquire();
+  let owner: StoredReservationRecord | null = null;
+  for (let attempt = 1; !acquired; attempt += 1) {
+    owner = readReservationRecord(lockPath);
+    if (owner || attempt >= RESERVATION_CREATE_ATTEMPTS) {
+      break;
+    }
+    acquired = tryAcquire();
+  }
+  if (!acquired) {
+    if (!owner) {
+      throw reclaimingError();
+    }
+    if (owner.invalid) {
+      throw unreadableError(owner);
+    }
+    if (pidIsAlive(owner, ops)) {
+      throw busyError(owner.jobId);
+    }
+    const orphanedChild = liveClaudeChild(owner, ops);
+    if (orphanedChild !== null) {
+      throw orphanedClaudeChildError(owner, orphanedChild, normalizedThreadId);
+    }
+    // The owner is gone (a killed worker, a crashed foreground run, a
+    // cancelled job): take the lock over through the cleanup claim, so two
+    // acquirers cannot both reap it, then try once more. A takeover lost to a
+    // concurrent acquirer or cleaner asks for a retry.
+    if (!reapDeadOwnerLock(lockPath, owner, ops) || !tryAcquire()) {
+      throw reclaimingError();
+    }
   }
 
   const reservation = {
@@ -403,8 +483,34 @@ export function acquireThreadReservation(
     path: lockPath,
     cleanupPath,
   };
-  liveReservations.set(reservation, 'pre-turn');
+  liveReservations.add(reservation);
   return reservation;
+}
+
+// Notes the Claude child of a live run (its pid and start token) on its
+// lock, so a later acquirer that finds the run dead can refuse the takeover
+// while the child still runs. The record is rewritten through a rename
+// (readers never see a torn file) and only while the lock still carries this
+// run's token. Best effort: a failed rewrite loses the hint, never the run.
+export function recordReservationChildPid(
+  reservation: Pick<ThreadReservation, 'path' | 'token'>,
+  child: RecordedProcess,
+): boolean {
+  const current = readReservationRecord(reservation.path);
+  if (!current || current.invalid || current.token !== reservation.token) {
+    return false;
+  }
+  const next: StoredReservationRecord = {
+    ...current,
+    childPid: child.pid,
+    childPidStart: child.start,
+  };
+  try {
+    writeTextAtomic(reservation.path, `${JSON.stringify(next)}\n`);
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 function forgetLiveReservation(
@@ -413,7 +519,7 @@ function forgetLiveReservation(
   if (!reservation?.path || !reservation.token) {
     return;
   }
-  for (const liveReservation of liveReservations.keys()) {
+  for (const liveReservation of liveReservations) {
     if (
       liveReservation === reservation ||
       (liveReservation.path === reservation.path && liveReservation.token === reservation.token)
@@ -423,217 +529,39 @@ function forgetLiveReservation(
   }
 }
 
-export function markLiveReservationPhase(
-  reservation: ThreadReservation | null | undefined,
-  phase: LiveReservationPhase,
-): void {
-  if (!reservation || !liveReservations.has(reservation)) {
-    return;
-  }
-  liveReservations.set(reservation, phase);
-}
-
+// Removes the lock only while it still carries this reservation's token.
 export function releaseThreadReservation(
   reservation: { path?: string | null; token?: string | null } | null | undefined,
-): ReleaseReservationResult {
+): { released: boolean } {
   forgetLiveReservation(reservation);
   if (!reservation?.path || !reservation.token) {
-    return { released: false, status: 'none' };
+    return { released: false };
   }
   const current = readReservationRecord(reservation.path);
-  if (!current) {
-    return { released: false, status: 'missing', path: reservation.path };
-  }
-  if (current.invalid || current.token !== reservation.token) {
-    return { released: false, status: 'token-mismatch', path: reservation.path };
+  if (!current || current.invalid || current.token !== reservation.token) {
+    return { released: false };
   }
   try {
     fs.unlinkSync(reservation.path);
-    return { released: true, status: 'released', path: reservation.path };
+    return { released: true };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'ENOENT') {
-      return { released: false, status: 'missing', path: reservation.path };
+    if (errorCode(error) === 'ENOENT') {
+      return { released: false };
     }
     throw error;
   }
 }
 
-export function releaseEligibleLiveReservations(): { released: number; retained: number } {
-  let released = 0;
-  let retained = 0;
-  for (const [reservation, phase] of [...liveReservations]) {
-    if (phase === 'in-flight') {
-      retained += 1;
-      continue;
-    }
-    const current = readReservationRecord(reservation.path);
-    if (
-      !current ||
-      current.invalid ||
-      current.token !== reservation.token ||
-      current.jobId !== reservation.jobId
-    ) {
-      retained += 1;
-      continue;
-    }
+// The signal path: releases every reservation this process holds, each
+// only while its lock still carries its token. Best effort per reservation:
+// one that fails must not keep the others, and its lock is taken over by the
+// next run of its thread or session once this process is gone.
+export function releaseLiveReservations(): void {
+  for (const reservation of [...liveReservations]) {
     try {
-      if (releaseThreadReservation(reservation).released) {
-        released += 1;
-      } else {
-        retained += 1;
-      }
+      releaseThreadReservation(reservation);
     } catch {
-      // Signal-time cleanup is best effort per reservation: one bad path
-      // must not prevent the remaining eligible locks from being released.
-      retained += 1;
+      // Left for the takeover.
     }
   }
-  return { released, retained };
-}
-
-async function waitForReservationOwnerDeath(
-  pid: number | null | undefined,
-  options: ReservationOwnerDeathOptions = {},
-): Promise<boolean> {
-  const timeoutMs = options.timeoutMs ?? THREAD_RESERVATION_DEATH_WAIT_MS;
-  const pollMs = options.pollMs ?? THREAD_RESERVATION_POLL_MS;
-  const startedAt = Date.now();
-  let hookCalled = false;
-
-  while (pidIsAlive(pid, options)) {
-    if (!hookCalled && options.duringDeathWait) {
-      hookCalled = true;
-      await options.duringDeathWait();
-    }
-    if (Date.now() - startedAt >= timeoutMs) {
-      return false;
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  return true;
-}
-
-interface CancelledJobIdentity {
-  threadId?: string | null;
-  requestThreadId?: string | null;
-  jobId?: string | null;
-  pid?: number | null;
-}
-
-function candidateReservationPaths({
-  threadId,
-  requestThreadId,
-  jobId,
-  pid,
-}: CancelledJobIdentity): Array<{
-  lockPath: string;
-  source: string | undefined;
-}> {
-  const candidates: string[] = [];
-  const sources = new Map<string, string>();
-  for (const [source, value] of [
-    ['recorded', threadId],
-    ['request', requestThreadId],
-  ] as Array<[string, string | null | undefined]>) {
-    if (!value) {
-      continue;
-    }
-    const candidate = threadReservationPath(value);
-    if (!sources.has(candidate)) {
-      candidates.push(candidate);
-      sources.set(candidate, source);
-    }
-  }
-
-  const lockDir = resolveThreadReservationDir();
-  if (fs.existsSync(lockDir)) {
-    for (const entry of fs.readdirSync(lockDir)) {
-      if (!entry.endsWith('.lock')) {
-        continue;
-      }
-      const candidate = path.join(lockDir, entry);
-      if (sources.has(candidate)) {
-        continue;
-      }
-      const record = readReservationRecord(candidate);
-      if (record && !record.invalid && record.jobId === jobId && record.pid === pid) {
-        candidates.push(candidate);
-        sources.set(candidate, 'scan');
-      }
-    }
-  }
-
-  return candidates.map((lockPath) => ({ lockPath, source: sources.get(lockPath) }));
-}
-
-export async function releaseThreadReservationForCancelledJob(
-  { threadId = null, requestThreadId = null, jobId, pid }: CancelledJobIdentity,
-  options: CancelledJobCleanupOptions = {},
-): Promise<CancelledJobReservationResult> {
-  if (!Number.isFinite(pid)) {
-    return {
-      released: false,
-      status: 'none-found',
-      detail: 'The cancelled job had no worker pid.',
-    };
-  }
-
-  const ownerDied = await waitForReservationOwnerDeath(pid, options);
-  if (!ownerDied) {
-    return {
-      released: false,
-      status: 'owner-still-running',
-      detail: `Worker ${pid} did not exit before reservation cleanup timed out.`,
-    };
-  }
-
-  const candidates = candidateReservationPaths({ threadId, requestThreadId, jobId, pid });
-  if (candidates.length === 0) {
-    return { released: false, status: 'none-found' };
-  }
-
-  let mismatch: CancelledJobReservationResult | null = null;
-  for (const candidate of candidates) {
-    if (!fs.existsSync(candidate.lockPath)) {
-      continue;
-    }
-    const outcome = await claimAndDeleteThreadLock(threadId ?? requestThreadId ?? '', {
-      lockPath: candidate.lockPath,
-      claimJobId: jobId,
-      verify: (current) => ({
-        ok: !current.invalid && current.jobId === jobId && current.pid === pid,
-        reason: `Reservation ${candidate.lockPath} belongs to a different owner.`,
-      }),
-      beforeUnlink: options.beforeUnlink,
-    });
-    if (outcome.status === 'claim-exists') {
-      return {
-        released: false,
-        status: 'claim-skipped',
-        path: candidate.lockPath,
-        detail: `Reservation cleanup is already in progress for ${candidate.lockPath}.`,
-      };
-    }
-    if (outcome.status === 'missing') {
-      continue;
-    }
-    if (outcome.status === 'verification-failed') {
-      mismatch = {
-        released: false,
-        status: 'mismatch-skipped',
-        path: candidate.lockPath,
-        detail: `Reservation ${candidate.lockPath} belongs to a different owner.`,
-      };
-      continue;
-    }
-    if (outcome.released) {
-      return {
-        released: true,
-        status: candidate.source === 'scan' ? 'scan-released' : 'released',
-        path: candidate.lockPath,
-      };
-    }
-  }
-
-  return mismatch ?? { released: false, status: 'none-found' };
 }

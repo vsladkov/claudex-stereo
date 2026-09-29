@@ -7,9 +7,11 @@ import { parseArgs, splitRawArgumentString } from '../shared/args.ts';
 import type { ParseArgsConfig, ParsedArgs, ParsedOptionValue } from '../shared/args.ts';
 import {
   isOutsideAllowedRootsError,
+  readStdinSyncBestEffort,
   readStdinTextIfPiped,
   resolveContainedUserFile,
 } from '../shared/fs.ts';
+import { recordLike } from '../shared/json.ts';
 import { PLUGIN_ROOT } from '../shared/paths.ts';
 import { DEFAULT_PLAN_SLOT, normalizePlanSlot } from '../workspace/state.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
@@ -23,13 +25,33 @@ export function outputCommandResult(payload: unknown, rendered: string, asJson: 
   outputResult(asJson ? payload : rendered, asJson);
 }
 
+// Report-style commands (config, cancel, a queued launch, setup, doctor)
+// carry the rendered report inside their JSON payload too, so a caller that
+// reasons over fields can still print the exact text. Job status and result
+// payloads stay lean: their bodies are already stored once and the commands
+// read them with --json on every poll.
+export function outputReportResult(payload: object, rendered: string, asJson: unknown): void {
+  outputResult(asJson ? { ...payload, rendered } : rendered, asJson);
+}
+
+// `--args-stdin` alone: the raw argument string arrives on stdin. The slash
+// commands' `!` blocks pass `$ARGUMENTS` through a quoted heredoc, so no shell
+// ever reads the user's text (an apostrophe, `$`, or a backtick stays literal).
+export const ARGS_STDIN_FLAG = '--args-stdin';
+let stdinArguments: string | null = null;
+
+function readArgumentsFromStdin(): string {
+  // Read once: the pre-parse JSON check and the parse both normalize.
+  stdinArguments ??= readStdinSyncBestEffort().replace(/\r?\n$/, '');
+  return stdinArguments;
+}
+
+// Only the stdin text of `--args-stdin` is re-split like a shell line; every
+// argument given on the command line is taken as it is.
 export function normalizeArgv(argv: string[]): string[] {
-  if (argv.length === 1) {
-    const [raw] = argv;
-    if (!raw || !raw.trim()) {
-      return [];
-    }
-    return splitRawArgumentString(raw);
+  if (argv.length === 1 && argv[0] === ARGS_STDIN_FLAG) {
+    const raw = readArgumentsFromStdin();
+    return raw.trim() ? splitRawArgumentString(raw) : [];
   }
   return argv;
 }
@@ -44,6 +66,7 @@ let argvParseCompleted = false;
 export function resetJsonRequestState(): void {
   jsonOutputRequested = false;
   argvParseCompleted = false;
+  stdinArguments = null;
 }
 
 export function parseCommandInput(argv: string[], config: ParseArgsConfig = {}): ParsedArgs {
@@ -68,18 +91,10 @@ export function wasJsonRequested(rawArgv: readonly string[] = process.argv.slice
     return jsonOutputRequested;
   }
   // Pre-parse failures (unknown subcommand, missing flag values) never reach
-  // parseCommandInput; slash commands also pass all arguments as one raw
-  // string, so split each raw token before looking for --json.
-  return rawArgv.some((token) => {
-    if (token === '--json') {
-      return true;
-    }
-    try {
-      return splitRawArgumentString(token).includes('--json');
-    } catch {
-      return false;
-    }
-  });
+  // parseCommandInput. The arguments after the subcommand are read the way
+  // the parse would have: the stdin text of `--args-stdin` is re-split.
+  const [subcommand, ...rest] = rawArgv;
+  return subcommand === '--json' || normalizeArgv(rest).includes('--json');
 }
 
 export function resolveCommandCwd(options: CommandOptions = {}): string {
@@ -168,6 +183,29 @@ export function readUserFile<T = string>(
       `Could not read ${flagName} ${resolved}: ${(error as NodeJS.ErrnoException | null)?.message ?? error}`,
     );
   }
+}
+
+// A JSON object from the user file a flag names. `checkContents` vets the
+// text before it is parsed (a size cap of the flag's own).
+export function readJsonObjectFile(
+  cwd: string,
+  flagName: string,
+  value: string,
+  checkContents?: (contents: string) => void,
+): Record<string, unknown> {
+  const contents = readUserFile(cwd, flagName, value);
+  checkContents?.(contents);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    throw new Error(`Could not parse ${flagName} as JSON.`);
+  }
+  const record = recordLike(parsed);
+  if (!record) {
+    throw new Error(`Provide ${flagName} containing a JSON object.`);
+  }
+  return record;
 }
 
 export async function readTaskPrompt(

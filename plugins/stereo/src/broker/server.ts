@@ -3,25 +3,30 @@ import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 
-import { processHasExited } from '../platform/process.ts';
 import { parseArgs } from '../shared/args.ts';
-import { BROKER_BUSY_RPC_CODE, buildJsonRpcError } from '../protocol/broker-rpc.ts';
+import {
+  BROKER_ABANDONED_TURN_GRACE_MS,
+  BROKER_ABANDONED_TURN_MESSAGE,
+  BROKER_BUSY_RPC_CODE,
+  buildJsonRpcError,
+} from '../protocol/broker-rpc.ts';
 import type {
   AppServerMethod,
   AppServerNotification,
   AppServerRequestParams,
   AppServerResponse,
 } from '../protocol/app-server.ts';
-import {
-  claimAndDeleteThreadLock,
-  readReservationRecord,
-  threadReservationPath,
-} from '../workspace/thread-lock-io.ts';
 import { parseBrokerEndpoint } from './endpoint.ts';
 import { loadBrokerSession } from './lifecycle.ts';
+import { positiveIntEnvOr } from '../shared/env.ts';
+import { errorCode } from '../shared/errors.ts';
 
 const STREAMING_METHODS = new Set(['turn/start', 'review/start', 'thread/compact/start']);
 const DEFAULT_BROKER_SELF_CHECK_MS = 60_000;
+// How long shutdown lets clients answer the half-close before it destroys
+// their sockets: server.close() waits for every connection, and a client that
+// never ends its side would otherwise keep a SIGTERMed broker alive for good.
+const SOCKET_CLOSE_GRACE_MS = 2000;
 
 // Client requests arrive as raw JSON lines; only the routing-relevant fields
 // are typed, everything else passes through untouched.
@@ -39,17 +44,11 @@ interface BrokerMessageParams {
 
 type RpcCapableError = Error & { rpcCode?: number };
 
-export interface CapturedThreadLockIdentity {
-  pid: number;
-  token: string;
-}
-
 interface InFlightStreamRecord {
   socket: net.Socket;
   method: string;
   routingThreadIds: Set<string>;
   expectedCompletionIds: Set<string>;
-  identities: Map<string, CapturedThreadLockIdentity | null>;
   disconnected: boolean;
   observedCompletions: Set<string>;
   watchdog: ReturnType<typeof setTimeout> | null;
@@ -59,25 +58,12 @@ interface ActiveStreamOwnership {
   socket: net.Socket;
   routingThreadIds: Set<string>;
   expectedCompletionIds: Set<string>;
-  identities: Map<string, CapturedThreadLockIdentity | null>;
 }
 
 interface OrphanedTurn {
   threadIds: Set<string>;
   expectedCompletionIds: Set<string>;
-  identities: Map<string, CapturedThreadLockIdentity | null>;
   at: number;
-}
-
-export interface DeadOwnerReleaseOptions {
-  timeoutMs?: number;
-  pollMs?: number;
-  isProcessAlive?: (pid: number) => boolean;
-}
-
-export interface DeadOwnerReleaseResult {
-  released: boolean;
-  reason: string;
 }
 
 export interface BrokerAppServerClient {
@@ -124,46 +110,6 @@ function buildExpectedCompletionIds(
     return new Set([reviewResult.reviewThreadId]);
   }
   return new Set(paramsThreadIds);
-}
-
-function defaultProcessIsAlive(pid: number): boolean {
-  return !processHasExited(pid);
-}
-
-export async function releaseLockForDeadOwner(
-  threadId: string,
-  identity: CapturedThreadLockIdentity,
-  options: DeadOwnerReleaseOptions = {},
-): Promise<DeadOwnerReleaseResult> {
-  const timeoutMs = options.timeoutMs ?? 6_000;
-  const pollMs = options.pollMs ?? 400;
-  const isProcessAlive = options.isProcessAlive ?? defaultProcessIsAlive;
-  const startedAt = Date.now();
-
-  while (isProcessAlive(identity.pid)) {
-    if (Date.now() - startedAt >= timeoutMs) {
-      return {
-        released: false,
-        reason: `Owner pid ${identity.pid} remained alive through the cleanup timeout.`,
-      };
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-
-  const outcome = await claimAndDeleteThreadLock(threadId, {
-    verify: (record) => ({
-      ok:
-        !record.invalid &&
-        record.threadId === threadId &&
-        record.pid === identity.pid &&
-        record.token === identity.token,
-      reason: `Reservation for thread ${threadId} no longer matches the abandoned owner.`,
-    }),
-  });
-  return {
-    released: outcome.released,
-    reason: outcome.reason,
-  };
 }
 
 function send(socket: net.Socket, message: unknown): void {
@@ -228,14 +174,12 @@ export async function runBrokerServer(
   const listenTarget = parseBrokerEndpoint(endpoint);
   const pidFile = options['pid-file'] ? path.resolve(options['pid-file'] as string) : null;
   const managedByWorkspaceRecord = Boolean(options['workspace-record-owned']);
-  let brokerSelfCheckMs: number | null = null;
-  if (managedByWorkspaceRecord) {
-    const configuredInterval = Number(process.env.CODEX_COMPANION_BROKER_SELF_CHECK_MS);
-    brokerSelfCheckMs =
-      Number.isFinite(configuredInterval) && configuredInterval > 0
-        ? configuredInterval
-        : DEFAULT_BROKER_SELF_CHECK_MS;
-  }
+  const brokerSelfCheckMs = managedByWorkspaceRecord
+    ? positiveIntEnvOr(
+        process.env.CODEX_COMPANION_BROKER_SELF_CHECK_MS,
+        DEFAULT_BROKER_SELF_CHECK_MS,
+      )
+    : null;
   writePidFile(pidFile);
 
   const appClient = await deps.connectAppServer(cwd);
@@ -250,7 +194,7 @@ export async function runBrokerServer(
   // A client that vanishes mid-turn leaves codex running work nobody will
   // read. Remember the abandoned turn, ask codex to interrupt it, and refuse
   // new streaming work until it completes (or the grace window expires).
-  const ORPHAN_GRACE_MS = 10_000;
+  const ORPHAN_GRACE_MS = BROKER_ABANDONED_TURN_GRACE_MS;
   const MAX_CLIENT_BUFFER_BYTES = 8 * 1024 * 1024;
   let orphanedTurn: OrphanedTurn | null = null;
   // Completions observed while a turn-starting request is still in flight. A
@@ -279,55 +223,16 @@ export async function runBrokerServer(
   let brokerSelfCheckTimer: ReturnType<typeof setInterval> | null = null;
   let brokerRecordMismatchCount = 0;
   const sockets = new Set<net.Socket>();
-
-  function captureThreadLockIdentities(
-    threadIds: Set<string>,
-  ): Map<string, CapturedThreadLockIdentity | null> {
-    const identities = new Map<string, CapturedThreadLockIdentity | null>();
-    for (const threadId of threadIds) {
-      const record = readReservationRecord(threadReservationPath(threadId));
-      if (
-        record &&
-        !record.invalid &&
-        record.threadId === threadId &&
-        Number.isInteger(record.pid) &&
-        (record.pid as number) > 0 &&
-        typeof record.token === 'string' &&
-        record.token.length > 0
-      ) {
-        identities.set(threadId, { pid: record.pid as number, token: record.token });
-      } else {
-        identities.set(threadId, null);
-      }
-    }
-    return identities;
-  }
-
-  function releaseCapturedIdentities(
-    identities: Map<string, CapturedThreadLockIdentity | null>,
-  ): void {
-    for (const [threadId, identity] of identities) {
-      if (!identity) {
-        continue;
-      }
-      void releaseLockForDeadOwner(threadId, identity)
-        .then((outcome) => {
-          process.stderr.write(
-            `broker orphan reservation ${threadId}: ${outcome.released ? 'released' : 'retained'} (${outcome.reason})\n`,
-          );
-        })
-        .catch((error) => {
-          process.stderr.write(
-            `broker orphan reservation ${threadId}: retained (${error instanceof Error ? error.message : String(error)})\n`,
-          );
-        });
-    }
-  }
+  // Clients that sent anything but a shutdown (an `initialize` included),
+  // until they disconnect: between its RPCs (initialize, thread/start or
+  // thread/resume, then turn/start) a client holds nothing in flight, yet a
+  // shutdown in any of those gaps would strand the turn it is about to start.
+  // A connection that has sent nothing (an endpoint probe) is not activity.
+  const activeClientSockets = new Set<net.Socket>();
 
   function armOrphanedTurn(
     routingThreadIds: Set<string>,
     expectedCompletionIds: Set<string>,
-    identities: Map<string, CapturedThreadLockIdentity | null>,
   ): void {
     if (routingThreadIds.size === 0) {
       return;
@@ -335,7 +240,6 @@ export async function runBrokerServer(
     orphanedTurn = {
       threadIds: new Set(routingThreadIds),
       expectedCompletionIds: new Set(expectedCompletionIds),
-      identities: new Map(identities),
       at: Date.now(),
     };
     for (const threadId of routingThreadIds) {
@@ -375,11 +279,9 @@ export async function runBrokerServer(
       if (!discardInFlightStream(record)) {
         return;
       }
-      if (alreadyCompleted) {
-        releaseCapturedIdentities(record.identities);
-        return;
+      if (!alreadyCompleted) {
+        armOrphanedTurn(record.routingThreadIds, record.expectedCompletionIds);
       }
-      armOrphanedTurn(record.routingThreadIds, record.expectedCompletionIds, record.identities);
     }, ORPHAN_GRACE_MS);
     record.watchdog.unref();
   }
@@ -396,11 +298,7 @@ export async function runBrokerServer(
       const abandoned = activeStream;
       activeStream = null;
       if (abandoned.routingThreadIds.size > 0) {
-        armOrphanedTurn(
-          abandoned.routingThreadIds,
-          abandoned.expectedCompletionIds,
-          abandoned.identities,
-        );
+        armOrphanedTurn(abandoned.routingThreadIds, abandoned.expectedCompletionIds);
       }
     }
   }
@@ -436,7 +334,6 @@ export async function runBrokerServer(
         : orphan?.threadIds;
       if (orphan && expectedIds?.has(notifThreadId)) {
         orphanedTurn = null;
-        releaseCapturedIdentities(orphan.identities);
         return;
       }
     }
@@ -484,7 +381,7 @@ export async function runBrokerServer(
         try {
           server.close(() => resolve());
         } catch (error) {
-          if ((error as NodeJS.ErrnoException | null)?.code === 'ERR_SERVER_NOT_RUNNING') {
+          if (errorCode(error) === 'ERR_SERVER_NOT_RUNNING') {
             resolve();
             return;
           }
@@ -525,23 +422,23 @@ export async function runBrokerServer(
           // One errored socket must not abort teardown before appClient.close().
         }
       }
+      const stragglers = setTimeout(() => {
+        for (const socket of sockets) {
+          socket.destroy();
+        }
+      }, SOCKET_CLOSE_GRACE_MS);
+      stragglers.unref();
       await appClient.close().catch(() => {});
+      // Closing the server removes the socket it bound; a listen that failed
+      // (a live listener holds the path) bound nothing, and its path is left alone.
       await serverClosePromise;
-      try {
-        if (listenTarget.kind === 'unix') {
-          fs.unlinkSync(listenTarget.path);
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
-          throw error;
-        }
-      }
+      clearTimeout(stragglers);
       try {
         if (pidFile) {
           fs.unlinkSync(pidFile);
         }
       } catch (error) {
-        if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
+        if (errorCode(error) !== 'ENOENT') {
           throw error;
         }
       }
@@ -570,6 +467,10 @@ export async function runBrokerServer(
         return;
       }
 
+      if (message.method !== 'broker/shutdown') {
+        activeClientSockets.add(socket);
+      }
+
       if (message.id !== undefined && message.method === 'initialize') {
         send(socket, {
           id: message.id,
@@ -588,11 +489,13 @@ export async function runBrokerServer(
         if (message.params?.ifIdle) {
           // Deliberately ignores orphanedTurn: SessionEnd must be able to
           // reap a broker whose own worker just died - shutdown closes the
-          // codex child, which kills the abandoned turn with it.
-          const anotherClientConnected = [...sockets].some(
+          // codex child, which kills the abandoned turn with it. Idle means
+          // nothing in flight and no other client that has spoken still
+          // connected (see activeClientSockets).
+          const anotherClientActive = [...activeClientSockets].some(
             (candidate) => candidate !== socket && !candidate.destroyed,
           );
-          if (anotherClientConnected || activeRequestSocket || inFlightStream || activeStream) {
+          if (anotherClientActive || activeRequestSocket || inFlightStream || activeStream) {
             send(socket, { id: message.id, result: { busy: true } });
             return;
           }
@@ -669,8 +572,8 @@ export async function runBrokerServer(
       }
 
       if (orphanedTurn && Date.now() - orphanedTurn.at >= ORPHAN_GRACE_MS) {
-        // A turn that never completed keeps its reservation for the existing
-        // stranded-lock scan and manual remedy.
+        // A turn that never completed holds streaming work back no longer
+        // than the grace window.
         orphanedTurn = null;
       }
       if (isStreaming && (inFlightStream || activeStream)) {
@@ -683,10 +586,7 @@ export async function runBrokerServer(
       if (isStreaming && orphanedTurn) {
         send(socket, {
           id: message.id,
-          error: buildJsonRpcError(
-            BROKER_BUSY_RPC_CODE,
-            'Shared Codex broker is finishing an abandoned turn.',
-          ),
+          error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, BROKER_ABANDONED_TURN_MESSAGE),
         });
         return;
       }
@@ -699,7 +599,6 @@ export async function runBrokerServer(
           method: message.method as string,
           routingThreadIds: new Set(paramsThreadIds),
           expectedCompletionIds: new Set(paramsThreadIds),
-          identities: captureThreadLockIdentities(paramsThreadIds),
           disconnected: socket.destroyed,
           observedCompletions: new Set(),
           watchdog: null,
@@ -729,11 +628,6 @@ export async function runBrokerServer(
             paramsThreadIds,
             result,
           );
-          for (const threadId of record.routingThreadIds) {
-            if (!record.identities.has(threadId)) {
-              record.identities.set(threadId, null);
-            }
-          }
           const alreadyCompleted = streamCompletionWasObserved(record);
           const disconnected = record.disconnected || socket.destroyed;
           discardInFlightStream(record);
@@ -743,16 +637,9 @@ export async function runBrokerServer(
               socket,
               routingThreadIds: new Set(record.routingThreadIds),
               expectedCompletionIds: new Set(record.expectedCompletionIds),
-              identities: new Map(record.identities),
             };
-          } else if (disconnected && alreadyCompleted) {
-            releaseCapturedIdentities(record.identities);
-          } else if (disconnected) {
-            armOrphanedTurn(
-              record.routingThreadIds,
-              record.expectedCompletionIds,
-              record.identities,
-            );
+          } else if (disconnected && !alreadyCompleted) {
+            armOrphanedTurn(record.routingThreadIds, record.expectedCompletionIds);
           }
           send(socket, { id: message.id, result });
         } catch (error) {
@@ -830,13 +717,33 @@ export async function runBrokerServer(
 
     socket.on('close', () => {
       sockets.delete(socket);
+      activeClientSockets.delete(socket);
       clearSocketOwnership(socket);
     });
 
     socket.on('error', () => {
       sockets.delete(socket);
+      activeClientSockets.delete(socket);
       clearSocketOwnership(socket);
     });
+  });
+
+  // A listen that fails (EADDRINUSE: a live listener already holds a pinned
+  // endpoint's path) bound nothing: tear the app-server down and leave,
+  // without touching the path, rather than linger unreachable.
+  server.on('error', (error) => {
+    process.stderr.write(`broker server error: ${error.message}\n`);
+    if (server.listening || shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    void (async () => {
+      try {
+        await shutdown(server);
+      } finally {
+        process.exit(1);
+      }
+    })();
   });
 
   void appClient.exitPromise.then(async () => {

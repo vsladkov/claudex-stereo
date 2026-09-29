@@ -1,7 +1,7 @@
 import { binaryAvailable } from '../platform/process.ts';
 import type { BinaryAvailability } from '../platform/process.ts';
 
-export const CODEX_SANDBOX_USAGE_ERROR =
+const CODEX_SANDBOX_USAGE_ERROR =
   /unrecognized subcommand|unexpected argument|required arguments were not provided|requires a .?\[permissions\].? table|invalid value|unknown built-in profile|unknown permission profile|permission profile .* not found/i;
 
 export type WriteSandboxProbe = (

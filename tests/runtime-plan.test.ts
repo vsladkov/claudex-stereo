@@ -6,17 +6,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
-import { initGitRepo, makeTempDir, run } from './helpers.ts';
+import {
+  accountCatalogModels,
+  captureStdout,
+  catalogFixture,
+  initGitRepo,
+  makeTempDir,
+  processIsAlive,
+  run,
+  waitFor,
+} from './helpers.ts';
+import { writeCodexCatalogCache } from '../plugins/stereo/src/models/catalog.ts';
+import {
+  defaultModelEffort,
+  parseCodexSelection,
+  resolveCodexSelection,
+} from '../plugins/stereo/src/models/registry.ts';
+import { ROLE_DEFINITIONS } from '../plugins/stereo/src/models/role-defaults.ts';
+import { COMPANION_ENTRY } from '../plugins/stereo/src/shared/paths.ts';
 import {
   SCRIPT,
   initializeBasicRepo,
-  processIsAlive,
   readCompanionState,
   readJsonIfReadable,
   registerBrokerReaping,
   requireCompanionState,
-  waitFor,
   runCliInProcess,
+  waitForFakeState,
 } from './runtime-helpers.ts';
 import { terminateProcessTree } from '../plugins/stereo/src/platform/process.ts';
 import {
@@ -46,32 +62,23 @@ import {
 
 registerBrokerReaping();
 
-async function captureStdout(runCommand: () => Promise<void>): Promise<string> {
-  let output = '';
-  const originalWrite = process.stdout.write;
-  const originalLog = console.log;
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    output += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
-    return true;
-  }) as typeof process.stdout.write;
-  console.log = (...values: unknown[]) => {
-    output += `${values.map(String).join(' ')}\n`;
-  };
-  try {
-    await runCommand();
-    return output;
-  } finally {
-    process.stdout.write = originalWrite;
-    console.log = originalLog;
-  }
-}
+// Efforts and the plan reviewer's built-in resolve against the fake's catalog,
+// so a moved built-in changes what these tests expect, not the tests.
+const ACCOUNT_CATALOG = catalogFixture(accountCatalogModels());
+const codexEffort = (model: string): string | null =>
+  defaultModelEffort(model, { catalog: ACCOUNT_CATALOG });
+// What a model-less plan-review runs: the plan reviewer's built-in at its version default.
+const PLAN_REVIEWER_MODEL = resolveCodexSelection(
+  parseCodexSelection(
+    ROLE_DEFINITIONS.find((role) => role.flag === 'plan-reviewer')!.builtInSelection,
+  )!,
+  ACCOUNT_CATALOG,
+);
+const PLAN_REVIEWER_EFFORT = codexEffort(PLAN_REVIEWER_MODEL);
 
 function storedPlan(overrides: Partial<StoredPairPlanState> = {}): StoredPairPlanState {
   return {
     plan: '# Approved plan\n\nImplement the feature.',
-    threadId: 'thr_plan_state',
-    model: 'gpt-5.6-sol',
-    effort: 'max',
     round: 2,
     verdict: 'approve',
     updatedAt: '2026-07-25T12:00:00.000Z',
@@ -143,10 +150,49 @@ async function runWithOpenStdin(
   });
 }
 
-test('plan-review applies sol/max defaults and names a pair thread', () => {
+test('a later plan-review round without --model runs the role default on the same thread', async () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+
+  const first = run(
+    process.execPath,
+    [SCRIPT, 'plan-review', '--json', '--model', 'sol', 'Initial plan draft'],
+    { cwd: repo, env },
+  );
+  assert.equal(first.status, 0, first.stderr);
+  const firstPayload = JSON.parse(first.stdout);
+  assert.equal(firstPayload.model, 'gpt-6-sol');
+  const firstStart = (await waitForFakeState(binDir, 'lastTurnStart')).lastTurnStart;
+  assert.equal(firstStart?.model, 'gpt-6-sol');
+
+  // No --model: --thread only names the thread, and the plan reviewer's
+  // role default runs on it (the record of round 1 decides nothing).
+  const second = run(
+    process.execPath,
+    [SCRIPT, 'plan-review', '--json', '--thread', firstPayload.threadId, '--round', '2', 'Revised'],
+    { cwd: repo, env },
+  );
+  assert.equal(second.status, 0, second.stderr);
+  const secondPayload = JSON.parse(second.stdout);
+  assert.equal(secondPayload.model, PLAN_REVIEWER_MODEL);
+  assert.equal(secondPayload.threadId, firstPayload.threadId);
+  const fakeState = await waitForFakeState(binDir, 'lastResume');
+  assert.equal(fakeState.lastResume.threadId, firstPayload.threadId);
+  assert.equal(fakeState.lastTurnStart.threadId, firstPayload.threadId);
+  assert.equal(fakeState.lastTurnStart.model, PLAN_REVIEWER_MODEL);
+  assert.equal(fakeState.lastTurnStart.effort, PLAN_REVIEWER_EFFORT);
+  const stored = readJsonIfReadable<{ reviewedBy?: string; round?: number }>(
+    path.join(resolveDurableStateDir(repo, env.CODEX_HOME), 'pair-plan.json'),
+  );
+  assert.equal(stored?.reviewedBy, `codex:${PLAN_REVIEWER_MODEL}`);
+  assert.equal(stored?.round, 2);
+});
+
+test("plan-review runs the plan reviewer's built-in default and names a pair thread", async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   installFakeCodex(binDir);
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
@@ -164,9 +210,9 @@ test('plan-review applies sol/max defaults and names a pair thread', () => {
   assert.match(result.stdout, /Verdict: needs-revision/);
   assert.match(result.stdout, /Missing verification step/);
   assert.match(result.stdout, /Revision instructions:/);
-  const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(fakeState.lastTurnStart.model, 'gpt-6-astra');
-  assert.equal(fakeState.lastTurnStart.effort, 'max');
+  const fakeState = await waitForFakeState(binDir, 'lastTurnStart');
+  assert.equal(fakeState.lastTurnStart.model, PLAN_REVIEWER_MODEL);
+  assert.equal(fakeState.lastTurnStart.effort, PLAN_REVIEWER_EFFORT);
   assert.match(fakeState.lastTurnStart.prompt, /adversarial plan review/);
   assert.match(fakeState.lastTurnStart.prompt, /<repository_map>/);
   assert.match(fakeState.lastTurnStart.prompt, /README\.md/);
@@ -176,11 +222,10 @@ test('plan-review applies sol/max defaults and names a pair thread', () => {
   assert.match(fakeState.threads[0].name, /^Codex Companion Pair/);
 });
 
-test('plan-review --plan-file delivers delimiter-bearing content intact', () => {
+test('plan-review --plan-file delivers delimiter-bearing content intact', async () => {
   const repo = makeTempDir();
   const payloadDir = makeTempDir();
   const binDir = makeTempDir();
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   const payloadPath = path.join(payloadDir, 'plan.md');
   const payload = [
     '## Goal',
@@ -201,15 +246,14 @@ test('plan-review --plan-file delivers delimiter-bearing content intact', () => 
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const fakeState = await waitForFakeState(binDir, 'lastTurnStart');
   assert.equal(fakeState.lastTurnStart.prompt.includes(payload), true);
   assert.match(fakeState.lastTurnStart.prompt, /TRAILING_PLAN_FILE_SENTINEL/);
 });
 
-test('plan-review routes provider aliases per thread and omits provider-unsafe effort', () => {
+test('plan-review routes provider aliases per thread and omits provider-unsafe effort', async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   installFakeCodex(binDir);
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
@@ -226,7 +270,7 @@ test('plan-review routes provider aliases per thread and omits provider-unsafe e
   );
 
   assert.equal(providerRun.status, 0, providerRun.stderr);
-  const providerState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const providerState = await waitForFakeState(binDir, 'lastThreadStart');
   assert.equal(providerState.lastThreadStart.model, 'kimi-k3');
   assert.equal(providerState.lastThreadStart.modelProvider, 'moonshot');
   assert.equal(providerState.lastTurnStart.effort, null);
@@ -241,10 +285,10 @@ test('plan-review routes provider aliases per thread and omits provider-unsafe e
   );
 
   assert.equal(openAiRun.status, 0, openAiRun.stderr);
-  const openAiState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(openAiState.lastThreadStart.model, 'gpt-5.6-sol');
+  const openAiState = await waitForFakeState(binDir, 'lastThreadStart');
+  assert.equal(openAiState.lastThreadStart.model, 'gpt-6-sol');
   assert.equal(openAiState.lastThreadStart.modelProvider, 'openai');
-  assert.equal(openAiState.lastTurnStart.effort, 'max');
+  assert.equal(openAiState.lastTurnStart.effort, codexEffort('gpt-6-sol'));
 
   const prefixedProviderRun = run(
     'node',
@@ -256,16 +300,15 @@ test('plan-review routes provider aliases per thread and omits provider-unsafe e
   );
 
   assert.equal(prefixedProviderRun.status, 0, prefixedProviderRun.stderr);
-  const prefixedProviderState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const prefixedProviderState = await waitForFakeState(binDir, 'lastThreadStart');
   assert.equal(prefixedProviderState.lastThreadStart.model, 'kimi-k3');
   assert.equal(prefixedProviderState.lastThreadStart.modelProvider, 'moonshot');
   assert.equal(prefixedProviderState.lastTurnStart.effort, null);
 });
 
-test('plan-review defaults registered OpenAI model selections to max', () => {
+test('plan-review runs an OpenAI selection, pinned or by alias, at its version default effort', async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   installFakeCodex(binDir);
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
@@ -282,9 +325,9 @@ test('plan-review defaults registered OpenAI model selections to max', () => {
   );
 
   assert.equal(result.status, 0, result.stderr);
-  const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const fakeState = await waitForFakeState(binDir, 'lastTurnStart');
   assert.equal(fakeState.lastTurnStart.model, 'gpt-5.6-terra');
-  assert.equal(fakeState.lastTurnStart.effort, 'max');
+  assert.equal(fakeState.lastTurnStart.effort, codexEffort('gpt-5.6-terra'));
 
   const aliasResult = run(
     'node',
@@ -296,15 +339,14 @@ test('plan-review defaults registered OpenAI model selections to max', () => {
   );
 
   assert.equal(aliasResult.status, 0, aliasResult.stderr);
-  const aliasState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const aliasState = await waitForFakeState(binDir, 'lastTurnStart');
   assert.equal(aliasState.lastTurnStart.model, 'gpt-5.6-terra');
-  assert.equal(aliasState.lastTurnStart.effort, 'max');
+  assert.equal(aliasState.lastTurnStart.effort, codexEffort('gpt-5.6-terra'));
 });
 
-test('plan-review defaults every gpt model to max effort', () => {
+test('plan-review defaults a raw gpt-* model to xhigh when its catalog row lists it', async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   installFakeCodex(binDir);
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
@@ -321,15 +363,15 @@ test('plan-review defaults every gpt model to max effort', () => {
   );
 
   assert.equal(result.status, 0, result.stderr);
-  const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const fakeState = await waitForFakeState(binDir, 'lastTurnStart');
   assert.equal(fakeState.lastTurnStart.model, 'gpt-5.5');
-  assert.equal(fakeState.lastTurnStart.effort, 'max');
+  // gpt-5.5 lists low..xhigh, so the xhigh default applies unchanged.
+  assert.equal(fakeState.lastTurnStart.effort, 'xhigh');
 });
 
-test('plan-review resolves blank and prefix-similar model selections safely', () => {
+test('plan-review resolves blank and prefix-similar model selections safely', async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   installFakeCodex(binDir);
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
@@ -346,9 +388,9 @@ test('plan-review resolves blank and prefix-similar model selections safely', ()
   );
 
   assert.equal(collisionResult.status, 0, collisionResult.stderr);
-  const collisionState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const collisionState = await waitForFakeState(binDir, 'lastTurnStart');
   assert.equal(collisionState.lastTurnStart.model, 'gpt-5.60');
-  assert.equal(collisionState.lastTurnStart.effort, 'max');
+  assert.equal(collisionState.lastTurnStart.effort, 'xhigh');
 
   const blankResult = run(
     'node',
@@ -360,9 +402,9 @@ test('plan-review resolves blank and prefix-similar model selections safely', ()
   );
 
   assert.equal(blankResult.status, 0, blankResult.stderr);
-  const blankState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(blankState.lastTurnStart.model, 'gpt-6-astra');
-  assert.equal(blankState.lastTurnStart.effort, 'max');
+  const blankState = await waitForFakeState(binDir, 'lastTurnStart');
+  assert.equal(blankState.lastTurnStart.model, PLAN_REVIEWER_MODEL);
+  assert.equal(blankState.lastTurnStart.effort, PLAN_REVIEWER_EFFORT);
 });
 
 test('plan-review reports approve with the plan-review-approve fixture behavior', () => {
@@ -428,13 +470,12 @@ test('plan-review --slot persists the reviewed plan only in the named slot', () 
   );
   assert.equal(stored.verdict, 'approve');
   assert.match(stored.plan, /Windows plan/);
-  assert.equal(stored.reviewedBy, 'codex:gpt-6-astra');
+  assert.equal(stored.reviewedBy, `codex:${PLAN_REVIEWER_MODEL}`);
 });
 
 test('plan-review --thread resumes the same pair thread read-only and stores plan state', async () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   installFakeCodex(binDir);
   initGitRepo(repo);
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n');
@@ -448,8 +489,8 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(first.status, 0, first.stderr);
   const firstPayload = JSON.parse(first.stdout);
   assert.equal(firstPayload.round, 1);
-  assert.equal(firstPayload.model, 'gpt-6-astra');
-  assert.equal(firstPayload.effort, 'max');
+  assert.equal(firstPayload.model, PLAN_REVIEWER_MODEL);
+  assert.equal(firstPayload.effort, PLAN_REVIEWER_EFFORT);
   assert.equal(firstPayload.result.verdict, 'needs-revision');
   const threadId = firstPayload.threadId;
   assert.ok(threadId);
@@ -467,7 +508,7 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(secondPayload.round, 2);
   assert.equal(secondPayload.threadId, threadId);
 
-  const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const fakeState = await waitForFakeState(binDir, 'lastResume');
   assert.equal(fakeState.lastResume.threadId, threadId);
   assert.equal(fakeState.lastResume.sandbox, 'read-only');
   assert.equal(fakeState.lastTurnStart.threadId, threadId);
@@ -482,8 +523,12 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
   assert.equal(planPayload.available, true);
   assert.equal(planPayload.round, 2);
   assert.equal(planPayload.verdict, 'needs-revision');
-  assert.equal(planPayload.threadId, threadId);
-  assert.equal(planPayload.reviewedBy, 'codex:gpt-6-astra');
+  // The stored plan names its reviewer, never the thread, model, or effort of the review.
+  assert.deepEqual(
+    ['threadId', 'model', 'effort'].filter((key) => Object.hasOwn(planPayload, key)),
+    [],
+  );
+  assert.equal(planPayload.reviewedBy, `codex:${PLAN_REVIEWER_MODEL}`);
   assert.match(planPayload.plan, /Revised plan draft/);
   assert.deepEqual(planPayload.findings, [
     {
@@ -505,7 +550,6 @@ test('plan-review --thread resumes the same pair thread read-only and stores pla
     renderedPlanState.stdout,
     /^Stored plan \(verdict: needs-revision, round 2, updated [^)]+\)\n/,
   );
-  assert.ok(renderedPlanState.stdout.includes(`Model: gpt-6-astra@max · Thread: ${threadId}\n`));
   assert.match(renderedPlanState.stdout, /\n---\n\nRevised plan draft\n$/);
 
   // A malformed round must not clobber the last good stored plan state.
@@ -591,7 +635,7 @@ test('plan-review preserves stored state when a later round returns scalar JSON'
       },
       { round: 2 },
     ),
-    /Codex returned JSON with an unexpected plan-review shape\./,
+    /The reviewer returned JSON with an unexpected plan-review shape\./,
   );
 
   const preserved = await runCliInProcess(['plan-state', '--json', '--cwd', repo], {
@@ -657,9 +701,10 @@ test('plan-store persists a Claude-reviewed plan and round-trips through plan-st
   // on stdin one pipe earlier, so echoing it back is pure repetition.
   assert.equal(storedPayload.plan, undefined);
   assert.equal(storedPayload.planChars, plan.length);
-  assert.equal(storedPayload.threadId, null);
-  assert.equal(storedPayload.model, null);
-  assert.equal(storedPayload.effort, null);
+  assert.deepEqual(
+    ['threadId', 'model', 'effort'].filter((key) => Object.hasOwn(storedPayload, key)),
+    [],
+  );
   assert.equal(storedPayload.round, 4);
   assert.equal(storedPayload.verdict, 'approve');
   assert.equal(storedPayload.slot, 'default');
@@ -831,92 +876,6 @@ test('plan-store --slot writes and round-trips only the named plan file', () => 
   assert.deepEqual(loadPairPlanState(workspace, 'windows-lane'), { ...storedRecord, plan });
 });
 
-test('plan-store preserves pair defaults and controls the stored review thread explicitly', () => {
-  const workspace = makeTempDir();
-  const seeded = {
-    plan: '# Original reviewed plan\n',
-    threadId: 'thr_original',
-    model: 'gpt-5.6-sol',
-    effort: 'max',
-    round: 2,
-    verdict: 'approve',
-    summary: 'Original review.',
-    findings: [],
-    openQuestions: [],
-    residualRisks: [],
-    updatedAt: '2026-07-31T10:00:00.000Z',
-  };
-  savePairPlanState(workspace, seeded);
-
-  const preserved = run(
-    'node',
-    [SCRIPT, 'plan-store', '--json', '--verdict', 'approve', '--round', '3'],
-    { cwd: workspace, input: '# Claude-side persist\n' },
-  );
-  assert.equal(preserved.status, 0, preserved.stderr);
-  const preservedPayload = JSON.parse(preserved.stdout);
-  assert.deepEqual(
-    {
-      threadId: preservedPayload.threadId,
-      model: preservedPayload.model,
-      effort: preservedPayload.effort,
-    },
-    { threadId: 'thr_original', model: 'gpt-5.6-sol', effort: 'max' },
-  );
-
-  const cleared = run(
-    'node',
-    [SCRIPT, 'plan-store', '--json', '--verdict', 'approve', '--no-thread'],
-    { cwd: workspace, input: '# Explicitly threadless persist\n' },
-  );
-  assert.equal(cleared.status, 0, cleared.stderr);
-  const clearedPayload = JSON.parse(cleared.stdout);
-  assert.deepEqual(
-    {
-      threadId: clearedPayload.threadId,
-      model: clearedPayload.model,
-      effort: clearedPayload.effort,
-    },
-    { threadId: null, model: 'gpt-5.6-sol', effort: 'max' },
-  );
-
-  const replaced = run(
-    'node',
-    [SCRIPT, 'plan-store', '--json', '--verdict', 'approve', '--thread', 'thr_replacement'],
-    { cwd: workspace, input: '# Persist with replacement thread\n' },
-  );
-  assert.equal(replaced.status, 0, replaced.stderr);
-  const replacedPayload = JSON.parse(replaced.stdout);
-  assert.deepEqual(
-    {
-      threadId: replacedPayload.threadId,
-      model: replacedPayload.model,
-      effort: replacedPayload.effort,
-    },
-    { threadId: 'thr_replacement', model: 'gpt-5.6-sol', effort: 'max' },
-  );
-
-  const conflict = run(
-    'node',
-    [
-      SCRIPT,
-      'plan-store',
-      '--json',
-      '--verdict',
-      'approve',
-      '--thread',
-      'thr_conflict',
-      '--no-thread',
-    ],
-    { cwd: workspace, input: '# Invalid thread ownership\n' },
-  );
-  assert.notEqual(conflict.status, 0);
-  assert.deepEqual(JSON.parse(conflict.stdout), {
-    error: 'Choose either --thread <id> or --no-thread.',
-  });
-  assert.match(conflict.stderr, /Choose either --thread <id> or --no-thread\./);
-});
-
 test('plan-store preserves round zero for drafts and keeps other round validation strict', async () => {
   const workspace = makeTempDir();
   const plan = [
@@ -1009,6 +968,20 @@ test('plan-store rejects a missing verdict and empty stdin with JSON usage error
   assert.deepEqual(JSON.parse(emptyPlan.stdout), {
     error: 'Provide the plan via piped stdin.',
   });
+
+  // A stored plan takes no review thread: the flags that named one are no flags.
+  for (const threadFlags of [['--no-thread'], ['--thread', 'thr_1']]) {
+    const refused = run(
+      'node',
+      [SCRIPT, 'plan-store', '--json', '--verdict', 'approve', ...threadFlags],
+      { cwd: workspace, input: '# Plan\n' },
+    );
+    assert.notEqual(refused.status, 0, threadFlags.join(' '));
+    assert.deepEqual(JSON.parse(refused.stdout), {
+      error: 'plan-store reads the plan from stdin; unexpected positional arguments.',
+    });
+  }
+  assert.equal(loadPairPlanState(workspace), null, 'nothing was stored');
 });
 
 test('plan-store times out a pipe that never closes with a structured error', async () => {
@@ -1306,9 +1279,6 @@ test('plan-state --compare returns metadata-only JSON and renders the plan diff'
   assert.deepEqual(payload, {
     slots: ['default', 'windows-lane'],
     a: {
-      threadId: 'thr_plan_state',
-      model: 'gpt-5.6-sol',
-      effort: 'max',
       round: 2,
       verdict: 'approve',
       updatedAt: '2026-07-25T12:00:00.000Z',
@@ -1318,9 +1288,6 @@ test('plan-state --compare returns metadata-only JSON and renders the plan diff'
       slot: 'default',
     },
     b: {
-      threadId: 'thr_plan_state',
-      model: 'gpt-5.6-sol',
-      effort: 'max',
       round: 3,
       verdict: 'needs-revision',
       updatedAt: '2026-08-02T09:00:00.000Z',
@@ -1611,6 +1578,76 @@ test('plan-state --clear also removes and reports the implementation record', as
   assert.equal(fs.existsSync(implementPath), false);
 });
 
+test('plan-state --clear names the companion command that removes an isolated worktree', async () => {
+  const workspace = makeTempDir();
+  const worktree = path.join(makeTempDir(), 'stereo-worktrees', 'repo-1234');
+  savePairPlanState(workspace, storedPlan());
+  saveImplementState(workspace, {
+    status: 'in-progress',
+    baselineCommit: 'abc123',
+    isolated: true,
+    worktree: { path: worktree },
+  });
+
+  const output = await captureStdout(() => handlePlanState(['--cwd', workspace, '--clear']));
+  assert.ok(
+    output.endsWith(
+      `Isolated worktree ${worktree}; remove it with node '${COMPANION_ENTRY}' worktree remove --main '${workspace}' --path '${worktree}'.\n`,
+    ),
+    output,
+  );
+  assert.doesNotMatch(output, /git -C/);
+});
+
+test('plan-review --dry-run runs the launch checks without a plan, a job, or a runtime', () => {
+  const repo = initializeBasicRepo();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const env = buildEnv(binDir);
+  writeCodexCatalogCache(accountCatalogModels(), { codexHome: env.CODEX_HOME });
+  const dryRun = (args: string[]) =>
+    run(process.execPath, [SCRIPT, 'plan-review', '--json', '--dry-run', ...args], {
+      cwd: repo,
+      env,
+    });
+
+  const planless = dryRun([]);
+  assert.equal(planless.status, 0, planless.stderr);
+  assert.deepEqual(JSON.parse(planless.stdout), {
+    ok: true,
+    runtime: 'codex',
+    selection: `codex:${PLAN_REVIEWER_MODEL}`,
+    model: PLAN_REVIEWER_MODEL,
+    effort: PLAN_REVIEWER_EFFORT,
+    role: 'plan-reviewer',
+  });
+  const explicit = dryRun(['--model', 'codex:sol', '--effort', 'high', 'the plan']);
+  assert.equal(explicit.status, 0, explicit.stderr);
+  assert.deepEqual(JSON.parse(explicit.stdout), {
+    ok: true,
+    runtime: 'codex',
+    selection: 'codex:gpt-6-sol',
+    model: 'gpt-6-sol',
+    effort: 'high',
+    role: 'plan-reviewer',
+  });
+  const text = run(process.execPath, [SCRIPT, 'plan-review', '--dry-run', 'the plan'], {
+    cwd: repo,
+    env,
+  });
+  assert.equal(text.status, 0, text.stderr);
+  assert.equal(
+    text.stdout,
+    `Dry run: Codex ${PLAN_REVIEWER_MODEL}, effort ${PLAN_REVIEWER_EFFORT}, role plan-reviewer.\n`,
+  );
+  const refused = dryRun(['--model', 'codex:nova', 'the plan']);
+  assert.equal(refused.status, 1);
+  assert.match(JSON.parse(refused.stdout).error, /^Cannot resolve "codex:nova"/);
+
+  assert.equal(readCompanionState(repo, env), null);
+  assert.equal(fs.existsSync(path.join(binDir, 'fake-codex-state.json')), false);
+});
+
 test('plan-state --clear preserves an implementation record owned by another slot', async () => {
   const workspace = makeTempDir();
   const namedPlanPath = resolvePairPlanFile(workspace, 'windows-lane');
@@ -1720,10 +1757,9 @@ test('plan-state mutations reject missing plans and conflicting actions', async 
   );
 });
 
-test('plan-review works without a git repository and omits the repository map', () => {
+test('plan-review works without a git repository and omits the repository map', async () => {
   const workspace = makeTempDir();
   const binDir = makeTempDir();
-  const statePath = path.join(binDir, 'fake-codex-state.json');
   installFakeCodex(binDir);
 
   const result = run('node', [SCRIPT, 'plan-review', 'Review a plan outside git'], {
@@ -1733,7 +1769,7 @@ test('plan-review works without a git repository and omits the repository map', 
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Verdict:/);
-  const fakeState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const fakeState = await waitForFakeState(binDir, 'lastTurnStart');
   assert.doesNotMatch(fakeState.lastTurnStart.prompt, /<repository_map>/);
 });
 

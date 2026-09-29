@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-import { writeExecutable } from './helpers.ts';
+import { ACCOUNT_CATALOG, writeExecutable } from './helpers.ts';
 
 export function installFakeCodex(binDir: string, behavior = 'review-ok'): void {
   const statePath = path.join(binDir, 'fake-codex-state.json');
@@ -37,6 +37,34 @@ function requiresExperimental(field, message, state) {
 
 function now() {
   return Math.floor(Date.now() / 1000);
+}
+
+// The account catalog (ACCOUNT_CATALOG); tests may override it by writing a
+// "catalog" array of the same shape into fake-codex-state.json.
+const DEFAULT_MODEL_CATALOG = ${JSON.stringify(ACCOUNT_CATALOG)};
+
+function buildCatalogModel(entry) {
+  return {
+    id: entry.id,
+    model: entry.id,
+    upgrade: entry.upgrade || null,
+    upgradeInfo: entry.upgradeInfo || null,
+    availabilityNux: null,
+    displayName: entry.id,
+    description: "",
+    modelSpecialty: null,
+    hidden: Boolean(entry.hidden),
+    supportedReasoningEfforts: (entry.efforts || []).map((effort) => ({ reasoningEffort: effort, description: "" })),
+    defaultReasoningEffort: entry.defaultEffort || "medium",
+    inputModalities: ["text"],
+    supportsPersonality: false,
+    multiAgentVersion: null,
+    additionalSpeedTiers: [],
+    serviceTiers: [],
+    defaultServiceTier: null,
+    availableAccessPrograms: null,
+    isDefault: Boolean(entry.isDefault)
+  };
 }
 
 function buildThread(thread) {
@@ -599,6 +627,17 @@ rl.on("line", (line) => {
         break;
       }
 
+      case "model/list": {
+        if (BEHAVIOR === "model-list-fails") {
+          send({ id: message.id, error: { code: -32601, message: "Unsupported method: model/list" } });
+          break;
+        }
+        const catalogEntries = (Array.isArray(state.catalog) ? state.catalog : DEFAULT_MODEL_CATALOG)
+          .filter((entry) => message.params?.includeHidden === true || !entry.hidden);
+        send({ id: message.id, result: { data: catalogEntries.map(buildCatalogModel), nextCursor: null } });
+        break;
+      }
+
       case "thread/resume": {
         if (requiresExperimental("persistExtendedHistory", message, state) || requiresExperimental("persistFullHistory", message, state)) {
           throw new Error("thread/resume.persistFullHistory requires experimentalApi capability");
@@ -818,6 +857,25 @@ rl.on("line", (line) => {
           ? structuredReviewPayload(prompt)
           : taskPayload(prompt, thread.name && thread.name.startsWith("Codex Companion Task") && prompt.includes("Continue from the current thread state"));
 
+        if (BEHAVIOR === "failed-turn") {
+          // A turn that reports its answer and then fails: the runtime must
+          // surface the failure next to the report, never as a success.
+          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+          emitTokenUsage(thread.id, turnId);
+          send({
+            method: "item/completed",
+            params: {
+              threadId: thread.id,
+              turnId,
+              item: { type: "agentMessage", id: "msg_" + turnId, text: payload, phase: "final_answer" }
+            }
+          });
+          const failure = { message: "Codex hit the context window limit before finishing." };
+          send({ method: "error", params: { threadId: thread.id, turnId, error: failure } });
+          send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "failed", failure) } });
+          break;
+        }
+
         if (
           BEHAVIOR === "with-subagent" ||
           BEHAVIOR === "with-late-subagent-message" ||
@@ -1025,6 +1083,7 @@ rl.on("line", (line) => {
 
 		        if (
 		          BEHAVIOR === "slow-turn" ||
+		          BEHAVIOR === "slow-turn-ignores-interrupt" ||
 		          BEHAVIOR === "slow-start-response" ||
 		          withholdStartResponse
 		        ) {
@@ -1044,7 +1103,7 @@ rl.on("line", (line) => {
 	              }
 		            }
 		            send({ method: "turn/completed", params: { threadId: thread.id, turn: buildTurn(turnId, "completed") } });
-		          }, withholdStartResponse ? 30000 : 1500);
+		          }, withholdStartResponse ? 30000 : BEHAVIOR === "slow-turn-ignores-interrupt" ? 3000 : 1500);
 		          interruptibleTurns.set(turnId, { threadId: thread.id, timer });
 		          if (BEHAVIOR === "slow-start-response") {
 		            setTimeout(
@@ -1082,7 +1141,8 @@ rl.on("line", (line) => {
 	          turnId: message.params.turnId
 	        };
 	        saveState(state);
-	        const pending = interruptibleTurns.get(message.params.turnId);
+	        // 'slow-turn-ignores-interrupt' acknowledges and lets the turn run out.
+	        const pending = BEHAVIOR === "slow-turn-ignores-interrupt" ? null : interruptibleTurns.get(message.params.turnId);
 	        if (pending) {
 	          clearTimeout(pending.timer);
 	          interruptibleTurns.delete(message.params.turnId);

@@ -8,8 +8,13 @@ import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
-import { makeTempDir } from './helpers.ts';
-import { reapLeakedTestBrokers, reapWorkspaceBroker } from './broker-reaper.ts';
+import { makeTempDir, processIsAlive, waitFor } from './helpers.ts';
+import {
+  TEST_RUN_ID_ENV,
+  readProcessEnvValue,
+  reapLeakedTestBrokers,
+  reapWorkspaceBroker,
+} from './broker-reaper.ts';
 import {
   BROKER_SESSION_DIR_PREFIX,
   probeBrokerEndpointOutcome,
@@ -29,27 +34,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BROKER_SCRIPT = path.join(ROOT, 'plugins', 'stereo', 'scripts', 'app-server-broker.ts');
 const IS_LINUX = process.platform === 'linux';
 
-function processAlive(pid: number | undefined | null): boolean {
-  if (!pid) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function waitUntil(check: () => boolean, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (check()) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  return check();
+// A run id no other broker carries: a sweep scoped to it reaps only the
+// brokers this test spawned with it, never another test file's.
+function isolatedRunId(): string {
+  return `${process.env[TEST_RUN_ID_ENV]}-${process.pid}-${Date.now()}-${Math.random()}`;
 }
 
 interface SpawnedBroker {
@@ -166,9 +154,20 @@ function createUnusedEndpoint(t: TestContext): string {
   return createBrokerEndpoint(sessionDir);
 }
 
-function spawnRealBroker(cwd: string): SpawnedBroker {
+// envPatch entries replace the inherited environment's; an undefined value
+// drops that variable.
+function spawnRealBroker(
+  cwd: string,
+  envPatch: Record<string, string | undefined> = {},
+): SpawnedBroker {
   const binDir = makeTempDir('reaper-bin-');
   installFakeCodex(binDir);
+  const env: NodeJS.ProcessEnv = { ...buildEnv(binDir), ...envPatch };
+  for (const [key, value] of Object.entries(envPatch)) {
+    if (value === undefined) {
+      delete env[key];
+    }
+  }
   // Session dirs use the production prefix in the real tmpdir so the sweep
   // sees exactly what a leak looks like.
   const sessionDir = fs.mkdtempSync(path.join(path.dirname(binDir), BROKER_SESSION_DIR_PREFIX));
@@ -181,7 +180,7 @@ function spawnRealBroker(cwd: string): SpawnedBroker {
     endpoint,
     pidFile,
     logFile,
-    env: buildEnv(binDir),
+    env,
   });
   assert.ok(child.pid);
   return { pid: child.pid, endpoint, pidFile, logFile, sessionDir };
@@ -310,11 +309,11 @@ test('reapWorkspaceBroker gracefully reaps a live broker and cleans its files', 
 
     const reaped = await reapWorkspaceBroker(repo);
     assert.equal(reaped, true);
-    assert.equal(await waitUntil(() => !processAlive(broker.pid), 4000), true);
+    await waitFor(() => !processIsAlive(broker.pid), { timeoutMs: 4000 });
     assert.equal(fs.existsSync(broker.pidFile), false);
     assert.equal(fs.existsSync(broker.sessionDir), false);
   } finally {
-    if (processAlive(broker.pid)) {
+    if (processIsAlive(broker.pid)) {
       terminateProcessTree(broker.pid);
     }
   }
@@ -369,20 +368,19 @@ test(
     const listening = await createEndpointServer(t, BROKER_SESSION_DIR_PREFIX);
     fs.utimesSync(listening.sessionDir, staleTime, staleTime);
 
-    const defaultSweep = await reapLeakedTestBrokers({
-      cwdFilter: () => false,
-    });
+    const runId = isolatedRunId();
+    const defaultSweep = await reapLeakedTestBrokers({ runId });
     assert.equal(defaultSweep.reaped, 0);
     assert.equal(fs.existsSync(deadSessionDir), true);
 
-    const teardownSweep = await reapLeakedTestBrokers({
-      cwdFilter: () => false,
-      removeDeadSessionDirs: true,
-    });
-    assert.equal(teardownSweep.reaped, 1);
-    assert.ok(
-      teardownSweep.details.some((detail) => detail.includes(deadSessionDir)),
-      `sweep must report the dead session dir (got: ${teardownSweep.details.join(', ')})`,
+    const teardownSweep = await reapLeakedTestBrokers({ runId, removeDeadSessionDirs: true });
+    // A dead broker's directory is removed, but it is no leaked process.
+    assert.equal(teardownSweep.reaped, 0);
+    assert.deepEqual(teardownSweep.details, []);
+    assert.deepEqual(
+      teardownSweep.removedSessionDirs,
+      [deadSessionDir],
+      `sweep must report the dead session dir apart (got: ${teardownSweep.removedSessionDirs.join(', ')})`,
     );
     assert.equal(fs.existsSync(deadSessionDir), false);
     assert.equal(fs.existsSync(freshDeadSessionDir), true, 'fresh startup dir must be spared');
@@ -395,39 +393,89 @@ test(
   { skip: !IS_LINUX },
   async () => {
     // A "leaked" broker: cwd under os.tmpdir(), pid file in a cxc-* session dir.
+    const runId = isolatedRunId();
     const leakedCwd = makeTempDir('reaper-leaked-cwd-');
-    const leaked = spawnRealBroker(leakedCwd);
+    const leaked = spawnRealBroker(leakedCwd, { [TEST_RUN_ID_ENV]: runId });
 
     // A "real" workspace broker: cwd outside the tmpdir (the repo checkout).
-    const realBroker = spawnRealBroker(ROOT);
+    const realBroker = spawnRealBroker(ROOT, { [TEST_RUN_ID_ENV]: runId });
 
     try {
       assert.equal(await waitForBrokerEndpoint(leaked.endpoint, 4000), true);
       assert.equal(await waitForBrokerEndpoint(realBroker.endpoint, 4000), true);
 
-      const sweep = await reapLeakedTestBrokers({
-        cwdFilter: (brokerCwd) => brokerCwd === leakedCwd,
-      });
+      const sweep = await reapLeakedTestBrokers({ runId });
       assert.ok(
         sweep.details.some((detail) => detail.includes(`pid ${leaked.pid}`)),
         `sweep must report the leaked broker (got: ${sweep.details.join(', ') || 'nothing'})`,
       );
-      assert.equal(await waitUntil(() => !processAlive(leaked.pid), 4000), true);
+      await waitFor(() => !processIsAlive(leaked.pid), { timeoutMs: 4000 });
       assert.equal(fs.existsSync(leaked.sessionDir), false);
 
       // The non-tmp cwd broker must be untouched by the sweep.
       assert.equal(
-        processAlive(realBroker.pid),
+        processIsAlive(realBroker.pid),
         true,
         'sweep must never touch a real-workspace broker',
       );
     } finally {
       for (const broker of [leaked, realBroker]) {
-        if (processAlive(broker.pid)) {
+        if (processIsAlive(broker.pid)) {
           terminateProcessTree(broker.pid);
         }
         fs.rmSync(broker.sessionDir, { recursive: true, force: true });
       }
     }
+  },
+);
+
+test(
+  'reapLeakedTestBrokers reaps only brokers of its own test run',
+  { skip: !IS_LINUX },
+  async () => {
+    const runId = isolatedRunId();
+    // Three tmp-cwd brokers that look alike on the command line: one of this
+    // run, one of a concurrent run, and one that carries no run id at all.
+    const ownCwd = makeTempDir('reaper-own-run-');
+    const own = spawnRealBroker(ownCwd, { [TEST_RUN_ID_ENV]: runId });
+    const foreign = spawnRealBroker(makeTempDir('reaper-foreign-run-'), {
+      [TEST_RUN_ID_ENV]: `${runId}-concurrent`,
+    });
+    const unmarked = spawnRealBroker(makeTempDir('reaper-unmarked-'), {
+      [TEST_RUN_ID_ENV]: undefined,
+    });
+    const brokers = [own, foreign, unmarked];
+
+    try {
+      for (const broker of brokers) {
+        assert.equal(await waitForBrokerEndpoint(broker.endpoint, 4000), true);
+      }
+      assert.equal(readProcessEnvValue(own.pid, TEST_RUN_ID_ENV), runId);
+      assert.equal(readProcessEnvValue(foreign.pid, TEST_RUN_ID_ENV), `${runId}-concurrent`);
+      assert.equal(readProcessEnvValue(unmarked.pid, TEST_RUN_ID_ENV), null);
+
+      const sweep = await reapLeakedTestBrokers({ runId });
+      assert.deepEqual(sweep.details, [`pid ${own.pid} (cwd ${ownCwd})`]);
+      await waitFor(() => !processIsAlive(own.pid), { timeoutMs: 4000 });
+      assert.equal(processIsAlive(foreign.pid), true, "a concurrent run's broker is spared");
+      assert.equal(processIsAlive(unmarked.pid), true, 'an unattributable broker is spared');
+    } finally {
+      for (const broker of brokers) {
+        if (processIsAlive(broker.pid)) {
+          terminateProcessTree(broker.pid);
+        }
+        fs.rmSync(broker.sessionDir, { recursive: true, force: true });
+      }
+    }
+  },
+);
+
+test(
+  'readProcessEnvValue tells an unset variable from an unreadable process',
+  { skip: !IS_LINUX },
+  () => {
+    assert.equal(readProcessEnvValue(process.pid, TEST_RUN_ID_ENV), process.env[TEST_RUN_ID_ENV]);
+    assert.equal(readProcessEnvValue(process.pid, 'STEREO_TEST_SURELY_UNSET_VARIABLE'), null);
+    assert.equal(readProcessEnvValue(2147483647, TEST_RUN_ID_ENV), undefined);
   },
 );

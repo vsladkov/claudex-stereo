@@ -1,16 +1,14 @@
 import fs from 'node:fs';
 import process from 'node:process';
 
-import {
-  nowIso,
-  readJobFile,
-  readStoredJobOrNull,
-  resolveJobFile,
-  resolveJobLogFile,
-  upsertJob,
-  writeJobFile,
-} from '../workspace/state.ts';
+import { errorMessage } from '../shared/errors.ts';
+import { optionalString, recordedPid } from '../shared/json.ts';
+import { currentProcessOwner } from '../platform/process.ts';
+import { nowIso, resolveJobLogFile } from '../workspace/state.ts';
 import type { JobPatch, JobRecord, JobTokenUsage } from '../workspace/state.ts';
+import { recordSessionWorkspace } from '../workspace/session-registry.ts';
+import { settleJob, updateActiveJob } from './job-lifecycle.ts';
+import type { JobSettlement } from './job-lifecycle.ts';
 
 export const SESSION_ID_ENV = 'CODEX_COMPANION_SESSION_ID';
 
@@ -19,6 +17,9 @@ export interface ProgressEvent {
   phase: string | null;
   threadId: string | null;
   turnId: string | null;
+  childPid: number | null;
+  /** The child's start token (the runner notes it at spawn). */
+  childStart: string | null;
   stderrMessage: string | null;
   logTitle: string | null;
   logBody: string | null;
@@ -29,6 +30,10 @@ export interface JobExecution {
   exitStatus: number;
   threadId?: string | null;
   turnId?: string | null;
+  /** The model that actually served the run when it differs from the request (a Claude alias). */
+  model?: string | null;
+  /** Why a run with a non-zero exit failed; stored on the record and shown by status. */
+  errorMessage?: string | null;
   payload?: unknown;
   rendered?: string;
   summary?: string;
@@ -55,6 +60,8 @@ export interface CreateProgressReporterOptions {
   stderr?: boolean;
   logFile?: string | null;
   onEvent?: ((event: ProgressEvent) => void) | null;
+  /** Stderr echo prefix naming the runtime: `[codex]` or `[claude]`. */
+  prefix?: string;
 }
 
 export function normalizeProgressEvent(value: unknown): ProgressEvent {
@@ -66,6 +73,8 @@ export function normalizeProgressEvent(value: unknown): ProgressEvent {
       threadId:
         typeof event.threadId === 'string' && event.threadId.trim() ? event.threadId.trim() : null,
       turnId: typeof event.turnId === 'string' && event.turnId.trim() ? event.turnId.trim() : null,
+      childPid: recordedPid(event.childPid),
+      childStart: optionalString(event.childStart),
       stderrMessage: event.stderrMessage == null ? null : String(event.stderrMessage).trim(),
       logTitle:
         typeof event.logTitle === 'string' && event.logTitle.trim() ? event.logTitle.trim() : null,
@@ -78,6 +87,8 @@ export function normalizeProgressEvent(value: unknown): ProgressEvent {
     phase: null,
     threadId: null,
     turnId: null,
+    childPid: null,
+    childStart: null,
     stderrMessage: String(value ?? '').trim(),
     logTitle: null,
     logBody: null,
@@ -118,6 +129,12 @@ export function createJobRecord<T extends PendingJobRecord>(
 ): T & { createdAt: string; sessionId?: string } {
   const env = options.env ?? process.env;
   const sessionId = env[options.sessionIdEnv ?? SESSION_ID_ENV];
+  // Remember where this session launches jobs so SessionEnd can sweep a
+  // workspace root that is not the session's cwd.
+  const workspaceRoot = (base as { workspaceRoot?: unknown }).workspaceRoot;
+  if (sessionId && typeof workspaceRoot === 'string' && workspaceRoot) {
+    recordSessionWorkspace(sessionId, workspaceRoot);
+  }
   return {
     ...base,
     createdAt: nowIso(),
@@ -125,53 +142,71 @@ export function createJobRecord<T extends PendingJobRecord>(
   };
 }
 
+// A progress event's record patch never fails the run: a state write that
+// throws (a Windows antivirus scan holding the index, a full disk) is noted
+// in the job log when there is one, and what it carried goes out again with
+// the next event (the one-time Claude child pid included): a phase, thread,
+// or turn counts as recorded only once a write took it.
 export function createJobProgressUpdater(
   workspaceRoot: string,
   jobId: string,
+  logFile: string | null = null,
 ): (event: unknown) => void {
   let lastPhase: string | null = null;
   let lastThreadId: string | null = null;
   let lastTurnId: string | null = null;
+  // What events reported that no write has taken yet.
+  let pending: Partial<JobRecord> = {};
+  const track = (
+    key: 'phase' | 'threadId' | 'turnId',
+    value: string | null,
+    last: string | null,
+  ): void => {
+    if (value === null) {
+      return;
+    }
+    if (value === last) {
+      delete pending[key];
+    } else {
+      pending[key] = value;
+    }
+  };
 
   return (event) => {
     const normalized = normalizeProgressEvent(event);
-    const patch: JobPatch = { id: jobId };
-    let changed = false;
-
-    if (normalized.phase && normalized.phase !== lastPhase) {
-      lastPhase = normalized.phase;
-      patch.phase = normalized.phase;
-      changed = true;
+    track('phase', normalized.phase, lastPhase);
+    track('threadId', normalized.threadId, lastThreadId);
+    track('turnId', normalized.turnId, lastTurnId);
+    if (normalized.childPid) {
+      pending.claudePid = normalized.childPid;
+      pending.claudePidStart = normalized.childStart;
     }
-
-    if (normalized.threadId && normalized.threadId !== lastThreadId) {
-      lastThreadId = normalized.threadId;
-      patch.threadId = normalized.threadId;
-      changed = true;
-    }
-
-    if (normalized.turnId && normalized.turnId !== lastTurnId) {
-      lastTurnId = normalized.turnId;
-      patch.turnId = normalized.turnId;
-      changed = true;
-    }
-
-    if (!changed) {
+    if (Object.keys(pending).length === 0) {
       return;
     }
+    const patch: JobPatch = { ...pending, id: jobId };
 
-    upsertJob(workspaceRoot, patch);
-
-    const jobFile = resolveJobFile(workspaceRoot, jobId);
-    if (!fs.existsSync(jobFile)) {
+    // The job file and the index row are patched under the index lock, the
+    // lock settleJob writes under: a job settled meanwhile (a cancel
+    // recorded before its kill lands) keeps its terminal row and file, with
+    // no late phase or pid on either. A Claude child reported that late is
+    // the worker's to stop: its signal handler kills the children it holds.
+    // A pruned or half-written job file is left as it is (the index row still
+    // takes the patch), and a row the index lost comes back from the job file.
+    try {
+      updateActiveJob(workspaceRoot, jobId, { update: (current) => ({ ...current, ...patch }) });
+    } catch (error) {
+      try {
+        appendLogLine(logFile, `Could not record progress on job ${jobId}: ${errorMessage(error)}`);
+      } catch {
+        // Logging is best effort too.
+      }
       return;
     }
-
-    const storedJob = readJobFile(jobFile);
-    writeJobFile(workspaceRoot, jobId, {
-      ...storedJob,
-      ...patch,
-    });
+    lastPhase = patch.phase ?? lastPhase;
+    lastThreadId = patch.threadId ?? lastThreadId;
+    lastTurnId = patch.turnId ?? lastTurnId;
+    pending = {};
   };
 }
 
@@ -179,6 +214,7 @@ export function createProgressReporter({
   stderr = false,
   logFile = null,
   onEvent = null,
+  prefix = 'codex',
 }: CreateProgressReporterOptions = {}): ((eventOrMessage: unknown) => void) | null {
   if (!stderr && !logFile && !onEvent) {
     return null;
@@ -197,7 +233,7 @@ export function createProgressReporter({
     if (stderr && stderrMessage) {
       stderrEvents += 1;
       if (stderrEvents <= STDERR_VERBATIM_EVENTS || stderrEvents % STDERR_SAMPLE_EVERY === 0) {
-        process.stderr.write(`[codex] ${stderrMessage}\n`);
+        process.stderr.write(`[${prefix}] ${stderrMessage}\n`);
       }
     }
     appendLogLine(logFile, event.message);
@@ -218,30 +254,40 @@ function persistTerminalState(
   workspaceRoot: string,
   jobId: string,
   logFile: string | null,
-  fullRecord: JobRecord,
-  indexPatch: JobPatch,
+  settlement: JobSettlement,
 ): void {
   // A bookkeeping failure must never change the run's outcome: a successful
-  // run stays successful and a failed run rethrows its own error, while the
-  // record is degraded to the best terminal state we can still write
-  // (otherwise a stale running/pid record survives and later renders as a
-  // stalled job).
+  // run stays successful and a failed run rethrows its own error. A job
+  // settled meanwhile (a cancel) keeps its own record, and one swept away
+  // meanwhile (a session end removes a cancelled job's row and file even when
+  // it could not confirm this worker stopped) is not brought back; a lost
+  // index row alone is rebuilt from the job file. A failed write is logged:
+  // a job-file write that failed still settled the index row, and a record
+  // left running shows as stalled, for /stereo:cancel to settle.
   try {
-    writeJobFile(workspaceRoot, jobId, fullRecord);
-    upsertJob(workspaceRoot, indexPatch);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    try {
-      appendLogLine(logFile, `Failed to persist terminal job state: ${message}`);
-    } catch {
-      // Logging is best effort.
+    const { writeError } = settleJob(workspaceRoot, jobId, { ...settlement, skipUnknown: true });
+    if (writeError) {
+      throw writeError;
     }
+  } catch (error) {
+    const message = `Failed to persist terminal state for job ${jobId}: ${errorMessage(error)}`;
     try {
-      upsertJob(workspaceRoot, { id: jobId, status: indexPatch.status, pid: null });
+      appendLogLine(logFile, message);
     } catch {
-      process.stderr.write(`Failed to persist terminal state for job ${jobId}: ${message}\n`);
+      process.stderr.write(`${message}\n`);
     }
   }
+}
+
+// Writes the running record (job file and index row) under the index lock,
+// unless the job already settled: a cancel recorded while the worker booted
+// must not be overwritten by a running status the settle never sees. Returns
+// the terminal status found, or null when the record was written.
+function markJobRunning(workspaceRoot: string, jobId: string, record: JobRecord): string | null {
+  return updateActiveJob(workspaceRoot, jobId, {
+    update: (current) => ({ ...current, ...record }),
+    fallback: record,
+  });
 }
 
 export async function runTrackedJob(
@@ -254,28 +300,40 @@ export async function runTrackedJob(
     status: 'running',
     startedAt: nowIso(),
     phase: 'starting',
-    pid: process.pid,
+    // This process with its start token, so a later probe can tell it from
+    // an unrelated process that reuses its pid.
+    ...currentProcessOwner(),
     logFile: options.logFile ?? job.logFile ?? null,
-  };
-  writeJobFile(job.workspaceRoot, job.id, runningRecord);
-  upsertJob(job.workspaceRoot, runningRecord);
+  } as JobRecord;
+  const finished = markJobRunning(job.workspaceRoot, job.id, runningRecord);
+  if (finished) {
+    // Settled before it started (a cancel while the worker booted): nothing runs.
+    const message = `Job ${job.id} was already ${finished} before it started; nothing ran.`;
+    try {
+      appendLogLine(runningRecord.logFile, message);
+    } catch {
+      // Logging is best effort.
+    }
+    return { exitStatus: 1, errorMessage: message, rendered: `${message}\n`, summary: message };
+  }
 
   try {
     const execution = await runner();
     const completionStatus = execution.exitStatus === 0 ? 'completed' : 'failed';
-    const completedAt = nowIso();
-    persistTerminalState(
-      job.workspaceRoot,
-      job.id,
-      options.logFile ?? job.logFile ?? null,
-      {
-        ...runningRecord,
+    persistTerminalState(job.workspaceRoot, job.id, options.logFile ?? job.logFile ?? null, {
+      terminal: {
         status: completionStatus,
+        phase: completionStatus === 'completed' ? 'done' : 'failed',
         threadId: execution.threadId ?? null,
         turnId: execution.turnId ?? null,
-        pid: null,
-        phase: completionStatus === 'completed' ? 'done' : 'failed',
-        completedAt,
+        completedAt: nowIso(),
+        ...(execution.tokenUsage ? { tokenUsage: execution.tokenUsage } : {}),
+        ...(execution.model ? { model: execution.model } : {}),
+        ...(completionStatus === 'failed' && execution.errorMessage
+          ? { errorMessage: execution.errorMessage }
+          : {}),
+      },
+      record: {
         result: execution.payload,
         // Skip the pre-rendered copy when it adds nothing over rawOutput:
         // renderers fall back to result.rawOutput, and duplicating the final
@@ -283,48 +341,20 @@ export async function runTrackedJob(
         ...(renderedDuplicatesRawOutput(execution.rendered, execution.payload)
           ? {}
           : { rendered: execution.rendered }),
-        ...(execution.tokenUsage ? { tokenUsage: execution.tokenUsage } : {}),
       },
-      {
-        id: job.id,
-        status: completionStatus,
-        threadId: execution.threadId ?? null,
-        turnId: execution.turnId ?? null,
-        summary: execution.summary,
-        phase: completionStatus === 'completed' ? 'done' : 'failed',
-        pid: null,
-        completedAt,
-        ...(execution.tokenUsage ? { tokenUsage: execution.tokenUsage } : {}),
-      },
-    );
+      index: { summary: execution.summary },
+      fallback: runningRecord,
+    });
     appendLogBlock(options.logFile ?? job.logFile ?? null, 'Final output', execution.rendered);
     return execution;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const existing = readStoredJobOrNull(job.workspaceRoot, job.id) ?? runningRecord;
-    const completedAt = nowIso();
-    persistTerminalState(
-      job.workspaceRoot,
-      job.id,
-      options.logFile ?? job.logFile ?? existing.logFile ?? null,
-      {
-        ...existing,
-        status: 'failed',
-        phase: 'failed',
-        errorMessage,
-        pid: null,
-        completedAt,
-        logFile: options.logFile ?? job.logFile ?? existing.logFile ?? null,
-      },
-      {
-        id: job.id,
-        status: 'failed',
-        phase: 'failed',
-        pid: null,
-        errorMessage,
-        completedAt,
-      },
-    );
+    const message = errorMessage(error);
+    const logFile = options.logFile ?? job.logFile ?? runningRecord.logFile ?? null;
+    persistTerminalState(job.workspaceRoot, job.id, logFile, {
+      terminal: { status: 'failed', phase: 'failed', errorMessage: message, completedAt: nowIso() },
+      record: { logFile },
+      fallback: runningRecord,
+    });
     throw error;
   }
 }

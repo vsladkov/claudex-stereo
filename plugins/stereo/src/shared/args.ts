@@ -48,7 +48,12 @@ export function parseArgs(argv: readonly string[], config: ParseArgsConfig = {})
     }
 
     if (token.startsWith('--')) {
-      const [rawKey = '', inlineValue] = token.slice(2).split('=', 2);
+      // Only the first `=` separates the key: a value may carry its own
+      // (`--allow=Bash(FOO=1 make:*)`).
+      const body = token.slice(2);
+      const separator = body.indexOf('=');
+      const rawKey = separator === -1 ? body : body.slice(0, separator);
+      const inlineValue = separator === -1 ? undefined : body.slice(separator + 1);
       const key = aliasMap[rawKey] ?? rawKey;
 
       if (booleanOptions.has(key)) {
@@ -128,21 +133,25 @@ function looksLikeFlag(token: string): boolean {
   return /^--[a-zA-Z]/.test(token);
 }
 
+// Splits the text of `--args-stdin` into arguments. Quotes group words, and a
+// quote opens only at the start of a word or after `=`: inside a word it is
+// literal, so an apostrophe in a path or in prose stays what it is. A
+// backslash only makes the quote after it literal (never inside single
+// quotes, as in a shell); any other backslash is itself literal, so Windows
+// and UNC paths pass through unchanged.
 export function splitRawArgumentString(raw: string): string[] {
   const tokens: string[] = [];
+  const characters = [...raw];
   let current = '';
   let quote: string | null = null;
-  let escaping = false;
 
-  for (const character of raw) {
-    if (escaping) {
-      current += character;
-      escaping = false;
-      continue;
-    }
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index] as string;
+    const next = characters[index + 1];
 
-    if (character === '\\') {
-      escaping = true;
+    if (character === '\\' && quote !== "'" && (next === '"' || next === "'")) {
+      current += next;
+      index += 1;
       continue;
     }
 
@@ -155,7 +164,7 @@ export function splitRawArgumentString(raw: string): string[] {
       continue;
     }
 
-    if (character === "'" || character === '"') {
+    if ((character === "'" || character === '"') && (current === '' || current.endsWith('='))) {
       quote = character;
       continue;
     }
@@ -169,10 +178,6 @@ export function splitRawArgumentString(raw: string): string[] {
     }
 
     current += character;
-  }
-
-  if (escaping) {
-    current += '\\';
   }
 
   if (current) {

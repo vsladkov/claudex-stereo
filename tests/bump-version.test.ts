@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +59,7 @@ function makeVersionFixture() {
 test('bump-version updates every release manifest', () => {
   const root = makeVersionFixture();
 
-  const result = run('node', [SCRIPT, '--root', root, '1.2.3'], {
+  const result = run(process.execPath, [SCRIPT, '--root', root, '1.2.3'], {
     cwd: ROOT,
   });
 
@@ -87,7 +88,7 @@ test('bump-version check mode reports stale metadata', () => {
     version: '1.0.3',
   });
 
-  const result = run('node', [SCRIPT, '--root', root, '--check'], {
+  const result = run(process.execPath, [SCRIPT, '--root', root, '--check'], {
     cwd: ROOT,
   });
 

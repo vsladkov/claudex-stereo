@@ -2,8 +2,14 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { errorCode } from '../shared/errors.ts';
 import { isProbablyText } from '../shared/fs.ts';
-import { formatCommandFailure, runCommand, runCommandChecked } from './process.ts';
+import {
+  formatCommandFailure,
+  PROBE_TIMEOUT_MS,
+  runCommand,
+  runCommandChecked,
+} from './process.ts';
 import type { CommandResult, RunCommandOptions } from './process.ts';
 
 const MAX_UNTRACKED_BYTES = 24 * 1024;
@@ -115,7 +121,11 @@ export interface WorktreeListing {
 }
 
 // Git is directly executable on Windows. Repository-derived arguments must never pass through a shell.
-function git(cwd: string, args: readonly string[], options: RunCommandOptions = {}): CommandResult {
+export function git(
+  cwd: string,
+  args: readonly string[],
+  options: RunCommandOptions = {},
+): CommandResult {
   return runCommand('git', args, { cwd, ...options, shell: false });
 }
 
@@ -159,7 +169,7 @@ export function parseWorktreePorcelain(stdout: string): WorktreeEntry[] {
 }
 
 export function listWorktrees(cwd: string): WorktreeListing {
-  const result = git(cwd, ['worktree', 'list', '--porcelain']);
+  const result = git(cwd, ['worktree', 'list', '--porcelain'], { timeout: PROBE_TIMEOUT_MS });
   if (result.error) {
     return {
       available: false,
@@ -178,7 +188,7 @@ export function listWorktrees(cwd: string): WorktreeListing {
   return { available: true, entries: parseWorktreePorcelain(result.stdout), detail: null };
 }
 
-function gitChecked(
+export function gitChecked(
   cwd: string,
   args: readonly string[],
   options: RunCommandOptions = {},
@@ -194,7 +204,7 @@ export function gitCollect(
   try {
     return gitChecked(cwd, args, { maxBuffer });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'ENOBUFS') {
+    if (errorCode(error) === 'ENOBUFS') {
       throw new Error(
         `git ${args[0]} produced more than 64 MiB of output; narrow the review scope (--scope working-tree or --base <ref>).`,
       );
@@ -261,20 +271,32 @@ function buildBranchComparison(cwd: string, baseRef: string): BranchComparison {
   };
 }
 
-export function ensureGitRepository(cwd: string): string {
-  const result = git(cwd, ['rev-parse', '--show-toplevel']);
+// The working-tree root `cwd` lies in. `notRepository` is the refusal for a
+// directory outside every working tree.
+export function ensureGitRepository(
+  cwd: string,
+  notRepository = 'This command must run inside a Git repository.',
+): string {
+  // Probes are bounded: a hung git (a credential helper, a network
+  // filesystem) must fail the launch, not stall it.
+  const result = git(cwd, ['rev-parse', '--show-toplevel'], { timeout: PROBE_TIMEOUT_MS });
   const errorCode = result.error && 'code' in result.error ? result.error.code : null;
   if (errorCode === 'ENOENT') {
     throw new Error('git is not installed. Install Git and retry.');
   }
+  if (errorCode === 'ETIMEDOUT') {
+    throw new Error(`git rev-parse timed out after ${PROBE_TIMEOUT_MS} ms in ${cwd}.`);
+  }
   if (result.status !== 0) {
-    throw new Error('This command must run inside a Git repository.');
+    throw new Error(notRepository);
   }
   return result.stdout.trim();
 }
 
 export function getRepoRoot(cwd: string): string {
-  return gitChecked(cwd, ['rev-parse', '--show-toplevel']).stdout.trim();
+  return gitChecked(cwd, ['rev-parse', '--show-toplevel'], {
+    timeout: PROBE_TIMEOUT_MS,
+  }).stdout.trim();
 }
 
 function normalizeRepositoryFilesMaxBufferBytes(value: unknown): number {
@@ -486,9 +508,14 @@ function formatUntrackedFile(cwd: string, relativePath: string): string {
   const absolutePath = path.join(cwd, relativePath);
   let stat;
   try {
-    stat = fs.statSync(absolutePath);
+    // lstat: a symbolic link is never followed, so an untracked link to a
+    // file outside the repository cannot land in a reviewer prompt.
+    stat = fs.lstatSync(absolutePath);
   } catch {
-    return `### ${relativePath}\n(skipped: broken symlink or unreadable file)`;
+    return `### ${relativePath}\n(skipped: unreadable file)`;
+  }
+  if (stat.isSymbolicLink()) {
+    return `### ${relativePath}\n(skipped: symbolic link)`;
   }
   if (stat.isDirectory()) {
     return `### ${relativePath}\n(skipped: directory)`;

@@ -45,6 +45,7 @@ const PRODUCTION_VARIABLES = {
     BASELINE_CONTEXT: 'baseline context',
     REVIEW_CONTEXT: 'review context',
     HOST_RESULTS: 'host results',
+    GRANTED_COMMANDS: 'npm test',
   },
   'plan-draft': {
     TASK_TEXT: 'task text',
@@ -83,7 +84,7 @@ for (const [name, variables] of Object.entries(PRODUCTION_VARIABLES)) {
 
 test('review prompts fence every untrusted data block from instructions', () => {
   const expectedCounts = {
-    'implementation-review': 1,
+    'implementation-review': 2,
     'plan-review': 2,
     'adversarial-review': 2,
     review: 2,
@@ -99,4 +100,15 @@ test('review prompts fence every untrusted data block from instructions', () => 
   }
 
   assert.doesNotMatch(loadPromptTemplate(PLUGIN_ROOT, 'implementation-review'), /schemas\//);
+});
+
+test('the implementation-review brief keeps granted commands outside the untrusted data', () => {
+  const template = loadPromptTemplate(PLUGIN_ROOT, 'implementation-review');
+  // The orchestrator-written command list is its own block after the host
+  // results, and the data boundary never names it as untrusted data.
+  assert.match(template, /<granted_commands>\n\{\{GRANTED_COMMANDS\}\}\n<\/granted_commands>/);
+  assert.ok(template.indexOf('</host_results>') < template.indexOf('<granted_commands>'));
+  const boundary = template.match(/<data_boundary>[\s\S]*?<\/data_boundary>/)?.[0] ?? '';
+  assert.ok(boundary.includes('host_results'));
+  assert.doesNotMatch(boundary, /granted_commands/);
 });

@@ -1,26 +1,29 @@
 import fs from 'node:fs';
 import process from 'node:process';
 
-import { processHasExited } from '../platform/process.ts';
-import {
-  getSessionRuntimeStatus,
-  listStrandedThreadReservations,
-  looksLikeVerificationCommand,
-} from '../runtime/index.ts';
-import type { SessionRuntimeStatus, StrandedReservationEntry } from '../runtime/index.ts';
+import { recordedProcessGone } from '../platform/process.ts';
+import { getSessionRuntimeStatus } from '../runtime/availability.ts';
+import type { SessionRuntimeStatus } from '../runtime/availability.ts';
+import { listStrandedThreadReservations } from '../runtime/reservations.ts';
+import type { StrandedReservationEntry } from '../runtime/reservations.ts';
+import { looksLikeVerificationCommand } from '../runtime/turn-capture.ts';
 import {
   getConfig,
+  isActiveJob,
+  isTerminalJob,
   listJobs,
   MAX_JOBS,
   readJobFile,
   readStoredJobOrNull,
   resolveJobFile,
+  STOP_GATE_ORIGIN,
   TERMINAL_JOB_STATUSES,
-  upsertJob,
 } from '../workspace/state.ts';
 import type { JobRecord, StereoConfig } from '../workspace/state.ts';
 import { modelProviderFor } from '../models/registry.ts';
 import { optionalString, recordLike } from '../shared/json.ts';
+import { sleep } from '../shared/text.ts';
+import { settleJob, withTerminalFields } from './job-lifecycle.ts';
 import { SESSION_ID_ENV } from './tracked-jobs.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 
@@ -37,6 +40,11 @@ export interface SessionFilterOptions {
 export interface EnrichJobOptions {
   maxProgressLines?: number;
   workspaceRoot?: string;
+}
+
+export interface SingleJobSnapshotOptions extends EnrichJobOptions {
+  /** Scan for stranded reservations (true by default; the one-line --brief answer shows none). */
+  strandedReservations?: boolean;
 }
 
 export interface StatusSnapshotOptions extends SessionFilterOptions, EnrichJobOptions {
@@ -248,29 +256,35 @@ export function buildUsageSnapshot(
   };
 }
 
+// The label a job shows in status, usage, and announcements: a review kind
+// by name, a task by the pair role it ran (a role-less task is a rescue,
+// unless the Stop hook launched it).
+export function jobKindLabel(
+  kind: string | null | undefined,
+  jobClass: string | null | undefined,
+  role: string | null | undefined,
+  origin: string | null | undefined = null,
+): string {
+  if (kind === 'adversarial-review' || kind === 'plan-review') {
+    return kind;
+  }
+  if (jobClass === 'review' || kind === 'review') {
+    return 'review';
+  }
+  if (jobClass === 'task' || kind === 'task') {
+    if (typeof role === 'string' && role) {
+      return role;
+    }
+    return origin === STOP_GATE_ORIGIN ? STOP_GATE_ORIGIN : 'rescue';
+  }
+  return 'job';
+}
+
 export function getJobTypeLabel(job: JobRecord): string {
   if (typeof job.kindLabel === 'string' && job.kindLabel) {
     return job.kindLabel;
   }
-  if (job.kind === 'adversarial-review') {
-    return 'adversarial-review';
-  }
-  if (job.kind === 'plan-review') {
-    return 'plan-review';
-  }
-  if (job.jobClass === 'review') {
-    return 'review';
-  }
-  if (job.jobClass === 'task') {
-    return 'rescue';
-  }
-  if (job.kind === 'review') {
-    return 'review';
-  }
-  if (job.kind === 'task') {
-    return 'rescue';
-  }
-  return 'job';
+  return jobKindLabel(job.kind, job.jobClass, job.role, job.origin);
 }
 
 function stripLogPrefix(line: string): string {
@@ -316,7 +330,7 @@ export function readJobProgressPreview(
   logFile: string | null | undefined,
   maxLines = DEFAULT_MAX_PROGRESS_LINES,
 ): string[] {
-  if (!logFile || !fs.existsSync(logFile)) {
+  if (!logFile || maxLines <= 0 || !fs.existsSync(logFile)) {
     return [];
   }
 
@@ -329,6 +343,33 @@ export function readJobProgressPreview(
     .filter((line) => line && !isProgressBlockTitle(line));
 
   return lines.slice(-maxLines);
+}
+
+/** The one-line answer of `status <jobId> --brief`, as its `--json` form. */
+export interface BriefJobStatus {
+  jobId: string;
+  status: string;
+  phase: string;
+  elapsedSeconds: number;
+}
+
+// Elapsed whole seconds from the job's start (or creation) to its end: its
+// completion, the last update of a finished job with no completion time, or
+// now for an active job. An unparsable start counts as 0.
+export function buildBriefJobStatus(job: EnrichedJob, now: number = Date.now()): BriefJobStatus {
+  const start = Date.parse(job.startedAt ?? job.createdAt ?? '');
+  const endValue =
+    job.completedAt ?? (TERMINAL_JOB_STATUSES.has(job.status) ? job.updatedAt : null);
+  const end = endValue ? Date.parse(endValue) : now;
+  const elapsedSeconds =
+    Number.isFinite(start) && Number.isFinite(end) && end >= start
+      ? Math.round((end - start) / 1000)
+      : 0;
+  return { jobId: job.id, status: job.status, phase: job.phase, elapsedSeconds };
+}
+
+export function renderBriefJobStatus(brief: BriefJobStatus): string {
+  return `${brief.status} ${brief.phase} ${brief.elapsedSeconds}s\n`;
 }
 
 export function formatElapsedDuration(
@@ -419,19 +460,23 @@ function inferLegacyJobPhase(job: JobRecord, progressPreview: string[] = []): st
   return job.jobClass === 'review' ? 'reviewing' : 'running';
 }
 
+// An active job whose worker no longer runs (recordedProcessGone: the cheap
+// check doctor shares, with no ps or PowerShell probe on a status poll).
 function isJobProcessGone(job: JobRecord): boolean {
-  // Windows process probing remains intentionally disabled for job status.
-  if (process.platform === 'win32') {
-    return false;
+  return isActiveJob(job) && recordedProcessGone(job.pid, job.pidStart);
+}
+
+// A worker that settled its job and exited between the index read and the
+// worker check looks gone: the job is read once more (its index row, then
+// its job file), and the terminal record found there is what it reports.
+// Null when the job is still active on both.
+function settledSinceRead(workspaceRoot: string, job: JobRecord): JobRecord | null {
+  const row = listJobs(workspaceRoot).find((candidate) => candidate.id === job.id) ?? null;
+  if (row && isTerminalJob(row)) {
+    return row;
   }
-  if (job.status !== 'queued' && job.status !== 'running') {
-    return false;
-  }
-  const pid = job.pid;
-  if (typeof pid !== 'number' || !Number.isFinite(pid) || pid <= 0) {
-    return false;
-  }
-  return processHasExited(pid);
+  const stored = readStoredJobOrNull(workspaceRoot, job.id);
+  return stored && isTerminalJob(stored) ? withTerminalFields(row ?? job, stored) : null;
 }
 
 export function enrichJob(job: JobRecord, options: EnrichJobOptions = {}): EnrichedJob {
@@ -449,7 +494,7 @@ export function enrichJob(job: JobRecord, options: EnrichJobOptions = {}): Enric
     modelDisplay: formatJobModel(model),
     kindLabel: getJobTypeLabel(job),
     progressPreview:
-      job.status === 'queued' || job.status === 'running' || job.status === 'failed'
+      isActiveJob(job) || job.status === 'failed'
         ? readJobProgressPreview(job.logFile, maxProgressLines)
         : [],
     elapsed: formatElapsedDuration(job.startedAt ?? job.createdAt, job.completedAt ?? null),
@@ -458,9 +503,16 @@ export function enrichJob(job: JobRecord, options: EnrichJobOptions = {}): Enric
       : null,
   };
 
+  const gone = isJobProcessGone(enriched);
+  if (gone && options.workspaceRoot) {
+    const settled = settledSinceRead(options.workspaceRoot, job);
+    if (settled) {
+      return enrichJob(settled, options);
+    }
+  }
   return {
     ...enriched,
-    phase: isJobProcessGone(enriched)
+    phase: gone
       ? 'stalled'
       : (enriched.phase ?? inferLegacyJobPhase(enriched, enriched.progressPreview)),
   };
@@ -517,22 +569,26 @@ export function buildStatusSnapshot(
 ): StatusSnapshot {
   const workspaceRoot = jobWorkspaceRoot(cwd, options);
   const config = getConfig(workspaceRoot);
-  const jobs = sortJobsNewestFirst(filterJobsForCurrentSession(listJobs(workspaceRoot), options));
+  // --all widens the listing to every session's jobs and lifts the cap, so a
+  // resumed session can see the work an earlier session left running.
+  const retained = listJobs(workspaceRoot);
+  const jobs = sortJobsNewestFirst(
+    options.all ? retained : filterJobsForCurrentSession(retained, options),
+  );
   const maxJobs = options.maxJobs ?? DEFAULT_MAX_STATUS_JOBS;
   const maxProgressLines = options.maxProgressLines ?? DEFAULT_MAX_PROGRESS_LINES;
 
   const running = jobs
-    .filter((job) => job.status === 'queued' || job.status === 'running')
+    .filter((job) => isActiveJob(job))
     .map((job) => enrichJob(job, { maxProgressLines, workspaceRoot }));
 
-  const latestFinishedRaw =
-    jobs.find((job) => job.status !== 'queued' && job.status !== 'running') ?? null;
+  const latestFinishedRaw = jobs.find((job) => !isActiveJob(job)) ?? null;
   const latestFinished = latestFinishedRaw
     ? enrichJob(latestFinishedRaw, { maxProgressLines, workspaceRoot })
     : null;
 
   const finishedPastLatest = jobs.filter(
-    (job) => job.status !== 'queued' && job.status !== 'running' && job.id !== latestFinished?.id,
+    (job) => !isActiveJob(job) && job.id !== latestFinished?.id,
   );
   const recent = (options.all ? finishedPastLatest : finishedPastLatest.slice(0, maxJobs)).map(
     (job) => enrichJob(job, { maxProgressLines, workspaceRoot }),
@@ -553,7 +609,7 @@ export function buildStatusSnapshot(
 export function buildSingleJobSnapshot(
   cwd: string,
   reference: string,
-  options: EnrichJobOptions = {},
+  options: SingleJobSnapshotOptions = {},
 ): SingleJobSnapshot {
   const workspaceRoot = jobWorkspaceRoot(cwd, options);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
@@ -564,8 +620,67 @@ export function buildSingleJobSnapshot(
 
   return {
     workspaceRoot,
-    strandedReservations: listStrandedThreadReservations(),
+    strandedReservations:
+      options.strandedReservations === false ? [] : listStrandedThreadReservations(),
     job: enrichJob(selected, { maxProgressLines: options.maxProgressLines, workspaceRoot }),
+  };
+}
+
+const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240_000;
+const DEFAULT_STATUS_POLL_INTERVAL_MS = 2000;
+const MIN_STATUS_POLL_INTERVAL_MS = 100;
+
+// A wait option as given, 0 included; the default when it is absent or not a number.
+function waitOptionMs(value: unknown, fallback: number): number {
+  const parsed = value === undefined || value === null || value === '' ? Number.NaN : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export interface WaitForJobOptions extends SingleJobSnapshotOptions {
+  timeoutMs?: unknown;
+  pollIntervalMs?: unknown;
+}
+
+export interface AwaitedJobSnapshot extends SingleJobSnapshot {
+  waitTimedOut: boolean;
+  timeoutMs: number;
+}
+
+// `status <job> --wait`: polls the job until it is terminal, its worker is
+// gone (phase `stalled`: nothing but a cancel will settle it, so waiting
+// longer only burns the window), or the window ends. A poll is the light
+// check: the job's index row, and the cheap worker check (isJobProcessGone);
+// the display fields (the log preview, a settled record behind a gone
+// worker) and the stranded reservation scan (not at all for --brief) come
+// once, after the loop.
+export async function waitForJobSnapshot(
+  cwd: string,
+  reference: string,
+  options: WaitForJobOptions = {},
+): Promise<AwaitedJobSnapshot> {
+  // A 0 timeout answers at once; a poll interval is at least a small minimum.
+  const timeoutMs = Math.max(0, waitOptionMs(options.timeoutMs, DEFAULT_STATUS_WAIT_TIMEOUT_MS));
+  const pollIntervalMs = Math.max(
+    MIN_STATUS_POLL_INTERVAL_MS,
+    waitOptionMs(options.pollIntervalMs, DEFAULT_STATUS_POLL_INTERVAL_MS),
+  );
+  const deadline = Date.now() + timeoutMs;
+  const workspaceRoot = jobWorkspaceRoot(cwd, options);
+  const polled = (job: JobRecord | null): boolean =>
+    job !== null && isActiveJob(job) && !isJobProcessGone(job);
+  let row = matchJobReference(sortJobsNewestFirst(listJobs(workspaceRoot)), reference, () => true, {
+    optional: true,
+  });
+  while (polled(row) && Date.now() < deadline) {
+    await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
+    const id = row?.id;
+    row = listJobs(workspaceRoot).find((candidate) => candidate.id === id) ?? null;
+  }
+  const snapshot = buildSingleJobSnapshot(cwd, reference, options);
+  return {
+    ...snapshot,
+    waitTimedOut: isActiveJob(snapshot.job) && snapshot.job.phase !== 'stalled',
+    timeoutMs,
   };
 }
 
@@ -589,28 +704,21 @@ export function resolveResultJob(
     return { workspaceRoot, job: selected };
   }
 
-  const active = matchJobReference(
-    jobs,
-    reference,
-    (job) => job.status === 'queued' || job.status === 'running',
-    {
-      optional: true,
-    },
-  );
+  const active = matchJobReference(jobs, reference, isActiveJob, { optional: true });
   if (active) {
     // A missing or corrupt per-job file preserves the existing active-job error.
     const stored = readStoredJobOrNull(workspaceRoot, active.id);
     if (stored && TERMINAL_JOB_STATUSES.has(stored.status)) {
-      const repairedFields = {
-        id: stored.id,
-        status: stored.status,
-        phase: stored.phase,
-        pid: null,
-        errorMessage: stored.errorMessage,
-        completedAt: stored.completedAt,
+      // The job file settled but its index row did not (a lost index
+      // write): settleJob brings the row in line under the index lock, and
+      // a row that settled meanwhile (a cancel) keeps its own outcome.
+      const settled = settleJob(workspaceRoot, active.id, {
+        terminal: { status: stored.status },
+      });
+      return {
+        workspaceRoot,
+        job: withTerminalFields(active, { ...(settled.record ?? stored), status: settled.status }),
       };
-      upsertJob(workspaceRoot, repairedFields);
-      return { workspaceRoot, job: { ...active, ...repairedFields } };
     }
     throw new Error(
       `Job ${active.id} is still ${active.status}. Check /stereo:status and try again once it finishes.`,
@@ -623,7 +731,7 @@ export function resolveResultJob(
     );
   }
 
-  throw new Error('No finished Codex jobs found for this repository yet.');
+  throw new Error('No finished companion jobs found for this repository yet.');
 }
 
 export function resolveCancelableJob(
@@ -633,7 +741,7 @@ export function resolveCancelableJob(
 ): { workspaceRoot: string; job: JobRecord } {
   const workspaceRoot = jobWorkspaceRoot(cwd, options);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
-  const activeJobs = jobs.filter((job) => job.status === 'queued' || job.status === 'running');
+  const activeJobs = jobs.filter((job) => isActiveJob(job));
 
   if (reference) {
     const selected = matchJobReference(activeJobs, reference, () => true, { optional: true });
@@ -650,12 +758,12 @@ export function resolveCancelableJob(
     return { workspaceRoot, job: onlyActiveJob };
   }
   if (sessionScopedActiveJobs.length > 1) {
-    throw new Error('Multiple Codex jobs are active. Pass a job id to /stereo:cancel.');
+    throw new Error('Multiple companion jobs are active. Pass a job id to /stereo:cancel.');
   }
 
   if (getCurrentSessionId(options)) {
-    throw new Error('No active Codex jobs to cancel for this session.');
+    throw new Error('No active companion jobs to cancel for this session.');
   }
 
-  throw new Error('No active Codex jobs to cancel.');
+  throw new Error('No active companion jobs to cancel.');
 }

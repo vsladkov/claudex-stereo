@@ -1,4 +1,4 @@
-import { WriteEscalationRetryError } from '../shared/errors.ts';
+import { errorMessage, WriteEscalationRetryError } from '../shared/errors.ts';
 import type {
   ReviewDelivery,
   ReviewTarget,
@@ -7,15 +7,16 @@ import type {
   TurnStartParams,
 } from '../protocol/app-server.ts';
 import { modelProviderFor, parseQualifiedModel } from '../models/registry.ts';
-import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
+import {
+  BROKER_ABANDONED_TURN_GRACE_MS,
+  BROKER_ABANDONED_TURN_MESSAGE,
+  BROKER_BUSY_RPC_CODE,
+  BROKER_ENDPOINT_ENV,
+} from '../protocol/broker-rpc.ts';
 import { CodexAppServerClient } from '../transport/app-server-client.ts';
 import { loadBrokerSession } from '../broker/lifecycle.ts';
-import { getCodexAvailability } from './availability.ts';
-import {
-  acquireThreadReservation,
-  markLiveReservationPhase,
-  releaseThreadReservation,
-} from './reservations.ts';
+import { CODEX_CLI_MISSING_ERROR, getCodexAvailability } from './availability.ts';
+import { acquireThreadReservation, releaseThreadReservation } from './reservations.ts';
 import type { ThreadReservation } from './reservations.ts';
 import { buildResultStatus } from './structured-output.ts';
 import {
@@ -129,7 +130,7 @@ export async function interruptAppServerTurn(
       attempted: true,
       interrupted: false,
       transport: client?.transport ?? null,
-      detail: error instanceof Error ? error.message : String(error),
+      detail: errorMessage(error),
     };
   } finally {
     await client?.close().catch(() => {});
@@ -142,6 +143,8 @@ export interface RunAppServerReviewOptions {
   delivery?: ReviewDelivery | null;
   target?: ReviewTarget;
   onProgress?: ProgressReporter | null;
+  /** The workspace whose shared broker runs the review (a worktree cwd otherwise gets its own). */
+  brokerCwd?: string | null;
 }
 
 export interface AppServerReviewResult {
@@ -164,16 +167,14 @@ export async function runAppServerReview(
 ): Promise<AppServerReviewResult> {
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
-    throw new Error(
-      'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
-    );
+    throw new Error(CODEX_CLI_MISSING_ERROR);
   }
   const { model: bareModel, modelProvider: explicitModelProvider } = options.model
     ? parseQualifiedModel(options.model)
     : { model: options.model, modelProvider: null };
   const modelProvider = explicitModelProvider ?? (bareModel ? modelProviderFor(bareModel) : null);
 
-  return withAppServer(cwd, async (client) => {
+  return withAppServer(options.brokerCwd ?? cwd, async (client) => {
     emitProgress(options.onProgress, 'Starting Codex review thread.', 'starting');
     const thread = await startThread(client, cwd, {
       model: bareModel,
@@ -237,7 +238,6 @@ export interface RunAppServerTurnOptions {
   threadName?: string | null;
   outputSchema?: unknown;
   jobId?: string | null;
-  jobPid?: number | null;
   onProgress?: ProgressReporter | null;
   brokerCwd?: string | null;
 }
@@ -272,15 +272,10 @@ export async function runAppServerTurn(
   const brokerCwd = options.brokerCwd?.trim() ? options.brokerCwd : cwd;
   const availability = getCodexAvailability(brokerCwd);
   if (!availability.available) {
-    throw new Error(
-      'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
-    );
+    throw new Error(CODEX_CLI_MISSING_ERROR);
   }
 
-  const reservationMeta = {
-    jobId: options.jobId ?? null,
-    pid: Number.isFinite(options.jobPid) ? (options.jobPid as number) : process.pid,
-  };
+  const reservationMeta = { jobId: options.jobId ?? null };
   let reservation: ThreadReservation | null = null;
   let mismatch: BrokerMismatch | null = null;
 
@@ -356,21 +351,16 @@ export async function runAppServerTurn(
         const turnState = await captureTurn(
           client,
           threadId,
-          () => {
-            markLiveReservationPhase(reservation, 'in-flight');
-            return client.request('turn/start', {
+          () =>
+            client.request('turn/start', {
               threadId,
               input: buildTurnInput(prompt),
               model: bareModel ?? null,
               effort: options.effort ?? null,
               outputSchema: (options.outputSchema ?? null) as TurnStartParams['outputSchema'],
-            });
-          },
+            }),
           { onProgress: options.onProgress },
         );
-        if (!turnState.inferredCompletion) {
-          markLiveReservationPhase(reservation, 'post-turn');
-        }
 
         return {
           status: buildResultStatus(turnState),
@@ -406,28 +396,46 @@ export async function runAppServerTurn(
       reservation = acquireThreadReservation(options.resumeThreadId, reservationMeta);
     }
 
-    try {
-      return await attempt();
-    } catch (error) {
-      // A broker-busy rejection escaping the attempt means our turn never
-      // started (the broker rejects turn/start while another turn holds the
-      // slot; once a turn is accepted its own requests cannot be
-      // busy-rejected), so no side effects exist and a whole-attempt retry
-      // on a private direct app-server is safe — this is the documented
-      // busy fallback for concurrent sessions. withAppServer only handles
-      // the first-request case itself; this covers the busy that arrives
-      // after thread/start already dispatched.
-      const busy =
-        (error as { rpcCode?: number } | null | undefined)?.rpcCode === BROKER_BUSY_RPC_CODE;
-      if (!busy && !(error instanceof WriteEscalationRetryError)) {
-        throw error;
-      }
-      if (busy) {
-        emitProgress(
-          options.onProgress,
-          'Shared Codex broker is busy; retrying on a private app-server.',
-          'starting',
-        );
+    const abandonedTurnWaitEnds = Date.now() + BROKER_ABANDONED_TURN_GRACE_MS + 2000;
+    for (;;) {
+      try {
+        return await attempt();
+      } catch (error) {
+        // A broker-busy rejection escaping the attempt means our turn never
+        // started (the broker rejects turn/start while another turn holds the
+        // slot; once a turn is accepted its own requests cannot be
+        // busy-rejected), so no turn side effects exist and a whole-attempt
+        // retry on a private direct app-server is safe — this is the
+        // documented busy fallback for concurrent sessions. withAppServer only
+        // handles the first-request case itself; this covers the busy that
+        // arrives after thread/start already dispatched: the retry starts a
+        // fresh thread.
+        const busy =
+          (error as { rpcCode?: number } | null | undefined)?.rpcCode === BROKER_BUSY_RPC_CODE;
+        if (!busy && !(error instanceof WriteEscalationRetryError)) {
+          throw error;
+        }
+        // The one busy a resume waits out: the broker is winding down a turn
+        // a dead run left, possibly on this very thread, which must not be
+        // driven from a second app-server meanwhile. The broker's own grace
+        // for that turn bounds the wait.
+        if (
+          busy &&
+          options.resumeThreadId &&
+          errorMessage(error).includes(BROKER_ABANDONED_TURN_MESSAGE) &&
+          Date.now() < abandonedTurnWaitEnds
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          continue;
+        }
+        if (busy) {
+          emitProgress(
+            options.onProgress,
+            'Shared Codex broker is busy; retrying on a private app-server.',
+            'starting',
+          );
+        }
+        break;
       }
     }
 

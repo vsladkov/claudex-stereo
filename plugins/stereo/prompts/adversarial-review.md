@@ -64,6 +64,7 @@ Every finding must include:
 - a confidence score from 0 to 1
 - a concrete recommendation
   Write the summary like a terse ship/no-ship assessment, not a neutral recap.
+  Include a non-empty summary and preserve the schema's `next_steps` array contract.
   </structured_output_contract>
 
 <grounding_rules>

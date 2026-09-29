@@ -4,29 +4,37 @@ import {
   buildPersistentTaskThreadName,
   DEFAULT_CONTINUE_PROMPT,
   findLatestTaskThread,
-  runAppServerTurn,
+  MAX_COMMAND_OUTPUT_CHARS,
+  parseStructuredOutput,
 } from '../runtime/index.ts';
-import type { AppServerTurnResult, ProgressReporter } from '../runtime/index.ts';
-import {
-  buildSingleJobSnapshot,
-  filterJobsForCurrentSession,
-  sortJobsNewestFirst,
-} from '../jobs/job-control.ts';
-import type { SingleJobSnapshot } from '../jobs/job-control.ts';
+import type {
+  AppServerTurnResult,
+  ClaudeRole,
+  CompanionTurn,
+  ProgressReporter,
+} from '../runtime/index.ts';
+import { filterJobsForCurrentSession, sortJobsNewestFirst } from '../jobs/job-control.ts';
 import { SESSION_ID_ENV } from '../jobs/tracked-jobs.ts';
-import { listJobs } from '../workspace/state.ts';
+import { STOP_GATE_ORIGIN, isActiveJob, listJobs } from '../workspace/state.ts';
 import type { JobRecord } from '../workspace/state.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 import { renderTaskResult } from '../render/render.ts';
-import { firstMeaningfulLine, shorten, sleep } from '../shared/text.ts';
+import { jobRuntime, runtimeLabel } from '../shared/runtime.ts';
+import type { CompanionRuntime } from '../shared/runtime.ts';
+import { firstMeaningfulLine, shorten } from '../shared/text.ts';
+import {
+  droppedNotificationsField,
+  runRoleTurn,
+  turnExecutionFields,
+  turnFailureMessage,
+} from './companion-jobs.ts';
 import type { CompanionExecution } from './companion-jobs.ts';
 
-const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000;
-const DEFAULT_STATUS_POLL_INTERVAL_MS = 2000;
-const STOP_REVIEW_TASK_MARKER = 'Run a stop-gate review of the previous Claude turn.';
+// Not a "Codex Companion Task" name: the sessionless --resume-last fallback
+// searches Codex's thread list by that prefix and must never find the gate.
+const STOP_GATE_THREAD_NAME = 'Codex Companion Stop Gate Review';
 export const MAX_CAPTURED_COMMANDS = 100;
 export const MAX_CAPTURED_FILE_CHANGES = 500;
-export const MAX_COMMAND_OUTPUT_CHARS = 2000;
 
 export interface CapturedTaskCommandExecution {
   command: string;
@@ -50,6 +58,20 @@ export interface TaskCapturePayload {
   fileChangesOmitted?: number;
 }
 
+// The tail of a run's commands, on either runtime: the last commands are the
+// verification, and the count of the ones dropped before them.
+function captureCommandTail<T>(executions: readonly T[]): {
+  commandExecutions?: T[];
+  commandExecutionsOmitted?: number;
+} {
+  const commandExecutions = executions.slice(-MAX_CAPTURED_COMMANDS);
+  const commandExecutionsOmitted = executions.length - commandExecutions.length;
+  return {
+    ...(commandExecutions.length > 0 ? { commandExecutions } : {}),
+    ...(commandExecutionsOmitted > 0 ? { commandExecutionsOmitted } : {}),
+  };
+}
+
 // This deliberately covers task runs only: review and plan-review are read-only.
 // Job files share the job log's trust boundary, but failed-command output may
 // still contain secrets, so only a bounded non-zero-exit tail is retained and
@@ -57,13 +79,8 @@ export interface TaskCapturePayload {
 export function buildTaskCapturePayload(
   result: Pick<AppServerTurnResult, 'commandExecutions' | 'fileChanges'>,
 ): TaskCapturePayload {
-  const commandExecutionsOmitted = Math.max(
-    0,
-    result.commandExecutions.length - MAX_CAPTURED_COMMANDS,
-  );
-  const commandExecutions = result.commandExecutions
-    .slice(-MAX_CAPTURED_COMMANDS)
-    .map((item): CapturedTaskCommandExecution => ({
+  const commands = captureCommandTail(
+    result.commandExecutions.map((item): CapturedTaskCommandExecution => ({
       command: item.command,
       cwd: item.cwd,
       status: item.status,
@@ -72,7 +89,8 @@ export function buildTaskCapturePayload(
       ...(typeof item.exitCode === 'number' && item.exitCode !== 0
         ? { output: (item.aggregatedOutput ?? '').slice(-MAX_COMMAND_OUTPUT_CHARS) }
         : {}),
-    }));
+    })),
+  );
 
   const fileChangesByPath = new Map<string, CapturedTaskFileChange>();
   for (const item of result.fileChanges) {
@@ -90,74 +108,178 @@ export function buildTaskCapturePayload(
   const fileChanges = flattenedFileChanges.slice(-MAX_CAPTURED_FILE_CHANGES);
 
   return {
-    ...(commandExecutions.length > 0 ? { commandExecutions } : {}),
-    ...(commandExecutionsOmitted > 0 ? { commandExecutionsOmitted } : {}),
+    ...commands,
     ...(fileChanges.length > 0 ? { fileChanges } : {}),
     ...(fileChangesOmitted > 0 ? { fileChangesOmitted } : {}),
   };
+}
+
+// A task run with --output-schema reports its parsed answer the way
+// plan-review and review do: `result` (the parsed object, or null) and
+// `parseError` (why it did not parse, or null). Without a schema the answer
+// is free text and neither field is added.
+function buildTaskStructuredFields(
+  outputSchema: unknown,
+  rawOutput: string,
+  status: number,
+  failureMessage: string,
+): { result?: unknown; parseError?: string | null } {
+  if (outputSchema === undefined || outputSchema === null) {
+    return {};
+  }
+  const parsed = parseStructuredOutput(rawOutput, { status, failureMessage });
+  return { result: parsed.parsed, parseError: parsed.parseError };
 }
 
 export function getCurrentClaudeSessionId(): string | null {
   return process.env[SESSION_ID_ENV] ?? null;
 }
 
-function isActiveJobStatus(status: string): boolean {
-  return status === 'queued' || status === 'running';
+// The job that produced a thread or session id, as a resume sees it: the
+// runtime it ran on and the role it ran as. Null when no record knows the
+// id (a Codex thread can exist outside the job index). A job's threadId is a
+// Codex thread or a Claude session; only the runtime that produced it can
+// resume it.
+export interface ResumeOwner {
+  job: JobRecord;
+  runtime: CompanionRuntime;
+  role: string | null;
 }
 
+export function describeResumeOwner(jobs: JobRecord[], threadId: string): ResumeOwner | null {
+  const job = findTrackedJobByThread(jobs, threadId);
+  if (!job) {
+    return null;
+  }
+  return {
+    job,
+    runtime: jobRuntime(job),
+    role: typeof job.role === 'string' && job.role ? job.role : null,
+  };
+}
+
+// The role a thread's owner ran as: its recorded role, else the role its job
+// kind implies (plan reviews and reviews recorded before they carried a
+// role). Null for a role-less task (a rescue run, or a task recorded before
+// roles were).
+export function resumeOwnerRole(owner: ResumeOwner | null): string | null {
+  if (!owner) {
+    return null;
+  }
+  if (owner.role) {
+    return owner.role;
+  }
+  const { kind, jobClass } = owner.job;
+  if (kind === 'plan-review') {
+    return 'plan-reviewer';
+  }
+  if (kind === 'adversarial-review') {
+    return 'adversarial-reviewer';
+  }
+  if (kind === 'review' || jobClass === 'review') {
+    return 'reviewer';
+  }
+  return null;
+}
+
+// A thread or session a role ran is resumed only as that same role: roles
+// never share one (a plan reviewer's session continued as the implementer
+// would carry the reviewer's context and its framing into the
+// implementation), and a run without a role never takes one over. The same
+// role may continue its own, as an implementer does for a fix turn. A
+// role-less owner (a rescue run, or a record from before roles were
+// recorded) is not judged.
+export function assertSameRoleResume(
+  owner: ResumeOwner | null,
+  threadId: string | null,
+  role: string | null,
+): void {
+  const ownerRole = resumeOwnerRole(owner);
+  if (!owner || !threadId || !ownerRole || ownerRole === role) {
+    return;
+  }
+  const noun = owner.runtime === 'claude' ? 'Session' : 'Thread';
+  throw new Error(
+    role
+      ? `${noun} ${threadId} belongs to ${ownerRole} job ${owner.job.id}; a role resumes only its own thread or session, so run the ${role} without --thread.`
+      : `${noun} ${threadId} belongs to ${ownerRole} job ${owner.job.id}; resume it with --role ${ownerRole}.`,
+  );
+}
+
+// Claude Code keeps a session under the directory it ran in, so a resume from
+// any other directory would find no conversation. A record without a cwd
+// (written before task records carried one) is not judged.
+export function assertResumeCwd(
+  job: JobRecord | null | undefined,
+  sessionId: string | null,
+  runCwd: string,
+): void {
+  const recorded = typeof job?.cwd === 'string' && job.cwd ? job.cwd : null;
+  if (!sessionId || !recorded || recorded === runCwd) {
+    return;
+  }
+  throw new Error(
+    `Session ${sessionId} ran in ${recorded}; resume it from there (pass --cwd '${recorded}').`,
+  );
+}
+
+export interface ResumeFitInput {
+  /** The workspace's jobs, from the same state read as its config. */
+  jobs: JobRecord[];
+  threadId: string | null;
+  /** The role the resume runs as. */
+  role: string | null;
+  /** The runtime the resume runs on. */
+  runtime: CompanionRuntime;
+  /** The directory the resume works in. */
+  runCwd: string;
+}
+
+// A `--thread` resume must fit the job that produced the id: the same role,
+// the same runtime, and for a Claude session the directory it ran in.
+export function assertResumeFits({ jobs, threadId, role, runtime, runCwd }: ResumeFitInput): void {
+  const owner = threadId ? describeResumeOwner(jobs, threadId) : null;
+  assertSameRoleResume(owner, threadId, role);
+  if (owner && owner.runtime !== runtime) {
+    throw new Error(
+      `Thread ${threadId} belongs to a ${runtimeLabel(owner.runtime)} job (${owner.job.id}); resume it with a ${runtimeLabel(owner.runtime)} --model.`,
+    );
+  }
+  if (runtime === 'claude') {
+    assertResumeCwd(owner?.job, threadId, runCwd);
+  }
+}
+
+// The job that produced a thread or session id, newest first.
+export function findTrackedJobByThread(jobs: JobRecord[], threadId: string): JobRecord | null {
+  const wanted = threadId.trim();
+  if (!wanted) {
+    return null;
+  }
+  return (
+    sortJobsNewestFirst(jobs).find(
+      (job) => typeof job.threadId === 'string' && job.threadId === wanted,
+    ) ?? null
+  );
+}
+
+// `--resume-last` continues the last rescue run: a Codex task without a
+// role. A role-bearing task belongs to a pair command and is never what
+// "continue the last Codex work" means, so the lookup skips it, as it skips
+// the Stop hook's review task and every Claude session.
 export function findLatestResumableTaskJob(jobs: JobRecord[]): JobRecord | null {
   return (
     jobs.find(
       (job) =>
         job.jobClass === 'task' &&
         job.threadId &&
+        jobRuntime(job) === 'codex' &&
+        !job.role &&
+        job.origin !== STOP_GATE_ORIGIN &&
         job.status !== 'queued' &&
         job.status !== 'running',
     ) ?? null
   );
-}
-
-export interface WaitForSingleJobOptions {
-  timeoutMs?: unknown;
-  pollIntervalMs?: unknown;
-  maxProgressLines?: number;
-  workspaceRoot?: string;
-}
-
-export interface AwaitedJobSnapshot extends SingleJobSnapshot {
-  waitTimedOut: boolean;
-  timeoutMs: number;
-}
-
-export async function waitForSingleJobSnapshot(
-  cwd: string,
-  reference: string,
-  options: WaitForSingleJobOptions = {},
-): Promise<AwaitedJobSnapshot> {
-  const timeoutMs = Math.max(0, Number(options.timeoutMs) || DEFAULT_STATUS_WAIT_TIMEOUT_MS);
-  const pollIntervalMs = Math.max(
-    100,
-    Number(options.pollIntervalMs) || DEFAULT_STATUS_POLL_INTERVAL_MS,
-  );
-  const deadline = Date.now() + timeoutMs;
-  let snapshot = buildSingleJobSnapshot(cwd, reference, {
-    maxProgressLines: options.maxProgressLines,
-    workspaceRoot: options.workspaceRoot,
-  });
-
-  while (isActiveJobStatus(snapshot.job.status) && Date.now() < deadline) {
-    await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
-    snapshot = buildSingleJobSnapshot(cwd, reference, {
-      maxProgressLines: options.maxProgressLines,
-      workspaceRoot: options.workspaceRoot,
-    });
-  }
-
-  return {
-    ...snapshot,
-    waitTimedOut: isActiveJobStatus(snapshot.job.status),
-    timeoutMs,
-  };
 }
 
 export interface ResolveLatestTaskThreadOptions {
@@ -168,7 +290,7 @@ export interface ResolveLatestTaskThreadOptions {
 export async function resolveLatestTrackedTaskThread(
   cwd: string,
   options: ResolveLatestTaskThreadOptions = {},
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; job?: JobRecord } | null> {
   const workspaceRoot = options.workspaceRoot?.trim()
     ? options.workspaceRoot
     : resolveWorkspaceRoot(cwd);
@@ -177,9 +299,7 @@ export async function resolveLatestTrackedTaskThread(
     (job) => job.id !== options.excludeJobId,
   );
   const visibleJobs = filterJobsForCurrentSession(jobs);
-  const activeTask = visibleJobs.find(
-    (job) => job.jobClass === 'task' && (job.status === 'queued' || job.status === 'running'),
-  );
+  const activeTask = visibleJobs.find((job) => job.jobClass === 'task' && isActiveJob(job));
   if (activeTask) {
     throw new Error(
       `Task ${activeTask.id} is still running. Use /stereo:status before continuing it.`,
@@ -189,9 +309,10 @@ export async function resolveLatestTrackedTaskThread(
   const trackedTask = findLatestResumableTaskJob(visibleJobs);
   if (trackedTask) {
     // findLatestResumableTaskJob only matches jobs with a truthy threadId.
-    return { id: trackedTask.threadId as string };
+    return { id: trackedTask.threadId as string, job: trackedTask };
   }
 
+  // Outside a Claude session, Codex's own thread list is searched too.
   if (sessionId) {
     return null;
   }
@@ -213,18 +334,24 @@ export interface TaskRunMetadata {
 export function buildTaskRunMetadata({
   prompt,
   resumeLast = false,
+  runtime = 'codex',
+  origin = null,
 }: {
   prompt?: string | null;
   resumeLast?: boolean;
+  runtime?: CompanionRuntime;
+  /** STOP_GATE_ORIGIN for the Stop hook's review. */
+  origin?: string | null;
 }): TaskRunMetadata {
-  if (!resumeLast && String(prompt ?? '').includes(STOP_REVIEW_TASK_MARKER)) {
+  const label = runtimeLabel(runtime);
+  if (origin === STOP_GATE_ORIGIN) {
     return {
-      title: 'Codex Stop Gate Review',
+      title: `${label} Stop Gate Review`,
       summary: 'Stop-gate review of previous Claude turn',
     };
   }
 
-  const title = resumeLast ? 'Codex Resume' : 'Codex Task';
+  const title = resumeLast ? `${label} Resume` : `${label} Task`;
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : 'Task';
   return {
     title,
@@ -236,15 +363,107 @@ export interface TaskRunRequest {
   cwd: string;
   // Durable-state/broker key; defaults to the thread cwd's repository root.
   workspaceRoot?: string | null;
+  /** Absent means Codex (records and requests written before Claude jobs existed). */
+  runtime?: CompanionRuntime;
   model?: string | null;
   effort?: string | null;
+  /** Claude only: the role agent definition the run adopts. */
+  role?: ClaudeRole | null;
+  /** Claude only: extra permission rules granted for the run. */
+  allow?: string[];
+  /** Claude only: Claude Code's Bash sandbox in the child. */
+  sandbox?: boolean;
   outputSchema?: unknown;
   prompt?: string;
   write?: boolean;
   resumeLast?: boolean;
   threadId?: string | null;
+  /** What launched the run when no user command did: STOP_GATE_ORIGIN for the Stop hook. */
+  origin?: string | null;
   jobId?: string | null;
   onProgress?: ProgressReporter | null;
+}
+
+// The job a task run produces on either runtime: one payload shape, one
+// rendering, and one summary; `capture` adds the runtime's own record of the
+// commands and files the run touched.
+function buildTaskExecution(
+  request: TaskRunRequest,
+  taskMetadata: TaskRunMetadata,
+  result: CompanionTurn & { touchedFiles: string[] },
+  capture: object,
+): CompanionExecution {
+  const { title } = taskMetadata;
+  const rawOutput = typeof result.finalMessage === 'string' ? result.finalMessage : '';
+  const failureMessage = turnFailureMessage(result);
+  const failed = result.status !== 0 && Boolean(failureMessage);
+  return {
+    ...turnExecutionFields(result),
+    ...(failed ? { errorMessage: failureMessage } : {}),
+    payload: {
+      status: result.status,
+      threadId: result.threadId,
+      rawOutput,
+      touchedFiles: result.touchedFiles,
+      reasoningSummary: result.reasoningSummary,
+      effort: request.effort ?? null,
+      ...buildTaskStructuredFields(request.outputSchema, rawOutput, result.status, failureMessage),
+      ...(failed ? { error: failureMessage } : {}),
+      ...capture,
+      ...droppedNotificationsField(result),
+    },
+    rendered: renderTaskResult(
+      { rawOutput, failureMessage, reasoningSummary: result.reasoningSummary },
+      {
+        title,
+        jobId: request.jobId ?? null,
+        write: Boolean(request.write),
+        touchedFiles: result.touchedFiles,
+        status: result.status,
+        deniedTargets: (result.claude?.permissionDenials ?? []).map(
+          (denial) => denial.target ?? denial.tool,
+        ),
+      },
+    ),
+    summary: failed
+      ? firstMeaningfulLine(failureMessage, `${title} failed.`)
+      : firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${title} finished.`)),
+    jobTitle: title,
+    jobClass: 'task',
+    write: Boolean(request.write),
+  };
+}
+
+// A Claude role turn: same request, same payload shape (rawOutput carries the
+// final text, so every consumer of a Codex task result reads it unchanged),
+// plus the commands it ran and a `claude` envelope with the cost and denials.
+// It resumes only the session --thread names (--resume-last is Codex-only).
+async function executeClaudeTaskRun(
+  request: TaskRunRequest,
+  threadCwd: string,
+  taskMetadata: TaskRunMetadata,
+): Promise<CompanionExecution> {
+  const resumeSessionId = request.threadId ?? null;
+  requireTaskRequest(request.prompt, Boolean(resumeSessionId));
+  const result = await runRoleTurn('claude', {
+    cwd: threadCwd,
+    model: request.model,
+    effort: request.effort,
+    role: request.role ?? null,
+    prompt: request.prompt || DEFAULT_CONTINUE_PROMPT,
+    resumeId: resumeSessionId,
+    outputSchema: request.outputSchema,
+    onProgress: request.onProgress,
+    jobId: request.jobId,
+    claude: { allow: request.allow ?? [], sandbox: Boolean(request.sandbox) },
+  });
+  return buildTaskExecution(request, taskMetadata, result, {
+    ...captureCommandTail(result.commandExecutions),
+    // Compared with each command's `order`: a check that ran before the last
+    // edit did not verify the final tree.
+    lastEditOrder: result.lastEditOrder,
+    claude: result.claude,
+  });
 }
 
 export async function executeTaskRun(request: TaskRunRequest): Promise<CompanionExecution> {
@@ -257,7 +476,12 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
   const taskMetadata = buildTaskRunMetadata({
     prompt: request.prompt,
     resumeLast: request.resumeLast,
+    runtime: request.runtime,
+    origin: request.origin,
   });
+  if (request.runtime === 'claude') {
+    return executeClaudeTaskRun(request, threadCwd, taskMetadata);
+  }
 
   let resumeThreadId = request.threadId ?? null;
   if (!resumeThreadId && request.resumeLast) {
@@ -273,65 +497,27 @@ export async function executeTaskRun(request: TaskRunRequest): Promise<Companion
 
   requireTaskRequest(request.prompt, Boolean(resumeThreadId));
 
-  const result = await runAppServerTurn(threadCwd, {
-    resumeThreadId,
-    prompt: request.prompt,
-    defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : '',
+  const result = await runRoleTurn('codex', {
+    cwd: threadCwd,
     model: request.model,
     effort: request.effort,
+    role: null,
+    prompt: request.prompt ?? '',
+    resumeId: resumeThreadId,
     outputSchema: request.outputSchema,
-    sandbox: request.write ? 'workspace-write' : 'read-only',
     onProgress: request.onProgress,
-    jobId: request.jobId ?? null,
-    jobPid: process.pid,
-    persistThread: true,
-    threadName: resumeThreadId
-      ? null
-      : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT),
-    brokerCwd: workspaceRoot,
+    jobId: request.jobId,
+    codex: {
+      defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : '',
+      sandbox: request.write ? 'workspace-write' : 'read-only',
+      persistThread: true,
+      threadName: resumeThreadId
+        ? null
+        : request.origin === STOP_GATE_ORIGIN
+          ? STOP_GATE_THREAD_NAME
+          : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT),
+      brokerCwd: workspaceRoot,
+    },
   });
-
-  const rawOutput = typeof result.finalMessage === 'string' ? result.finalMessage : '';
-  const failureMessage =
-    (result.error as { message?: string } | null | undefined)?.message ?? result.stderr ?? '';
-  const rendered = renderTaskResult(
-    {
-      rawOutput,
-      failureMessage,
-      reasoningSummary: result.reasoningSummary,
-    },
-    {
-      title: taskMetadata.title,
-      jobId: request.jobId ?? null,
-      write: Boolean(request.write),
-      touchedFiles: result.touchedFiles,
-    },
-  );
-  const payload = {
-    status: result.status,
-    threadId: result.threadId,
-    rawOutput,
-    touchedFiles: result.touchedFiles,
-    reasoningSummary: result.reasoningSummary,
-    ...buildTaskCapturePayload(result),
-    ...(result.droppedNotifications > 0
-      ? { droppedNotifications: result.droppedNotifications }
-      : {}),
-  };
-
-  return {
-    exitStatus: result.status,
-    threadId: result.threadId,
-    turnId: result.turnId,
-    ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
-    payload,
-    rendered,
-    summary: firstMeaningfulLine(
-      rawOutput,
-      firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`),
-    ),
-    jobTitle: taskMetadata.title,
-    jobClass: 'task',
-    write: Boolean(request.write),
-  };
+  return buildTaskExecution(request, taskMetadata, result, buildTaskCapturePayload(result));
 }

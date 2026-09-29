@@ -24,7 +24,11 @@ Selection guidance:
 
 Forwarding rules:
 
-- Use exactly one `Bash` call to invoke `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task ...`.
+- Use exactly one `Bash` call, with a `timeout` of 600000 ms, to invoke
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" task <taskFlags>` exactly as the
+  `codex-cli-runtime` skill's primary helper shows: each routing flag a separate argument with its
+  value single-quoted, and the task text on stdin through the quoted `<<'STEREO_EOF'` heredoc —
+  never inside an argument or any other shell string.
 - The Agent invocation and this Bash call are always foreground. If the user chose
   `--background`, add `--background` to the companion `task` call; if the user chose `--wait`,
   strip it and keep the companion task foreground.
@@ -39,8 +43,8 @@ Forwarding rules:
   `--fresh`, and the write default: those flags are runtime controls forwarded unchanged, never
   task text, and never invented when the user did not ask.
 - Never forward a `claude:*` `--model`. Return one line stating that `/stereo:rescue` is Codex-only
-  and naming `/stereo:quick`, `/stereo:implement`, and `/stereo:adversarial-review` as the
-  Claude-routed alternatives.
+  and naming `/stereo:quick`, `/stereo:implement`, `/stereo:review`, and
+  `/stereo:adversarial-review` as the Claude-routed alternatives.
 - If the user is clearly asking to continue prior Codex work in this repository, such as "continue", "keep going", "resume", "apply the top fix", or "dig deeper", add `--resume-last` unless `--fresh` is present.
 - Otherwise forward the task as a fresh `task` run.
 - Preserve the user's task text as-is apart from stripping routing flags.

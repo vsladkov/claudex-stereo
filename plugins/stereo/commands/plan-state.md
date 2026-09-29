@@ -17,35 +17,37 @@ plan document it will not use. With no arguments, run
 an explicit `--slot`,
 run the requested companion command and present that output instead.
 
-Apply at most one action:
+Apply at most one action. Compose every command below from the parsed flags, each slot name its own
+single-quoted argument (an embedded `'` written as `'"'"'`; the companion rejects such a name
+anyway), and never pass `$ARGUMENTS` itself through the shell:
 
 - With `--list`, run
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --list` and present the slot
   inventory verbatim. `--list` does not combine with `--slot`.
 - With `--compare <slotA> <slotB>`, run
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --compare <slotA> <slotB>` and
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --compare '<slotA>' '<slotB>'` and
   present the comparison verbatim: both metadata blocks and the plan diff. `--compare` names both
   slots, so it does not combine with `--slot` or another action. Both slots must hold a stored plan;
   on a missing-slot error, relay the message and point the user at
   `/stereo:plan-state --list`. When the diff is suppressed, relay the export hint instead of
   attempting a diff yourself.
 - With `--open`, run
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --open [--slot <slot>]` and
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --open [--slot '<slot>']` and
   relay the exported path and whether VS Code opened.
 - With `--clear` and an explicit slot, first run
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --metadata --json --slot <slot>` and use
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --metadata --json --slot '<slot>'` and use
   its summary, verdict, round, and `updatedAt` to describe that exact slot in the confirmation.
   Then use `AskUserQuestion` exactly once with `Delete the plan in slot <slot>` and
   `Keep it (Recommended)`. Without an explicit slot, retain the existing question:
   `Delete the stored plan and any implementation record` and `Keep it (Recommended)`. Run
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --clear [--slot <slot>]` only
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --clear [--slot '<slot>']` only
   when deletion is confirmed.
 - With `--mark-implemented`, run
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implemented [--slot <slot>]`
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --mark-implemented [--slot '<slot>']`
   and note that this marker is normally set automatically by `/stereo:implement` after a
   successful full phase.
 - With an explicit `--slot` and no action, run
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --slot <slot>`.
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" plan-state --slot '<slot>'`.
 
 Present the full command output to the user. Do not summarize or condense it.
 When the output includes the stored plan document (the no-argument and `--slot` reads), render

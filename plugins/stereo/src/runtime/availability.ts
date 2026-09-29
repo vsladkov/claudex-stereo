@@ -1,6 +1,6 @@
 import { BROKER_ENDPOINT_ENV } from '../protocol/broker-rpc.ts';
 import { loadBrokerSession } from '../broker/lifecycle.ts';
-import { binaryAvailable, processHasExited } from '../platform/process.ts';
+import { PROBE_TIMEOUT_MS, binaryAvailable, processHasExited } from '../platform/process.ts';
 import type { BinaryAvailability } from '../platform/process.ts';
 
 export interface SessionRuntimeStatus {
@@ -16,13 +16,18 @@ export interface CodexAvailabilityOptions {
 
 const availabilityCache = new Map<string, BinaryAvailability>();
 
+// Each probe is bounded: a `codex` that hangs reads as unavailable ("codex
+// --version timed out after 15000 ms") instead of hanging a launch or setup.
 function probeCodexAvailability(cwd: string, probe: typeof binaryAvailable): BinaryAvailability {
-  const versionStatus = probe('codex', ['--version'], { cwd });
+  const versionStatus = probe('codex', ['--version'], { cwd, timeout: PROBE_TIMEOUT_MS });
   if (!versionStatus.available) {
     return versionStatus;
   }
 
-  const appServerStatus = probe('codex', ['app-server', '--help'], { cwd });
+  const appServerStatus = probe('codex', ['app-server', '--help'], {
+    cwd,
+    timeout: PROBE_TIMEOUT_MS,
+  });
   if (!appServerStatus.available) {
     return {
       available: false,
@@ -41,6 +46,9 @@ function probeCodexAvailability(cwd: string, probe: typeof binaryAvailable): Bin
 export function resetCodexAvailabilityCache(): void {
   availabilityCache.clear();
 }
+
+export const CODEX_CLI_MISSING_ERROR =
+  'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.';
 
 export function getCodexAvailability(
   cwd: string,

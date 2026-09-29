@@ -5,22 +5,24 @@ disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-Run:
+Raw slash-command arguments:
+`$ARGUMENTS`
+
+Parse them before running anything: the only accepted flag is `--reset-job-announcements`, at most
+once. Reject any other token, naming the accepted flag. `<doctorFlags>` is that flag as its own
+argument, or nothing; never pass the raw arguments through the shell. Run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" doctor "$ARGUMENTS --json"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.ts" doctor --json <doctorFlags>
 ```
 
 Output rules:
 
-- Present the complete diagnostics output after the embedded setup report.
-- Preserve every reported path verbatim, especially the broker log, durable state directory, and
-  stranded-worktree removal commands.
-- When an implementation record is in progress, name `/stereo:implement --resume` as the
-  continuation path.
-- Report the tournament record and, when it is in progress, name `/stereo:tournament --resume` as
-  the continuation path.
-- Describe an unavailable model-catalog check as "not checked"; it is never a diagnostics
-  failure.
-- Point to `/stereo:setup` for installation, authentication, sandbox, provider, or rate-limit
-  remediation.
+- Print the payload's `rendered` field verbatim — the complete diagnostics, the embedded setup
+  report included — and relay its next steps. Never reconstruct, paraphrase, reorder, or shorten
+  it, and preserve every path exactly, especially the broker log, the durable state directory,
+  and the stranded-worktree removal commands.
+- A stalled job's next step is `/stereo:cancel <id>`, which settles it; doctor itself never changes
+  a job.
+- Point to `/stereo:setup` for Codex or Claude Code installation, authentication, sandbox,
+  provider, or rate-limit remediation.

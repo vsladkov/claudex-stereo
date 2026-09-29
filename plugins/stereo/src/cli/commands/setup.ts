@@ -1,7 +1,10 @@
 import process from 'node:process';
 
 import {
+  CLAUDE_MIN_VERSION,
   describeStrandedReservation,
+  getClaudeAuthStatus,
+  getClaudeAvailability,
   getCodexAuthStatus,
   getCodexAvailability,
   getAccountRateLimits,
@@ -10,13 +13,14 @@ import {
   listStrandedThreadReservations,
 } from '../../runtime/index.ts';
 import { binaryAvailable } from '../../platform/process.ts';
-import { MODEL_REGISTRY } from '../../models/registry.ts';
-import { describeRoleDefaults } from '../../models/role-defaults.ts';
+import { describeCodexCatalogSource, loadCodexCatalog } from '../../models/catalog.ts';
+import { describeModels, MODEL_REGISTRY } from '../../models/registry.ts';
 import { getConfig, setConfig } from '../../workspace/state.ts';
 import { resolveWorkspaceRoot } from '../../workspace/workspace.ts';
 import { renderSetupReport } from '../../render/render.ts';
-import { parseCommandInput, resolveCommandCwd, resolveCommandWorkspace } from '../io.ts';
-import { outputResult } from '../../shared/text.ts';
+import type { ModelListing } from '../../render/render.ts';
+import { describeRoleDefaults } from '../launch.ts';
+import { outputReportResult, parseCommandInput, resolveCommandCwd } from '../io.ts';
 
 export interface SetupDeps {
   binaryAvailable: typeof binaryAvailable;
@@ -25,6 +29,8 @@ export interface SetupDeps {
   getCodexAuthStatus: typeof getCodexAuthStatus;
   getAccountRateLimits: typeof getAccountRateLimits;
   listStrandedThreadReservations: typeof listStrandedThreadReservations;
+  getClaudeAvailability: typeof getClaudeAvailability;
+  getClaudeAuthStatus: typeof getClaudeAuthStatus;
   env?: NodeJS.ProcessEnv;
   nodeVersion?: string;
 }
@@ -38,6 +44,8 @@ export const defaultSetupDeps: SetupDeps = {
   getCodexAuthStatus,
   getAccountRateLimits,
   listStrandedThreadReservations,
+  getClaudeAvailability,
+  getClaudeAuthStatus,
 };
 
 export async function buildSetupReport(
@@ -50,11 +58,21 @@ export async function buildSetupReport(
   const nodeStatus = deps.binaryAvailable('node', ['--version'], { cwd });
   const npmStatus = deps.binaryAvailable('npm', ['--version'], { cwd });
   const codexStatus = deps.getCodexAvailability(cwd);
+  // Claude roles run through the Claude Code CLI itself; both probes are local
+  // commands, so setup can always report them.
+  const claudeStatus = deps.getClaudeAvailability(cwd);
+  const claudeAuth = claudeStatus.available ? deps.getClaudeAuthStatus(cwd) : null;
   const writeSandbox = codexStatus.available ? deps.getCodexWriteSandboxStatus(cwd) : null;
-  const authStatus = await deps.getCodexAuthStatus(cwd);
+  const authStatus = await deps.getCodexAuthStatus(cwd, { forceCatalogRefresh: true });
   const rateLimits = codexStatus.available ? await deps.getAccountRateLimits(cwd) : null;
   const config = getConfig(workspaceRoot);
   const strandedReservations = deps.listStrandedThreadReservations();
+  // Read after the auth check above, which refreshes the catalog: a failed
+  // fetch or an unusable cache is named among the next steps.
+  const catalogProblems = codexStatus.available ? loadCodexCatalog().problems : [];
+  // A role default the account cannot run is warned about here, judged by
+  // the launch resolver against the catalog just refreshed.
+  const describedRoles = await describeRoleDefaults(config.roleDefaults);
   const configuredProviders = authStatus.configuredProviders.map((provider) => ({
     ...provider,
     keySet: provider.envKey ? Boolean(env[provider.envKey]) : null,
@@ -104,6 +122,13 @@ export async function buildSetupReport(
       'If browser login is blocked, retry with `!codex login --device-auth` or `!codex login --with-api-key`.',
     );
   }
+  if (!claudeStatus.available) {
+    nextSteps.push(
+      `Claude roles (claude:<family>[-<version>]) are unavailable: ${claudeStatus.detail}. Install or update Claude Code to ${CLAUDE_MIN_VERSION} or newer; Codex roles are unaffected.`,
+    );
+  } else if (claudeAuth && !claudeAuth.loggedIn) {
+    nextSteps.push('Run `claude auth login` so Claude roles can launch.');
+  }
   if (writeSandbox?.available === false) {
     nextSteps.push(
       `Write-capable runs (\`/stereo:implement\` and \`task --write\`) will fail because the Codex write sandbox could not start: ${writeSandbox.detail}. On Ubuntu 24.04, this may be caused by the common \`kernel.apparmor_restrict_unprivileged_userns=1\` setting.`,
@@ -112,12 +137,15 @@ export async function buildSetupReport(
   for (const reservation of strandedReservations) {
     nextSteps.push(describeStrandedReservation(reservation));
   }
+  nextSteps.push(...catalogProblems, ...describedRoles.warnings);
   const unconfiguredAliases = aliases.filter((entry) => !entry.configured);
   if (unconfiguredAliases.length > 0) {
     nextSteps.push(
       `Optional: third-party aliases without a configured provider: ${unconfiguredAliases
         .map((entry) => `codex:${entry.alias} (${entry.providerId})`)
-        .join(', ')} — see README "Other model providers" and npm run provider-probe.`,
+        .join(
+          ', ',
+        )} — see "Other model providers" in the project README at github.com/vsladkov/claudex-stereo.`,
     );
   }
   for (const provider of configuredProviders) {
@@ -134,14 +162,27 @@ export async function buildSetupReport(
   }
 
   return {
+    // The built-in planner and implementer are Claude roles, so a missing,
+    // too-old, or logged-out Claude CLI is as blocking as a Codex problem.
     ready:
-      nodeStatus.available && nodeEngine.supported && codexStatus.available && authStatus.loggedIn,
+      nodeStatus.available &&
+      nodeEngine.supported &&
+      codexStatus.available &&
+      authStatus.loggedIn &&
+      claudeStatus.available &&
+      claudeAuth?.loggedIn === true,
     node: nodeStatus,
     nodeEngine,
     npm: npmStatus,
     codex: codexStatus,
     writeSandbox,
     auth: authStatus,
+    claude: {
+      available: claudeStatus.available,
+      detail: claudeStatus.detail,
+      version: claudeStatus.version,
+    },
+    claudeAuth: claudeAuth ? { loggedIn: claudeAuth.loggedIn, detail: claudeAuth.detail } : null,
     rateLimits,
     providers: {
       active: authStatus.provider,
@@ -151,9 +192,21 @@ export async function buildSetupReport(
     sessionRuntime: getSessionRuntimeStatus(env, workspaceRoot),
     strandedReservations,
     reviewGateEnabled: Boolean(config.stopReviewGate),
-    roleDefaults: describeRoleDefaults(config.roleDefaults).entries,
+    roleDefaults: describedRoles.entries,
     actionsTaken,
     nextSteps,
+  };
+}
+
+// The model listing setup renders beside its report (never a JSON field): the
+// Claude table, and the Codex catalog with its source when Codex is installed.
+export function describeSetupModels(codexAvailable: boolean): ModelListing {
+  const catalog = codexAvailable ? loadCodexCatalog() : null;
+  return {
+    ...describeModels(catalog),
+    catalogSource: catalog
+      ? `${describeCodexCatalogSource(catalog)}${catalog.path ? ` at ${catalog.path}` : ''}`
+      : null,
   };
 }
 
@@ -168,7 +221,7 @@ export async function handleSetup(argv: string[]): Promise<void> {
   }
 
   const cwd = resolveCommandCwd(options);
-  const workspaceRoot = resolveCommandWorkspace(options);
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
   const actionsTaken: string[] = [];
 
   if (options['enable-review-gate']) {
@@ -180,5 +233,9 @@ export async function handleSetup(argv: string[]): Promise<void> {
   }
 
   const finalReport = await buildSetupReport(cwd, actionsTaken);
-  outputResult(options.json ? finalReport : renderSetupReport(finalReport), options.json);
+  outputReportResult(
+    finalReport,
+    renderSetupReport(finalReport, describeSetupModels(finalReport.codex.available)),
+    options.json,
+  );
 }

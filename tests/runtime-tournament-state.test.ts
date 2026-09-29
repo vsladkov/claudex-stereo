@@ -3,15 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { loadBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import { initGitRepo, makeTempDir } from './helpers.ts';
-import { registerBrokerReaping, runCliInProcess } from './runtime-helpers.ts';
+import { runCliInProcess } from './runtime-helpers.ts';
 import {
   fingerprintPlanText,
   resolveDurableStateDir,
   resolveTournamentStateFile,
 } from '../plugins/stereo/src/workspace/state.ts';
 
-registerBrokerReaping();
+// `tournament-state` only reads and writes the workspace's durable state: it
+// never launches a runtime or a broker, so this file spawns nothing that
+// would need reaping and runs on the Windows lane.
 
 function setupRepo(): { repo: string; env: NodeJS.ProcessEnv } {
   const repo = makeTempDir();
@@ -143,6 +146,7 @@ test('tournament-state --record snapshots the plan and round-trips the durable l
   assert.equal(read.status, 0, read.stderr);
   assert.deepEqual(JSON.parse(read.stdout).record, payload.record);
   assert.equal(JSON.parse(read.stdout).planMatches, true);
+  assert.equal(loadBrokerSession(repo), null, 'tournament-state never starts a workspace broker');
 });
 
 test('tournament-state validates record payload JSON, size, baseline, and contestants', async () => {

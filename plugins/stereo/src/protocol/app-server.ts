@@ -14,6 +14,9 @@ import type {
   GetAccountRateLimitsResponse,
   GetAccountResponse,
   MigrationDetails,
+  Model,
+  ModelListParams,
+  ModelListResponse,
   RateLimitSnapshot,
   ReviewDelivery,
   ReviewStartParams,
@@ -50,6 +53,9 @@ export type {
   InitializeParams,
   InitializeResponse,
   MigrationDetails,
+  Model,
+  ModelListParams,
+  ModelListResponse,
   RateLimitSnapshot,
   ReviewDelivery,
   ReviewStartResponse,
@@ -95,6 +101,7 @@ export interface AppServerMethodMap {
   'thread/resume': { params: ThreadResumeParams; result: ThreadResumeResponse };
   'thread/name/set': { params: ThreadSetNameParams; result: ThreadSetNameResponse };
   'thread/list': { params: ThreadListParams; result: ThreadListResponse };
+  'model/list': { params: ModelListParams; result: ModelListResponse };
   'review/start': { params: ReviewStartParams; result: ReviewStartResponse };
   'turn/start': { params: TurnStartParams; result: TurnStartResponse };
   'turn/interrupt': { params: TurnInterruptParams; result: TurnInterruptResponse };

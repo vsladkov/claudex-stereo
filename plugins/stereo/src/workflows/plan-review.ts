@@ -1,12 +1,6 @@
 import path from 'node:path';
-import process from 'node:process';
 
-import {
-  buildPersistentPairThreadName,
-  parseStructuredOutput,
-  readOutputSchema,
-  runAppServerTurn,
-} from '../runtime/index.ts';
+import { buildPersistentPairThreadName, readOutputSchema } from '../runtime/index.ts';
 import type { ProgressReporter } from '../runtime/index.ts';
 import { listRepositoryFiles } from '../platform/git.ts';
 import { loadPromptTemplate, interpolateTemplate } from '../shared/prompts.ts';
@@ -15,8 +9,21 @@ import { serializeRepositoryMap } from '../workspace/repo-map.ts';
 import { nowIso, planSlotOrDefault, savePairPlanState } from '../workspace/state.ts';
 import { resolveWorkspaceRoot } from '../workspace/workspace.ts';
 import { renderPlanReviewResult } from '../render/render.ts';
+import { jobRuntime, runtimeLabel } from '../shared/runtime.ts';
+import type { CompanionRuntime } from '../shared/runtime.ts';
+import { recordLike } from '../shared/json.ts';
 import { firstMeaningfulLine } from '../shared/text.ts';
+import {
+  droppedNotificationsField,
+  parseTurnOutput,
+  runRoleTurn,
+  turnEnvelope,
+  turnExecutionFields,
+} from './companion-jobs.ts';
 import type { CompanionExecution } from './companion-jobs.ts';
+
+// The role a plan review runs as, recorded on its job and request.
+export const PLAN_REVIEWER_ROLE = 'plan-reviewer';
 
 const PLAN_REVIEW_SCHEMA = path.join(SCHEMAS_DIR, 'plan-review-output.schema.json');
 const PLAN_REVIEW_REVISION_CONTEXT =
@@ -33,8 +40,9 @@ export function normalizePlanReviewRound(round: unknown): number {
   return parsed;
 }
 
-export function buildPlanReviewTitle(round: number): string {
-  return round > 1 ? `Codex Plan Review (round ${round})` : 'Codex Plan Review';
+export function buildPlanReviewTitle(round: number, runtime: CompanionRuntime = 'codex'): string {
+  const label = runtimeLabel(runtime);
+  return round > 1 ? `${label} Plan Review (round ${round})` : `${label} Plan Review`;
 }
 
 // The structured reviewer verdict as far as the plan-state store reads it.
@@ -61,8 +69,12 @@ export interface PlanReviewRunRequest {
   // --workspace keys state/jobs/broker, --cwd sets the thread cwd). Absent
   // means both key off cwd, the pre---workspace behavior.
   workspaceRoot?: string | null;
+  /** Absent means Codex (requests written before Claude jobs existed). */
+  runtime?: CompanionRuntime;
   model?: string | null;
   effort?: string | null;
+  /** PLAN_REVIEWER_ROLE, recorded like a task's role. */
+  role?: string;
   plan: string;
   slot?: string | null;
   threadId?: string | null;
@@ -72,18 +84,12 @@ export interface PlanReviewRunRequest {
 }
 
 function isPersistablePlanReview(value: unknown): value is ParsedPlanReviewResult {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return false;
-  }
-  const verdict = (value as { verdict?: unknown }).verdict;
+  const verdict = recordLike(value)?.verdict;
   return typeof verdict === 'string' && verdict.trim().length > 0;
 }
 
 function readObjectSummary(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-  const summary = (value as { summary?: unknown }).summary;
+  const summary = recordLike(value)?.summary;
   return typeof summary === 'string' && summary.trim().length > 0 ? summary : null;
 }
 
@@ -132,49 +138,44 @@ export async function executePlanReviewRun(
           REVISION_CONTEXT: '',
         });
 
-  const result = await runAppServerTurn(threadCwd, {
-    brokerCwd: workspaceRoot,
-    resumeThreadId: request.threadId ?? null,
-    prompt,
+  const runtime = jobRuntime(request);
+  const result = await runRoleTurn(runtime, {
+    cwd: threadCwd,
     model: request.model,
     effort: request.effort,
-    sandbox: 'read-only',
+    role: PLAN_REVIEWER_ROLE,
+    prompt,
+    resumeId: request.threadId,
     outputSchema: readOutputSchema(PLAN_REVIEW_SCHEMA),
-    persistThread: true,
-    threadName: request.threadId ? null : buildPersistentPairThreadName(request.plan),
     onProgress: request.onProgress,
-    jobId: request.jobId ?? null,
-    jobPid: process.pid,
+    jobId: request.jobId,
+    codex: {
+      brokerCwd: workspaceRoot,
+      sandbox: 'read-only',
+      persistThread: true,
+      threadName: request.threadId ? null : buildPersistentPairThreadName(request.plan),
+    },
   });
-  const parsed = parseStructuredOutput(result.finalMessage, {
-    status: result.status,
-    failureMessage:
-      (result.error as { message?: string } | null | undefined)?.message ?? result.stderr,
-  });
+  const parsed = parseTurnOutput(result);
   // A parseable answer without a verdict is still reported by the renderer,
   // but must not replace the last good durable pair-plan state.
   const parsedPlanReview = isPersistablePlanReview(parsed.parsed) ? parsed.parsed : null;
   const threadId = result.threadId ?? request.threadId ?? null;
+  // The id that reviewed the plan: for Codex the catalog slug the request
+  // already carries, for Claude the id the run served.
+  const reviewedModel = result.servedModel ?? request.model ?? null;
   const payload = {
     review: 'Plan Review',
     round,
     threadId,
-    model: request.model ?? null,
+    model: reviewedModel,
     effort: request.effort ?? null,
-    // rawOutput and reasoningSummary below are the canonical copies; the
-    // codex envelope repeating them cost thousands of duplicated output
-    // tokens per --json read.
-    codex: {
-      status: result.status,
-      stderr: result.stderr,
-    },
+    ...turnEnvelope(result),
     result: parsed.parsed,
     rawOutput: parsed.rawOutput,
     parseError: parsed.parseError,
     reasoningSummary: result.reasoningSummary,
-    ...(result.droppedNotifications > 0
-      ? { droppedNotifications: result.droppedNotifications }
-      : {}),
+    ...droppedNotificationsField(result),
   };
 
   if (parsedPlanReview) {
@@ -182,9 +183,6 @@ export async function executePlanReviewRun(
       workspaceRoot,
       {
         plan: request.plan,
-        threadId,
-        model: request.model ?? null,
-        effort: request.effort ?? null,
         round,
         verdict: parsedPlanReview.verdict ?? null,
         summary: parsedPlanReview.summary ?? null,
@@ -196,7 +194,7 @@ export async function executePlanReviewRun(
         // Mirrors plan-store's --reviewed-by so every stored verdict names its
         // reviewer; omitting it left Codex-reviewed plans without attribution in
         // the implement/tournament "by reviewedBy when present" preambles.
-        reviewedBy: request.model ? `codex:${request.model}` : 'codex',
+        reviewedBy: reviewedModel ? `${runtime}:${reviewedModel}` : runtime,
         updatedAt: nowIso(),
       },
       planSlotOrDefault(request.slot),
@@ -204,17 +202,18 @@ export async function executePlanReviewRun(
   }
 
   return {
-    exitStatus: result.status,
-    threadId: result.threadId,
-    turnId: result.turnId,
-    ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
+    ...turnExecutionFields(result),
     payload,
-    rendered: renderPlanReviewResult(parsed, { round, reasoningSummary: result.reasoningSummary }),
+    rendered: renderPlanReviewResult(parsed, {
+      round,
+      reasoningSummary: result.reasoningSummary,
+      runtime,
+    }),
     summary:
       readObjectSummary(parsed.parsed) ??
       parsed.parseError ??
       firstMeaningfulLine(result.finalMessage, 'Plan review finished.'),
-    jobTitle: buildPlanReviewTitle(round),
+    jobTitle: buildPlanReviewTitle(round, runtime),
     jobClass: 'review',
   };
 }

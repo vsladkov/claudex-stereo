@@ -27,7 +27,8 @@ export function parseStructuredOutput(
     return {
       ...fallback,
       parsed: null,
-      parseError: fallback.failureMessage ?? 'Codex did not return a final structured message.',
+      parseError:
+        fallback.failureMessage ?? 'The runtime did not return a final structured message.',
       rawOutput: rawOutput ?? '',
     };
   }

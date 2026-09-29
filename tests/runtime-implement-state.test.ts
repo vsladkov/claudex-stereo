@@ -3,15 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { loadBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import { initGitRepo, makeTempDir } from './helpers.ts';
-import { registerBrokerReaping, runCliInProcess } from './runtime-helpers.ts';
+import { runCliInProcess } from './runtime-helpers.ts';
 import {
   fingerprintPlanText,
   resolveDurableStateDir,
   resolveImplementStateFile,
 } from '../plugins/stereo/src/workspace/state.ts';
 
-registerBrokerReaping();
+// `implement-state` only reads and writes the workspace's durable state: it
+// never launches a runtime or a broker, so this file spawns nothing that
+// would need reaping and runs on the Windows lane.
 
 function setupRepo(): { repo: string; env: NodeJS.ProcessEnv } {
   const repo = makeTempDir();
@@ -130,6 +133,7 @@ test('implement-state --record snapshots the plan and round-trips durable launch
   const read = await runImplementState(repo, env, ['--json']);
   assert.equal(read.status, 0, read.stderr);
   assert.deepEqual(JSON.parse(read.stdout).record, payload.record);
+  assert.equal(loadBrokerSession(repo), null, 'implement-state never starts a workspace broker');
 });
 
 test('implement-state validates record payload shape, JSON, size, and baseline commit', async () => {

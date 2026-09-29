@@ -54,7 +54,7 @@ test('parseStructuredOutput uses the default message when output and failureMess
   for (const missing of [null, undefined, '']) {
     const result = parseStructuredOutput(missing);
     assert.equal(result.parsed, null);
-    assert.equal(result.parseError, 'Codex did not return a final structured message.');
+    assert.equal(result.parseError, 'The runtime did not return a final structured message.');
     assert.equal(result.rawOutput, '');
   }
 });

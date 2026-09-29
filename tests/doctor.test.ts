@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildDoctorReport, handleDoctor } from '../plugins/stereo/src/cli/commands/doctor.ts';
-import type { DoctorDeps } from '../plugins/stereo/src/cli/commands/doctor.ts';
-import type { buildSetupReport } from '../plugins/stereo/src/cli/commands/setup.ts';
-import { readModelCatalogDrift } from '../plugins/stereo/src/models/catalog-cache.ts';
-import { MODEL_REGISTRY } from '../plugins/stereo/src/models/registry.ts';
+import {
+  buildDoctorReport,
+  findStalledJobs,
+  handleDoctor,
+} from '../plugins/stereo/src/cli/commands/doctor.ts';
 import { parseWorktreePorcelain } from '../plugins/stereo/src/platform/git.ts';
 import { renderDoctorReport } from '../plugins/stereo/src/render/render.ts';
+import { COMPANION_ENTRY } from '../plugins/stereo/src/shared/paths.ts';
 import type { DoctorRenderReport } from '../plugins/stereo/src/render/render.ts';
 import {
   getConfig,
@@ -17,85 +17,13 @@ import {
   saveImplementState,
   saveTournamentState,
   setConfig,
+  upsertJob,
+  writeJobFile,
 } from '../plugins/stereo/src/workspace/state.ts';
-import { makeTempDir } from './helpers.ts';
-
-function setupReport(): Awaited<ReturnType<typeof buildSetupReport>> {
-  return {
-    ready: true,
-    node: { available: true, detail: 'ok' },
-    nodeEngine: {
-      version: '24.0.0',
-      major: 24,
-      supported: true,
-      detail: 'v24.0.0 (>= 24 required)',
-    },
-    npm: { available: true, detail: 'ok' },
-    codex: { available: true, detail: 'ok' },
-    writeSandbox: { available: true, detail: 'ok' },
-    auth: {
-      available: true,
-      loggedIn: true,
-      detail: 'ok',
-      source: 'app-server',
-      authMethod: 'chatgpt',
-      verified: true,
-      requiresOpenaiAuth: true,
-      provider: 'openai',
-      configuredProviders: [],
-    },
-    rateLimits: null,
-    providers: { active: 'openai', configured: [], aliases: [] },
-    sessionRuntime: {
-      mode: 'direct',
-      label: 'direct startup',
-      detail: 'fixture runtime',
-      endpoint: null,
-    },
-    strandedReservations: [],
-    reviewGateEnabled: false,
-    roleDefaults: [],
-    actionsTaken: [],
-    nextSteps: [],
-  };
-}
-
-function catalogReport(): ReturnType<typeof readModelCatalogDrift> {
-  return {
-    available: false,
-    path: '/catalog/models_cache.json',
-    reason: 'fixture unavailable',
-    fetchedAt: null,
-    clientVersion: null,
-    entries: [],
-    warnings: [],
-  };
-}
-
-function doctorDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
-  return {
-    buildSetupReport: async () => setupReport(),
-    loadBrokerSession: () => null,
-    probeBrokerEndpoint: async () => false,
-    processHasExited: () => false,
-    listWorktrees: () => ({ available: true, entries: [], detail: null }),
-    readModelCatalogDrift: () => catalogReport(),
-    ...overrides,
-  };
-}
+import { captureStdout, doctorDeps, makeTempDir, setupReportFixture } from './helpers.ts';
 
 async function captureJsonOutput(runCommand: () => Promise<void>): Promise<unknown> {
-  const originalLog = console.log;
-  let stdout = '';
-  console.log = (...values: unknown[]) => {
-    stdout += `${values.map(String).join(' ')}\n`;
-  };
-  try {
-    await runCommand();
-  } finally {
-    console.log = originalLog;
-  }
-  return JSON.parse(stdout);
+  return JSON.parse(await captureStdout(runCommand));
 }
 
 test('doctor reports the broker record, reachability, liveness, and log path', async () => {
@@ -112,7 +40,7 @@ test('doctor reports the broker record, reachability, liveness, and log path', a
         sessionDir: '/tmp/doctor',
       }),
       probeBrokerEndpoint: async () => true,
-      processHasExited: () => false,
+      ops: { processHasExited: () => false },
     }),
   );
 
@@ -207,7 +135,7 @@ test('doctor keeps only stereo worktrees and emits the exact removal command', a
   assert.equal(report.worktrees.entries.length, 1);
   assert.equal(
     report.worktrees.entries[0]?.removeCommand,
-    `git -C "${workspace}" worktree remove --force "${stranded}"`,
+    `node '${COMPANION_ENTRY}' worktree remove --main '${workspace}' --path '${stranded}'`,
   );
 
   const unavailable = await buildDoctorReport(
@@ -253,59 +181,143 @@ test('doctor flags and resets a future SessionStart announcement watermark', asy
   assert.equal(payload.jobAnnouncements.lastJobAnnouncementAt, null);
 });
 
-test('model catalog drift distinguishes missing, unsupported, unavailable, and third-party rows', () => {
-  const codexHome = makeTempDir();
-  const cacheFile = path.join(codexHome, 'models_cache.json');
-  const registryRows = Object.entries(MODEL_REGISTRY).filter(
-    ([, entry]) =>
-      !('modelProvider' in entry && entry.modelProvider) && entry.model.startsWith('gpt-'),
+test('doctor prints the embedded setup next steps once and no model listing', async () => {
+  const setup = setupReportFixture();
+  const warning =
+    'The plan reviewer\'s built-in default codex:astra-6 cannot run: Unknown Codex family "astra" in "codex:astra-6".';
+  setup.nextSteps = [warning];
+  const warned = await buildDoctorReport(
+    makeTempDir(),
+    [],
+    doctorDeps({ buildSetupReport: async () => setup }),
   );
-  const writeCache = (models: Array<Record<string, unknown>>): void => {
-    fs.writeFileSync(
-      cacheFile,
-      JSON.stringify({
-        fetched_at: '2026-08-03T00:00:00.000Z',
-        client_version: 'test',
-        models,
-      }),
-      'utf8',
-    );
+  const rendered = renderDoctorReport(warned);
+  assert.equal(rendered.split(warning).length, 2, 'the warning is printed once');
+  assert.doesNotMatch(rendered, /\nModels|- Codex catalog:|codex:astra →/);
+});
+
+test('doctor --json carries the exact text the plain run prints', async () => {
+  const workspace = makeTempDir();
+  const deps = doctorDeps();
+  const plain = await captureStdout(() => handleDoctor(['--cwd', workspace], deps));
+  const payload = (await captureJsonOutput(() =>
+    handleDoctor(['--cwd', workspace, '--json'], deps),
+  )) as DoctorRenderReport & { rendered: string };
+
+  assert.match(plain, /^# Stereo Setup\n/);
+  assert.match(plain, /\n# Stereo Diagnostics\n/);
+  assert.equal(payload.rendered, plain);
+  assert.equal(payload.rendered, renderDoctorReport(payload));
+});
+
+const STALLED_WORKER_PID = 2147483647;
+const ORPHANED_CLAUDE_PID = 2147483646;
+
+// A running Claude job whose worker is gone while its headless child lives
+// on; the index and the job file both carry the record.
+function seedStalledClaudeJob(workspace: string, id = 'task-stalled'): void {
+  const record = {
+    id,
+    status: 'running',
+    phase: 'running',
+    title: 'Claude Task',
+    jobClass: 'task',
+    runtime: 'claude' as const,
+    pid: STALLED_WORKER_PID,
+    claudePid: ORPHANED_CLAUDE_PID,
+    threadId: 'sess-stalled',
+    createdAt: '2026-09-25T08:00:00.000Z',
+    startedAt: '2026-09-25T08:00:01.000Z',
   };
-  const allSupported = registryRows.map(([, entry]) => ({
-    slug: entry.model,
-    supported_in_api: true,
-  }));
+  writeJobFile(workspace, id, record);
+  upsertJob(workspace, record);
+}
 
-  writeCache([...allSupported, { slug: MODEL_REGISTRY.kimi.model, supported_in_api: false }]);
-  const green = readModelCatalogDrift(codexHome);
-  assert.equal(green.available, true);
-  assert.deepEqual(green.warnings, []);
-  assert.equal(
-    green.entries.some((entry) => entry.model === MODEL_REGISTRY.kimi.model),
-    false,
+// Only the worker pid is dead; every other pid (the Claude child) is alive.
+const workerGone = (pid: number): boolean => pid === STALLED_WORKER_PID;
+
+test('doctor lists an active job whose worker is gone and points at /stereo:cancel', async () => {
+  const workspace = makeTempDir();
+  seedStalledClaudeJob(workspace);
+
+  const report = await buildDoctorReport(
+    workspace,
+    [],
+    doctorDeps({ ops: { processHasExited: workerGone } }),
   );
-
-  writeCache(
-    allSupported.map((entry, index) =>
-      index === 0 ? { ...entry, supported_in_api: false } : entry,
+  assert.deepEqual(report.stalledJobs, [
+    {
+      id: 'task-stalled',
+      title: 'Claude Task',
+      status: 'running',
+      runtime: 'claude',
+      pid: STALLED_WORKER_PID,
+    },
+  ]);
+  assert.ok(
+    report.nextSteps.includes(
+      'Job task-stalled still shows as running but its worker process is gone; settle it with /stereo:cancel task-stalled.',
     ),
   );
-  const unsupported = readModelCatalogDrift(codexHome);
-  assert.equal(unsupported.warnings.length, 1);
-  assert.match(unsupported.warnings[0]!, new RegExp(registryRows[0]![1].model));
+  assert.match(
+    renderDoctorReport(report),
+    /\nStalled jobs: 1 found\n- task-stalled \(running, Claude Task\): worker pid 2147483647 is gone\n/,
+  );
 
-  writeCache(allSupported.slice(1));
-  const missing = readModelCatalogDrift(codexHome);
-  assert.equal(missing.warnings.length, 1);
-  assert.match(missing.warnings[0]!, new RegExp(registryRows[0]![1].model));
+  // A live worker is not stalled, and an empty workspace has nothing to report.
+  const live = await buildDoctorReport(workspace, [], doctorDeps());
+  assert.deepEqual(live.stalledJobs, []);
+  const clean = await buildDoctorReport(
+    makeTempDir(),
+    [],
+    doctorDeps({ ops: { processHasExited: () => true } }),
+  );
+  assert.deepEqual(clean.stalledJobs, []);
+  assert.match(renderDoctorReport(clean), /\nStalled jobs: none\n/);
+  assert.doesNotMatch(clean.nextSteps.join('\n'), /stereo:cancel/);
+});
 
-  fs.unlinkSync(cacheFile);
-  const absent = readModelCatalogDrift(codexHome);
-  assert.equal(absent.available, false);
-  assert.deepEqual(absent.warnings, []);
+test('a queued job counts as stalled only once it is old enough to have started', async () => {
+  const workspace = makeTempDir();
+  const everyPidDead = doctorDeps({ ops: { processHasExited: () => true } });
+  upsertJob(workspace, { id: 'task-fresh', status: 'queued', pid: null });
+  upsertJob(workspace, {
+    id: 'task-old',
+    status: 'queued',
+    pid: null,
+    createdAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+  });
+  upsertJob(workspace, { id: 'task-spawned', status: 'queued', pid: 4242 });
+  upsertJob(workspace, { id: 'task-finished', status: 'completed', pid: null });
 
-  fs.writeFileSync(cacheFile, '{broken', 'utf8');
-  const malformed = readModelCatalogDrift(codexHome);
-  assert.equal(malformed.available, false);
-  assert.deepEqual(malformed.warnings, []);
+  const stalled = findStalledJobs(workspace, everyPidDead);
+  assert.deepEqual(stalled.map((job) => job.id).sort(), ['task-old', 'task-spawned']);
+  assert.deepEqual(
+    stalled.find((job) => job.id === 'task-old'),
+    {
+      id: 'task-old',
+      title: null,
+      status: 'queued',
+      runtime: 'codex',
+      pid: null,
+    },
+  );
+  // A queued record whose worker pid is dead is stalled at once; one with a
+  // live worker is simply still starting.
+  assert.deepEqual(
+    findStalledJobs(workspace, doctorDeps({ ops: { processHasExited: () => false } })).map(
+      (job) => job.id,
+    ),
+    ['task-old'],
+  );
+
+  const report = await buildDoctorReport(workspace, [], everyPidDead);
+  assert.match(
+    renderDoctorReport(report),
+    /\nStalled jobs: 2 found\n- task-spawned \(queued\): worker pid 4242 is gone\n- task-old \(queued\): no worker was recorded\n/,
+  );
+  assert.match(
+    report.nextSteps.join('\n'),
+    /Job task-spawned still shows as queued .*\/stereo:cancel task-spawned\.\n.*\/stereo:cancel task-old\./,
+  );
 });

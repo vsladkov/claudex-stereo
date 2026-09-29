@@ -11,15 +11,16 @@ import { BROKER_BUSY_RPC_CODE, BROKER_ENDPOINT_ENV } from '../protocol/broker-rp
 import { CodexAppServerClient } from '../transport/app-server-client.ts';
 import { sendBrokerShutdownIfIdle } from '../broker/lifecycle.ts';
 import { shorten } from '../shared/text.ts';
-import { getCodexAvailability } from './availability.ts';
+import { CODEX_CLI_MISSING_ERROR, getCodexAvailability } from './availability.ts';
 import { emitLogEvent } from './turn-capture.ts';
 import type { ProgressReporter } from './turn-capture.ts';
+import { errorMessage } from '../shared/errors.ts';
 
 export type AppServerClient = Awaited<ReturnType<typeof CodexAppServerClient.connect>>;
 
 const SERVICE_NAME = 'claude_code_codex_plugin';
-export const TASK_THREAD_PREFIX = 'Codex Companion Task';
-export const PAIR_THREAD_PREFIX = 'Codex Companion Pair';
+const TASK_THREAD_PREFIX = 'Codex Companion Task';
+const PAIR_THREAD_PREFIX = 'Codex Companion Pair';
 export const DEFAULT_CONTINUE_PROMPT =
   'Continue from the current thread state. Pick the next highest-value step and follow through until the task is resolved.';
 
@@ -36,10 +37,7 @@ export interface StartThreadOptions extends ThreadSessionOptions {
   onThreadStarted?: (response: ThreadStartResponse) => unknown | Promise<unknown>;
 }
 
-export function buildThreadParams(
-  cwd: string,
-  options: ThreadSessionOptions = {},
-): ThreadStartParams {
+function buildThreadParams(cwd: string, options: ThreadSessionOptions = {}): ThreadStartParams {
   return {
     cwd,
     model: options.model ?? null,
@@ -51,7 +49,7 @@ export function buildThreadParams(
   };
 }
 
-export function buildResumeParams(
+function buildResumeParams(
   threadId: string,
   cwd: string,
   options: ThreadSessionOptions = {},
@@ -256,7 +254,7 @@ export async function drainMismatchingBroker(
     });
   } catch (error) {
     emitLogEvent(onProgress, {
-      message: `Skipped stale shared-runtime drain: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Skipped stale shared-runtime drain: ${errorMessage(error)}`,
       stderrMessage: '',
     });
   }
@@ -269,9 +267,7 @@ export async function findLatestTaskThread(
   const brokerCwd = options.brokerCwd?.trim() ? options.brokerCwd : cwd;
   const availability = getCodexAvailability(brokerCwd);
   if (!availability.available) {
-    throw new Error(
-      'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
-    );
+    throw new Error(CODEX_CLI_MISSING_ERROR);
   }
 
   return withAppServer(brokerCwd, async (client) => {

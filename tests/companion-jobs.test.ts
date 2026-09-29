@@ -4,7 +4,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SpawnOptions, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import type { TestContext } from 'node:test';
 
 import {
   CODEX_NOT_AUTHENTICATED_ERROR,
@@ -18,36 +17,26 @@ import {
 import type { CodexAuthStatus } from '../plugins/stereo/src/runtime/index.ts';
 import {
   acquireThreadReservation,
-  markLiveReservationPhase,
   releaseThreadReservation,
 } from '../plugins/stereo/src/runtime/reservations.ts';
-import {
-  applyTurnNotification,
-  createTurnCaptureState,
-} from '../plugins/stereo/src/runtime/turn-capture.ts';
-import type { AppServerNotification } from '../plugins/stereo/src/protocol/app-server.ts';
 import { COMPANION_ENTRY } from '../plugins/stereo/src/shared/paths.ts';
+import { settleJob } from '../plugins/stereo/src/jobs/job-lifecycle.ts';
 import {
+  listJobs,
   loadState,
   readJobFile,
   resolveJobFile,
   upsertJob,
   writeJobFile,
 } from '../plugins/stereo/src/workspace/state.ts';
-import { makeTempDir } from './helpers.ts';
+import type { JobRecord } from '../plugins/stereo/src/workspace/state.ts';
+import { sleepSync } from '../plugins/stereo/src/shared/fs.ts';
+import { makeTempDir, useTempCodexHome } from './helpers.ts';
 
-const notification = (value: unknown) => value as AppServerNotification;
-
-function useTempCodexHome(t: TestContext): void {
-  const previous = process.env.CODEX_HOME;
-  process.env.CODEX_HOME = makeTempDir('companion-signal-codex-home-');
-  t.after(() => {
-    if (previous === undefined) {
-      delete process.env.CODEX_HOME;
-    } else {
-      process.env.CODEX_HOME = previous;
-    }
-  });
+// The epoch ms of a `wall:<ms>` start token (NaN for anything else).
+function wallStartMs(start: unknown): number {
+  const match = /^wall:(\d+)$/.exec(String(start));
+  return match ? Number(match[1]) : Number.NaN;
 }
 
 function launchAuthStatus(requiresOpenaiAuth: boolean | null): CodexAuthStatus {
@@ -79,21 +68,41 @@ test('launch readiness blocks only a definite unmet OpenAI auth requirement', as
 });
 
 test('signal cleanup handlers dispose without outliving their job', (t) => {
-  const beforeTerm = process.listenerCount('SIGTERM');
-  const beforeInterrupt = process.listenerCount('SIGINT');
+  // A hang-up ends a companion like a termination: its handler is the same.
+  const signals = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const;
+  const before = signals.map((signal) => process.listenerCount(signal));
   const dispose = installSignalCleanup({
     jobId: 'listener-job',
     workspaceRoot: makeTempDir('companion-signal-listeners-'),
   });
   t.after(dispose);
 
-  assert.equal(process.listenerCount('SIGTERM'), beforeTerm + 1);
-  assert.equal(process.listenerCount('SIGINT'), beforeInterrupt + 1);
+  assert.deepEqual(
+    signals.map((signal) => process.listenerCount(signal)),
+    before.map((count) => count + 1),
+  );
 
   dispose();
   dispose();
-  assert.equal(process.listenerCount('SIGTERM'), beforeTerm);
-  assert.equal(process.listenerCount('SIGINT'), beforeInterrupt);
+  assert.deepEqual(
+    signals.map((signal) => process.listenerCount(signal)),
+    before,
+  );
+});
+
+test('a hang-up settles the job it interrupts', (t) => {
+  useTempCodexHome(t);
+  const workspaceRoot = makeTempDir('companion-sighup-');
+  const jobId = 'task-hung-up';
+  writeJobFile(workspaceRoot, jobId, { id: jobId, status: 'running', pid: process.pid });
+  upsertJob(workspaceRoot, { id: jobId, status: 'running', pid: process.pid });
+
+  const result = cleanupCompanionJobForSignal({ jobId, workspaceRoot }, 'SIGHUP');
+  assert.equal(result.terminalized, true);
+  const stored = readJobFile(resolveJobFile(workspaceRoot, jobId));
+  assert.equal(stored.status, 'cancelled');
+  assert.equal(stored.errorMessage, 'Terminated by SIGHUP.');
+  assert.equal(stored.pid, null);
 });
 
 test('a synchronous detached-worker spawn failure terminalizes the queued job', (t) => {
@@ -173,38 +182,92 @@ test('an asynchronous detached-worker spawn error terminalizes the queued job', 
   );
 });
 
-test('the post-spawn pid patch preserves a worker-written running status', (t) => {
+test('the post-spawn pid patch touches no job that settled meanwhile', (t) => {
   useTempCodexHome(t);
   const workspaceRoot = makeTempDir('companion-spawn-race-');
-  const job = createCompanionJob({
-    prefix: 'task',
-    kind: 'task',
-    title: 'Spawn race task',
-    workspaceRoot,
-    jobClass: 'task',
-    summary: 'Preserve the worker transition',
-    model: null,
-  });
-  const child = Object.assign(new EventEmitter(), {
-    pid: 8765,
-    unref: () => child,
-  });
-  const spawnImpl = (() => {
-    const queued = readJobFile(resolveJobFile(workspaceRoot, job.id));
-    writeJobFile(workspaceRoot, job.id, {
+  const enqueueWith = (id: string, meanwhile: (queued: JobRecord) => void): JobRecord => {
+    const job = createCompanionJob({
+      prefix: id,
+      kind: 'task',
+      title: 'Spawn race task',
+      workspaceRoot,
+      jobClass: 'task',
+      summary: 'Preserve the worker transition',
+      model: null,
+    });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 2147483765,
+      unref: () => child,
+    });
+    const spawnImpl = (() => {
+      meanwhile(readJobFile(resolveJobFile(workspaceRoot, job.id)));
+      return child;
+    }) as unknown as typeof spawn;
+    const startedAt = Date.now();
+    enqueueBackgroundTask(workspaceRoot, job, { prompt: 'run' }, { spawnImpl });
+    const stored = readJobFile(resolveJobFile(workspaceRoot, job.id));
+    const row = listJobs(workspaceRoot).find((entry) => entry.id === job.id);
+    if (stored.status === 'queued') {
+      // Still queued: the spawned worker's pid and start land on both records
+      // (no process has the synthetic pid: its start is the spawn's wall time).
+      for (const record of [stored, row]) {
+        assert.equal(record?.pid, 2147483765);
+        assert.ok(wallStartMs(record?.pidStart) >= startedAt - 1000);
+      }
+    }
+    return stored;
+  };
+
+  enqueueWith('task-queued', () => {});
+
+  // The worker recorded itself running before the patch: the patch names the
+  // same process and leaves its status alone.
+  const running = enqueueWith('task-running', (queued) => {
+    writeJobFile(workspaceRoot, queued.id, {
       ...queued,
       status: 'running',
       phase: 'running',
+      pid: 2147483765,
     });
+  });
+  assert.equal(running.status, 'running');
+  assert.equal(running.phase, 'running');
+  assert.equal(running.pid, 2147483765);
+
+  // A job cancelled before the patch gains no pid.
+  const cancelled = enqueueWith('task-cancelled', (queued) => {
+    settleJob(workspaceRoot, queued.id, { terminal: { status: 'cancelled', phase: 'cancelled' } });
+  });
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.pid, null);
+  assert.equal(listJobs(workspaceRoot).find((job) => job.id === cancelled.id)?.pid, null);
+});
+
+test("a slow spawn's queued worker start is taken after the spawn returns", (t) => {
+  useTempCodexHome(t);
+  const workspaceRoot = makeTempDir('companion-slow-spawn-');
+  const job = createCompanionJob({
+    prefix: 'task',
+    kind: 'task',
+    title: 'Slow spawn task',
+    workspaceRoot,
+    jobClass: 'task',
+    summary: 'Record the start after the spawn',
+    model: null,
+  });
+  const child = Object.assign(new EventEmitter(), { pid: 2147483766, unref: () => child });
+  let spawnReturnedAt = 0;
+  const spawnImpl = (() => {
+    // A slow spawn: a start taken before it could fall past the start
+    // window's forward half on macOS and Windows.
+    sleepSync(50);
+    spawnReturnedAt = Date.now();
     return child;
   }) as unknown as typeof spawn;
-
   enqueueBackgroundTask(workspaceRoot, job, { prompt: 'run' }, { spawnImpl });
-
   const stored = readJobFile(resolveJobFile(workspaceRoot, job.id));
-  assert.equal(stored.status, 'running');
-  assert.equal(stored.phase, 'running');
-  assert.equal(stored.pid, 8765);
+  assert.equal(stored.pid, 2147483766);
+  assert.ok(wallStartMs(stored.pidStart) >= spawnReturnedAt);
 });
 
 test('a detached task worker receives the authoritative workspace without changing spawn cwd', (t) => {
@@ -259,6 +322,7 @@ test('signal terminalization cancels an active job and is idempotent', () => {
     status: 'running',
     phase: 'running',
     pid: process.pid,
+    claudePid: 2147483600,
     title: 'Signal target',
     kind: 'task',
     logFile: '/tmp/signal-target.log',
@@ -271,6 +335,7 @@ test('signal terminalization cancels an active job and is idempotent', () => {
   assert.equal(stored.status, 'cancelled');
   assert.equal(stored.phase, 'cancelled');
   assert.equal(stored.pid, null);
+  assert.equal(stored.claudePid, null, 'a terminal record names no process');
   assert.equal(stored.errorMessage, 'Terminated by SIGTERM.');
   assert.deepEqual(stored.result, { partial: true });
   const indexed = loadState(workspaceRoot).jobs.find((job) => job.id === jobId);
@@ -287,9 +352,9 @@ test('signal terminalization cancels an active job and is idempotent', () => {
   );
 });
 
-test('proven post-turn cleanup releases the lock and preserves a completed record', async (t) => {
+test('signal cleanup releases the reservation it holds and preserves a completed record', (t) => {
   useTempCodexHome(t);
-  const workspaceRoot = makeTempDir('companion-signal-post-turn-');
+  const workspaceRoot = makeTempDir('companion-signal-release-');
   const jobId = 'completed-signal-job';
   const completedJob = {
     id: jobId,
@@ -302,31 +367,11 @@ test('proven post-turn cleanup releases the lock and preserves a completed recor
   writeJobFile(workspaceRoot, jobId, completedJob);
   upsertJob(workspaceRoot, completedJob);
 
-  const reservation = acquireThreadReservation('post-turn-signal-thread', {
-    jobId,
-    pid: process.pid,
-  });
+  const reservation = acquireThreadReservation('signal-thread', { jobId });
   t.after(() => releaseThreadReservation(reservation));
-  const capture = createTurnCaptureState('post-turn-signal-thread');
-  applyTurnNotification(
-    capture,
-    notification({
-      method: 'turn/completed',
-      params: {
-        threadId: 'post-turn-signal-thread',
-        turn: { id: 'turn-post', status: 'completed' },
-      },
-    }),
-  );
-  const completedCapture = await capture.completion;
-  assert.equal(completedCapture.inferredCompletion, false);
-  markLiveReservationPhase(
-    reservation,
-    completedCapture.inferredCompletion ? 'in-flight' : 'post-turn',
-  );
 
   const cleanup = cleanupCompanionJobForSignal({ jobId, workspaceRoot }, 'SIGTERM');
-  assert.deepEqual(cleanup, { terminalized: false, released: 1, retained: 0 });
+  assert.deepEqual(cleanup, { terminalized: false });
   assert.equal(fs.existsSync(reservation.path), false);
   const stored = readJobFile(resolveJobFile(workspaceRoot, jobId));
   assert.equal(stored.status, 'completed');

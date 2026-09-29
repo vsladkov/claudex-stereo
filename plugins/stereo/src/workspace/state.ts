@@ -4,21 +4,40 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { TokenUsageBreakdown } from '../protocol/app-server.ts';
-import { optionalString } from '../shared/json.ts';
+import {
+  canonicalPath,
+  readJsonFileTolerant,
+  readTextRetrying,
+  withFileLock,
+  writeFileExclusive,
+  writeJsonAtomic,
+} from '../shared/fs.ts';
+import type { FileLockOptions, JsonFileRead } from '../shared/fs.ts';
+import { optionalString, recordLike } from '../shared/json.ts';
+import type { CompanionRuntime } from '../shared/runtime.ts';
 import { resolveCodexHome } from './thread-lock-io.ts';
 import { resolveWorkspaceRoot } from './workspace.ts';
+import { errorCode, errorMessage } from '../shared/errors.ts';
 
 const STATE_VERSION = 1;
 export const PLUGIN_DATA_ENV = 'CLAUDE_PLUGIN_DATA';
 const FALLBACK_STATE_ROOT_DIR = path.join(os.tmpdir(), 'codex-companion');
-const DURABLE_STATE_ROOT_DIR = 'companion-state';
+export const COMPANION_STATE_DIR = 'companion-state';
+const DURABLE_STATE_ROOT_DIR = COMPANION_STATE_DIR;
 const STATE_FILE_NAME = 'state.json';
+// An unreadable state.json is moved aside to `state.json.corrupt-<timestamp>`
+// before the first write would replace it.
+const CORRUPT_STATE_FILE_PREFIX = `${STATE_FILE_NAME}.corrupt-`;
 const JOBS_DIR_NAME = 'jobs';
 const PAIR_PLAN_FILE_NAME = 'pair-plan.json';
 const PAIR_PLAN_MARKDOWN_FILE_NAME = 'pair-plan.md';
 const IMPLEMENT_STATE_FILE_NAME = 'implement-state.json';
 const TOURNAMENT_STATE_FILE_NAME = 'tournament-state.json';
 export const MAX_JOBS = 50;
+// Writers of one workspace index serialize on a lock file beside it (the
+// SessionEnd sweep, a cancel, and a worker's progress patch may all race);
+// the wait is bounded so a wedged lock costs seconds, never the write.
+const STATE_LOCK_ATTEMPTS = 200;
 const migrationChecked = new Set<string>();
 const migrationWarningsEmitted = new Set<string>();
 
@@ -35,6 +54,8 @@ export interface StereoConfig {
   stopReviewGate: boolean;
   roleDefaults?: StereoRoleDefaults;
   lastJobAnnouncementAt?: string | null;
+  /** Run headless Claude implementers under Claude Code's own Bash sandbox. */
+  claudeSandbox?: boolean;
 }
 
 export interface JobRecord {
@@ -46,6 +67,12 @@ export interface JobRecord {
   completedAt?: string;
   phase?: string | null;
   pid?: number | null;
+  /** The worker's start token, so a reused pid is never taken for it. */
+  pidStart?: string | null;
+  /** The headless Claude child of a running job; it leads its own process group. */
+  claudePid?: number | null;
+  /** The Claude child's start token. */
+  claudePidStart?: string | null;
   threadId?: string | null;
   turnId?: string | null;
   sessionId?: string;
@@ -55,6 +82,12 @@ export interface JobRecord {
   kind?: string;
   summary?: string;
   model?: string | null;
+  /** Which runtime ran the job; absent on records written before Claude jobs existed (Codex). */
+  runtime?: CompanionRuntime;
+  /** The Claude role the job ran as, so a bare `--thread` resume can take it back up. */
+  role?: string | null;
+  /** What launched the job when no user command did: STOP_GATE_ORIGIN for the Stop hook's review. */
+  origin?: string | null;
   errorMessage?: string;
   logFile?: string | null;
   request?: unknown;
@@ -74,18 +107,14 @@ export interface JobTokenUsage {
 
 export type JobPatch = Partial<JobRecord> & { id: string };
 
+// The Stop hook's review runs as a role-less Codex task; this origin keeps it
+// out of rescue resumes and labels it apart from rescue runs.
+export const STOP_GATE_ORIGIN = 'stop-gate';
+
 export interface StereoState {
   version: number;
   config: StereoConfig;
   jobs: JobRecord[];
-}
-
-// saveState tolerates stale or partial snapshots, so its input is looser than
-// the fully-populated StereoState it returns.
-export interface StereoStateInput {
-  version?: number;
-  config?: Partial<StereoConfig> | null;
-  jobs?: JobRecord[] | null;
 }
 
 export function nowIso(): string {
@@ -160,12 +189,7 @@ function resolveWorkspaceStateKey(cwd: string): string {
     return cached;
   }
   const workspaceRoot = resolveWorkspaceRoot(cwd);
-  let canonicalWorkspaceRoot = workspaceRoot;
-  try {
-    canonicalWorkspaceRoot = fs.realpathSync.native(workspaceRoot);
-  } catch {
-    canonicalWorkspaceRoot = workspaceRoot;
-  }
+  const canonicalWorkspaceRoot = canonicalPath(workspaceRoot);
 
   const slugSource = path.basename(workspaceRoot) || 'workspace';
   const slug = slugSource.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
@@ -241,43 +265,16 @@ function rewriteLegacyStateLogFiles(
   return state;
 }
 
+// Migration never replaces a file the durable directory already holds.
 function writeJsonExclusive(destination: string, value: unknown): void {
-  try {
-    fs.writeFileSync(destination, `${JSON.stringify(value, null, 2)}\n`, {
-      encoding: 'utf8',
-      flag: 'wx',
-    });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'EEXIST') {
-      throw error;
-    }
-  }
-}
-
-export function writeTextAtomic(filePath: string, contents: string): void {
-  const tempFile = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    fs.writeFileSync(tempFile, contents, 'utf8');
-    fs.renameSync(tempFile, filePath);
-  } catch (error) {
-    try {
-      fs.unlinkSync(tempFile);
-    } catch {
-      // Best-effort cleanup: preserve the original write/rename failure.
-    }
-    throw error;
-  }
-}
-
-export function writeJsonAtomic(filePath: string, value: unknown): void {
-  writeTextAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
+  writeFileExclusive(destination, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function copyFileExclusive(source: string, destination: string): void {
   try {
     fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'EEXIST') {
+    if (errorCode(error) !== 'EEXIST') {
       throw error;
     }
   }
@@ -379,38 +376,117 @@ export function ensureStateDir(cwd: string): void {
   fs.mkdirSync(resolveJobsDir(cwd), { recursive: true });
 }
 
-export function loadState(cwd: string): StereoState {
+interface StateFileRead {
+  state: StereoState;
+  /** Why an existing state file cannot be used (corrupt); null when it is absent or valid. */
+  unreadable: string | null;
+}
+
+// A read that fails for an I/O reason (EMFILE, EACCES, EBUSY, EPERM, ...)
+// says nothing about the file's contents: it is retried briefly, then thrown,
+// and never treated as corruption (which would reset the config and the job
+// ledger on the next write).
+function readStateText(stateFile: string): string | null {
+  try {
+    return readTextRetrying(stateFile);
+  } catch (error) {
+    const cause = error as NodeJS.ErrnoException;
+    const failure = new Error(
+      `Could not read the state file ${stateFile}: ${errorMessage(cause)}`,
+      { cause },
+    ) as NodeJS.ErrnoException;
+    if (cause?.code) {
+      failure.code = cause.code;
+    }
+    throw failure;
+  }
+}
+
+function readStateFile(cwd: string): StateFileRead {
   migrateLegacyState(cwd);
   const stateFile = resolveStateFile(cwd);
-  if (!fs.existsSync(stateFile)) {
-    return defaultState();
+  const text = readStateText(stateFile);
+  if (text === null) {
+    return { state: defaultState(), unreadable: null };
   }
 
+  // Only a parse or shape failure makes the file corrupt.
   try {
-    const parsed = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    const parsed: unknown = JSON.parse(text);
+    if (!isPlainObject(parsed)) {
+      throw new Error('the state file does not hold a JSON object');
+    }
     const parsedConfig = isPlainObject(parsed.config) ? parsed.config : {};
     return {
-      ...defaultState(),
-      ...parsed,
-      config: {
-        ...defaultState().config,
-        ...parsedConfig,
-        roleDefaults: normalizeRoleDefaults(parsedConfig.roleDefaults),
-        lastJobAnnouncementAt: optionalString(parsedConfig.lastJobAnnouncementAt),
+      state: {
+        ...defaultState(),
+        ...parsed,
+        config: {
+          ...defaultState().config,
+          ...parsedConfig,
+          roleDefaults: normalizeRoleDefaults(parsedConfig.roleDefaults),
+          lastJobAnnouncementAt: optionalString(parsedConfig.lastJobAnnouncementAt),
+        },
+        jobs: Array.isArray(parsed.jobs)
+          ? (parsed.jobs as JobRecord[]).map(stripIndexOnlyFields)
+          : [],
       },
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs.map(stripIndexOnlyFields) : [],
+      unreadable: null,
     };
   } catch (error) {
-    // The file exists but is unreadable/corrupt: defaulting silently would
-    // reset the job ledger and config with no trace, so leave one breadcrumb.
-    // Hook entries disable this: hook stdio is a protocol surface and must
-    // stay silent on corrupt state (pinned by the session-hook tests).
-    if (stateFileWarningsEnabled) {
-      process.stderr.write(
-        `[stereo] Ignoring unreadable state file ${stateFile}: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
+    return {
+      state: defaultState(),
+      unreadable: errorMessage(error),
+    };
+  }
+}
+
+function loadStateRead(cwd: string): StateFileRead {
+  const read = readStateFile(cwd);
+  // The file exists but is unreadable/corrupt: defaulting silently would
+  // reset the job ledger and config with no trace, so leave one breadcrumb.
+  // Hook entries disable this: hook stdio is a protocol surface and must
+  // stay silent on corrupt state (pinned by the session-hook tests).
+  if (read.unreadable !== null && stateFileWarningsEnabled) {
+    process.stderr.write(
+      `[stereo] Ignoring unreadable state file ${resolveStateFile(cwd)}: ${read.unreadable}\n`,
+    );
+  }
+  return read;
+}
+
+export function loadState(cwd: string): StereoState {
+  return loadStateRead(cwd).state;
+}
+
+// The first write after an unreadable read would replace the file with a
+// fresh ledger, so its bytes are moved aside first (copied when the rename
+// fails), best effort: the write goes ahead either way.
+function preserveUnreadableStateFile(cwd: string, reason: string): void {
+  const stateFile = resolveStateFile(cwd);
+  const stamp = nowIso().replace(/[:.]/g, '-');
+  let destination = path.join(path.dirname(stateFile), `${CORRUPT_STATE_FILE_PREFIX}${stamp}`);
+  if (fs.existsSync(destination)) {
+    destination = `${destination}-${randomUUID().slice(0, 8)}`;
+  }
+  try {
+    fs.renameSync(stateFile, destination);
+  } catch {
+    try {
+      fs.copyFileSync(stateFile, destination, fs.constants.COPYFILE_EXCL);
+    } catch {
+      if (stateFileWarningsEnabled) {
+        process.stderr.write(
+          `[stereo] Could not preserve unreadable state file ${stateFile} (${reason}) before replacing it.\n`,
+        );
+      }
+      return;
     }
-    return defaultState();
+  }
+  if (stateFileWarningsEnabled) {
+    process.stderr.write(
+      `[stereo] Moved unreadable state file ${stateFile} (${reason}) aside to ${destination}; a fresh state file replaces it.\n`,
+    );
   }
 }
 
@@ -420,6 +496,7 @@ export function disableStateFileWarnings(): void {
   stateFileWarningsEnabled = false;
 }
 
+// The newest MAX_JOBS rows stay.
 function pruneJobs(jobs: JobRecord[]): JobRecord[] {
   return [...jobs]
     .sort((left, right) =>
@@ -435,6 +512,16 @@ function removeFileIfExists(filePath: string | null | undefined): void {
 }
 
 export const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+export function isTerminalJob(job: { status?: unknown } | null | undefined): boolean {
+  return Boolean(job && TERMINAL_JOB_STATUSES.has(String(job.status)));
+}
+
+// A job still to settle: queued or running.
+export function isActiveJob(job: { status?: unknown } | null | undefined): boolean {
+  return job?.status === 'queued' || job?.status === 'running';
+}
+
 const SAFE_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 export const DEFAULT_PLAN_SLOT = 'default';
 const SAFE_PLAN_SLOT = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -493,23 +580,43 @@ function newerJobRecord(previous: JobRecord | undefined, candidate: JobRecord): 
   return jobUpdatedAtMs(candidate) >= jobUpdatedAtMs(previous) ? candidate : previous;
 }
 
-function readJobFileFresh(jobFile: string): { missing: boolean; record: JobRecord | null } {
-  if (!fs.existsSync(jobFile)) {
-    return { missing: true, record: null };
-  }
-  try {
-    return { missing: false, record: JSON.parse(fs.readFileSync(jobFile, 'utf8')) };
-  } catch {
-    return { missing: false, record: null };
-  }
+// A job file read that tolerates a missing, torn, or non-object file: the
+// record is null for anything that is not a JSON object.
+export function readJobFileTolerant(jobFile: string): {
+  missing: boolean;
+  record: JobRecord | null;
+} {
+  const read = readJsonFileTolerant(jobFile);
+  return { missing: read.missing, record: recordLike(read.record) as JobRecord | null };
 }
 
-export function saveState(cwd: string, state: StereoStateInput): StereoState {
-  const previousJobs = loadState(cwd).jobs;
+// The whole read-merge-write under the index lock. When the lock cannot be
+// taken in time the write still happens, unlocked, as it always did. Either
+// way the write merges over the file as it is now (saveStateMerged): two
+// holders can overlap (two waiters taking over one stale lock), so the lock
+// only makes a lost race rarer, never the merge unnecessary. A caller with a
+// budget (the SessionStart hook) narrows the wait through `lock`. Nothing is
+// logged either way: hook stdout is a protocol surface.
+function withStateLock<T>(cwd: string, work: () => T, lock: FileLockOptions = {}): T {
+  ensureStateDir(cwd);
+  const lockPath = `${resolveStateFile(cwd)}.lock`;
+  return withFileLock(lockPath, work, {
+    attempts: STATE_LOCK_ATTEMPTS,
+    ...lock,
+    unlockedFallback: true,
+  });
+}
+
+// Writes `state` over `previous`: the file as it is read again now.
+function saveStateMerged(cwd: string, state: StereoState, previous: StateFileRead): StereoState {
+  if (previous.unreadable !== null) {
+    preserveUnreadableStateFile(cwd, previous.unreadable);
+  }
+  const previousJobs = previous.state.jobs;
   const previousById = new Map(previousJobs.map((job) => [job.id, job]));
   ensureStateDir(cwd);
   const nextJobs = pruneJobs(
-    (state.jobs ?? []).map((job) => newerJobRecord(previousById.get(job.id), job)),
+    state.jobs.map((job) => newerJobRecord(previousById.get(job.id), job)),
   ).map(stripIndexOnlyFields);
 
   // The caller's snapshot may be stale: a concurrent writer can have added or
@@ -533,7 +640,7 @@ export function saveState(cwd: string, state: StereoStateInput): StereoState {
       continue;
     }
     const jobFile = resolveJobFile(cwd, job.id);
-    const fresh = readJobFileFresh(jobFile);
+    const fresh = readJobFileTolerant(jobFile);
     if (fresh.missing) {
       continue;
     }
@@ -550,9 +657,9 @@ export function saveState(cwd: string, state: StereoStateInput): StereoState {
     version: STATE_VERSION,
     config: {
       ...defaultState().config,
-      ...(state.config ?? {}),
-      roleDefaults: normalizeRoleDefaults(state.config?.roleDefaults),
-      lastJobAnnouncementAt: optionalString(state.config?.lastJobAnnouncementAt),
+      ...state.config,
+      roleDefaults: normalizeRoleDefaults(state.config.roleDefaults),
+      lastJobAnnouncementAt: optionalString(state.config.lastJobAnnouncementAt),
     },
     jobs: nextJobs,
   };
@@ -561,10 +668,28 @@ export function saveState(cwd: string, state: StereoStateInput): StereoState {
   return nextState;
 }
 
-export function updateState(cwd: string, mutate: (state: StereoState) => void): StereoState {
-  const state = loadState(cwd);
-  mutate(state);
-  return saveState(cwd, state);
+// `mutate` may return false to write nothing (it found nothing to change).
+export function updateState(
+  cwd: string,
+  mutate: (state: StereoState) => void | boolean,
+  lock: FileLockOptions = {},
+): StereoState {
+  // Load, mutate, and write under one lock so two writers cannot interleave
+  // their read-modify-write cycles.
+  return withStateLock(
+    cwd,
+    () => {
+      const read = loadStateRead(cwd);
+      if (mutate(read.state) === false) {
+        return read.state;
+      }
+      // Parsed a second time under the lock on purpose: holders can overlap,
+      // and merging over the file as it is now (an I/O failure throws:
+      // nothing is written) is what keeps that safe.
+      return saveStateMerged(cwd, read.state, readStateFile(cwd));
+    },
+    lock,
+  );
 }
 
 export function generateJobId(prefix = 'job'): string {
@@ -596,13 +721,22 @@ export function listJobs(cwd: string): JobRecord[] {
   return loadState(cwd).jobs;
 }
 
-export function setConfig(cwd: string, key: string, value: unknown): StereoState {
-  return updateState(cwd, (state) => {
-    state.config = {
-      ...state.config,
-      [key]: value,
-    };
-  });
+export function setConfig(
+  cwd: string,
+  key: string,
+  value: unknown,
+  lock: FileLockOptions = {},
+): StereoState {
+  return updateState(
+    cwd,
+    (state) => {
+      state.config = {
+        ...state.config,
+        [key]: value,
+      };
+    },
+    lock,
+  );
 }
 
 export function getConfig(cwd: string): StereoConfig {
@@ -639,15 +773,7 @@ export function resolveJobFile(cwd: string, jobId: string): string {
 }
 
 export function readStoredJobOrNull(cwd: string, jobId: string): JobRecord | null {
-  const jobFile = resolveJobFile(cwd, jobId);
-  if (!fs.existsSync(jobFile)) {
-    return null;
-  }
-  try {
-    return readJobFile(jobFile);
-  } catch {
-    return null;
-  }
+  return readJobFileTolerant(resolveJobFile(cwd, jobId)).record;
 }
 
 export function resolvePairPlanFile(cwd: string, slot = DEFAULT_PLAN_SLOT): string {
@@ -670,51 +796,37 @@ export function resolveImplementStateFile(cwd: string): string {
   return path.join(resolveDurableStateDir(cwd), IMPLEMENT_STATE_FILE_NAME);
 }
 
-export function saveImplementState<T>(cwd: string, record: T): T {
+// The pair-plan, implementation, and tournament records share one file
+// protocol: an atomic JSON write, a tolerant read that reports a missing or
+// unparsable file, and a clear that names what it removed.
+function saveRecordFile<T>(cwd: string, filePath: string, record: T): T {
   ensureStateDir(cwd);
-  writeJsonAtomic(resolveImplementStateFile(cwd), record);
+  writeJsonAtomic(filePath, record);
   return record;
 }
 
-export function readImplementStateFile(cwd: string): {
-  missing: boolean;
-  record: unknown;
-  parseError: string | null;
-} {
-  const implementStateFile = resolveImplementStateFile(cwd);
-  if (!fs.existsSync(implementStateFile)) {
-    return { missing: true, record: null, parseError: null };
-  }
+function clearRecordFile(filePath: string): string[] {
   try {
-    return {
-      missing: false,
-      record: JSON.parse(fs.readFileSync(implementStateFile, 'utf8')),
-      parseError: null,
-    };
+    fs.unlinkSync(filePath);
+    return [filePath];
   } catch (error) {
-    return {
-      missing: false,
-      record: null,
-      parseError: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-export function loadImplementState(cwd: string): unknown {
-  return readImplementStateFile(cwd).record;
-}
-
-export function clearImplementState(cwd: string): string[] {
-  const implementStateFile = resolveImplementStateFile(cwd);
-  try {
-    fs.unlinkSync(implementStateFile);
-    return [implementStateFile];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
+    if (errorCode(error) !== 'ENOENT') {
       throw error;
     }
     return [];
   }
+}
+
+export function saveImplementState<T>(cwd: string, record: T): T {
+  return saveRecordFile(cwd, resolveImplementStateFile(cwd), record);
+}
+
+export function readImplementStateFile(cwd: string): JsonFileRead {
+  return readJsonFileTolerant(resolveImplementStateFile(cwd));
+}
+
+export function clearImplementState(cwd: string): string[] {
+  return clearRecordFile(resolveImplementStateFile(cwd));
 }
 
 export function resolveTournamentStateFile(cwd: string): string {
@@ -722,50 +834,15 @@ export function resolveTournamentStateFile(cwd: string): string {
 }
 
 export function saveTournamentState<T>(cwd: string, record: T): T {
-  ensureStateDir(cwd);
-  writeJsonAtomic(resolveTournamentStateFile(cwd), record);
-  return record;
+  return saveRecordFile(cwd, resolveTournamentStateFile(cwd), record);
 }
 
-export function readTournamentStateFile(cwd: string): {
-  missing: boolean;
-  record: unknown;
-  parseError: string | null;
-} {
-  const tournamentStateFile = resolveTournamentStateFile(cwd);
-  if (!fs.existsSync(tournamentStateFile)) {
-    return { missing: true, record: null, parseError: null };
-  }
-  try {
-    return {
-      missing: false,
-      record: JSON.parse(fs.readFileSync(tournamentStateFile, 'utf8')),
-      parseError: null,
-    };
-  } catch (error) {
-    return {
-      missing: false,
-      record: null,
-      parseError: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-export function loadTournamentState(cwd: string): unknown {
-  return readTournamentStateFile(cwd).record;
+export function readTournamentStateFile(cwd: string): JsonFileRead {
+  return readJsonFileTolerant(resolveTournamentStateFile(cwd));
 }
 
 export function clearTournamentState(cwd: string): string[] {
-  const tournamentStateFile = resolveTournamentStateFile(cwd);
-  try {
-    fs.unlinkSync(tournamentStateFile);
-    return [tournamentStateFile];
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
-      throw error;
-    }
-    return [];
-  }
+  return clearRecordFile(resolveTournamentStateFile(cwd));
 }
 
 export function fingerprintPlanText(plan: unknown): string | null {
@@ -776,40 +853,22 @@ export function fingerprintPlanText(plan: unknown): string | null {
 }
 
 export function savePairPlanState<T>(cwd: string, record: T, slot = DEFAULT_PLAN_SLOT): T {
-  ensureStateDir(cwd);
-  writeJsonAtomic(resolvePairPlanFile(cwd, slot), record);
-  return record;
+  return saveRecordFile(cwd, resolvePairPlanFile(cwd, slot), record);
 }
 
 export function loadPairPlanState(cwd: string, slot = DEFAULT_PLAN_SLOT): unknown {
   migrateLegacyState(cwd);
-  const pairPlanFile = resolvePairPlanFile(cwd, slot);
-  if (!fs.existsSync(pairPlanFile)) {
-    return null;
-  }
-  try {
-    return JSON.parse(fs.readFileSync(pairPlanFile, 'utf8'));
-  } catch {
-    return null;
-  }
+  return readJsonFileTolerant(resolvePairPlanFile(cwd, slot)).record;
 }
 
 export function clearPairPlanState(cwd: string, slot = DEFAULT_PLAN_SLOT): string[] {
   // Clear after the same legacy migration used by loadPairPlanState so a
   // pre-v1.7 record cannot be copied into durable state on a later read.
   migrateLegacyState(cwd);
-  const removed: string[] = [];
-  for (const filePath of [resolvePairPlanFile(cwd, slot), resolvePairPlanMarkdownFile(cwd, slot)]) {
-    try {
-      fs.unlinkSync(filePath);
-      removed.push(filePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException | null | undefined)?.code !== 'ENOENT') {
-        throw error;
-      }
-    }
-  }
-  return removed;
+  return [
+    ...clearRecordFile(resolvePairPlanFile(cwd, slot)),
+    ...clearRecordFile(resolvePairPlanMarkdownFile(cwd, slot)),
+  ];
 }
 
 export function listPairPlanSlots(cwd: string): string[] {
@@ -818,7 +877,7 @@ export function listPairPlanSlots(cwd: string): string[] {
   try {
     fileNames = fs.readdirSync(resolveDurableStateDir(cwd));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | null | undefined)?.code === 'ENOENT') {
+    if (errorCode(error) === 'ENOENT') {
       return [];
     }
     throw error;

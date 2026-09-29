@@ -1,39 +1,54 @@
-export type ReasoningEffort =
-  'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+import {
+  catalogFamilyVersions,
+  defaultCatalogEffort,
+  EFFORT_LADDER,
+  findCatalogModel,
+  listCodexCatalogFamilies,
+  loadCodexCatalog,
+  parseOpenAiModelId,
+} from './catalog.ts';
+import {
+  compareModelVersions,
+  familyModels,
+  findModelVersion,
+  parseFamilySelection,
+} from './model-table.ts';
+import type { FamilyModels } from './model-table.ts';
+import type { CatalogEffort, CodexCatalog, CodexCatalogModel } from './catalog.ts';
+import {
+  defaultClaudeEffort,
+  describeClaudeModels,
+  isClaudeSelection,
+  normalizeClaudeEffort,
+  parseClaudeSelection,
+} from './claude-models.ts';
+import type { ClaudeSelection } from './claude-models.ts';
+import type { CompanionRuntime } from '../shared/runtime.ts';
+
+export type ReasoningEffort = CatalogEffort;
+// The runtime a selection addresses: the Codex app-server or a headless
+// `claude -p` process. `claude:session` belongs to neither (it runs inline).
+export type ModelRuntime = CompanionRuntime;
 
 export interface ModelEntry {
   model: string;
-  defaultPairEffort: ReasoningEffort | null;
+  /** The effort a launch applies by default; absent means none. */
+  defaultModelEffort?: ReasoningEffort;
   modelProvider?: string;
 }
 
-export const VALID_REASONING_EFFORTS: ReadonlySet<string> = new Set([
-  'none',
-  'minimal',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-  'ultra',
-]);
+const VALID_REASONING_EFFORTS: ReadonlySet<string> = new Set(EFFORT_LADDER);
 
-// Bare because it feeds normalizeRequestedModel; documentation writes it as `codex:astra`.
-export const PAIR_DEFAULT_MODEL = 'astra';
-export const PAIR_DEFAULT_EFFORT: ReasoningEffort = 'max'; // every OpenAI `gpt-*` pair role
-
+// OpenAI models are not rows here: `codex:<family>[-<version>]` resolves
+// against the Codex model catalog (see catalog.ts), so a new version or family
+// needs no code change. Third-party provider models stay as aliases because
+// they cannot be enumerated: each row selects a model id plus a
+// `[model_providers.<id>]` table, and adding one is a one-row change.
 export const MODEL_REGISTRY = {
-  astra: { model: 'gpt-6-astra', defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  // gpt-5.4-mini rejects 'max' (accepted set tops out at xhigh; probed live 2026-08-03),
-  // so this row pins its own strongest accepted effort instead of PAIR_DEFAULT_EFFORT.
-  mini: { model: 'gpt-5.4-mini', defaultPairEffort: 'xhigh' },
-  sol: { model: 'gpt-5.6-sol', defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  terra: { model: 'gpt-5.6-terra', defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  luna: { model: 'gpt-5.6-luna', defaultPairEffort: PAIR_DEFAULT_EFFORT },
-  kimi: { model: 'kimi-k3', modelProvider: 'moonshot', defaultPairEffort: null },
-  qwen: { model: 'qwen3.7-plus', modelProvider: 'dashscope', defaultPairEffort: null },
-  deepseek: { model: 'deepseek-v4-pro', modelProvider: 'deepseek', defaultPairEffort: null },
-  glm: { model: 'glm-5.2', modelProvider: 'zhipu', defaultPairEffort: null },
+  kimi: { model: 'kimi-k3', modelProvider: 'moonshot' },
+  qwen: { model: 'qwen3.7-plus', modelProvider: 'dashscope' },
+  deepseek: { model: 'deepseek-v4-pro', modelProvider: 'deepseek' },
+  glm: { model: 'glm-5.2', modelProvider: 'zhipu' },
 } satisfies Record<string, ModelEntry>;
 
 // Alias lookup stays a Map keyed by the lowercased alias so exotic inputs
@@ -42,14 +57,23 @@ const MODEL_ALIASES = new Map<string, string>(
   Object.entries(MODEL_REGISTRY).map(([alias, entry]) => [alias, entry.model]),
 );
 
+// Keyed by the lowercased model id, so a registry id in any case (the
+// `glm-5.2` a `codex:glm` job records) finds its row.
 const ENTRIES_BY_MODEL = new Map<string, ModelEntry>(
-  Object.values(MODEL_REGISTRY).map((entry) => [entry.model, entry]),
+  Object.values(MODEL_REGISTRY).map((entry) => [entry.model.toLowerCase(), entry]),
 );
 
 const CODEX_PREFIX = 'codex:';
 
-// `claude:` names a closed set of Claude Code execution surfaces and never
-// reaches this runtime. `codex:` is the symmetric optional way to name the
+export interface ModelResolutionOptions {
+  /** Catalog to resolve against; defaults to the loaded one. Commands pass the refreshed catalog. */
+  catalog?: CodexCatalog;
+  /** The runtime the model belongs to; Claude models take the Claude effort table. */
+  runtime?: ModelRuntime;
+}
+
+// `claude:` selections take the Claude transport and never reach this
+// runtime. `codex:` is the symmetric optional way to name the
 // runtime that executes everything else, including the third-party provider
 // aliases. It is addressing sugar, so it is stripped exactly once before
 // alias, provider, and effort resolution; a single strip also leaves
@@ -71,7 +95,7 @@ function stripCodexPrefix(model: string): string {
 }
 
 export function registryEntryForModel(resolvedModel: string): ModelEntry | null {
-  return ENTRIES_BY_MODEL.get(resolvedModel) ?? null;
+  return ENTRIES_BY_MODEL.get(resolvedModel.toLowerCase()) ?? null;
 }
 
 export function parseQualifiedModel(model: string): {
@@ -91,24 +115,20 @@ export function parseQualifiedModel(model: string): {
   return { model: bareModel, modelProvider };
 }
 
-export function defaultPairEffort(resolvedModel: string): ReasoningEffort | null {
-  const { model } = parseQualifiedModel(resolvedModel);
-  // Registry rows are authoritative: adding a provider model (kimi, qwen,
-  // deepseek, glm, ...) with its own default effort is a one-row change.
-  const entry = registryEntryForModel(model);
-  if (entry) {
-    return entry.defaultPairEffort;
-  }
-  // Raw OpenAI model strings fall back to the gpt-* rule. Unknown
-  // third-party models omit effort because their accepted knobs vary.
-  return model.startsWith('gpt-') ? PAIR_DEFAULT_EFFORT : null;
+export interface CodexSelection {
+  /** The trimmed text as the user wrote it, for messages. */
+  normalized: string;
+  /** Lowercased bare model or family token, the lookup key. */
+  key: string;
+  bareModel: string;
+  modelProvider: string | null;
 }
 
-export function modelProviderFor(resolvedModel: string): string | null {
-  return registryEntryForModel(resolvedModel)?.modelProvider ?? null;
-}
-
-export function normalizeRequestedModel(model: unknown): string | null {
+// Everything about a selection that needs no catalog: the codex: prefix and
+// the @provider split. Commands parse before any runtime probe and resolve
+// after the probe refreshed the catalog; a `claude:` selection never gets
+// here (parseModelSelection and parseRoleSelection route it by prefix).
+export function parseCodexSelection(model: unknown): CodexSelection | null {
   if (model == null) {
     return null;
   }
@@ -116,21 +136,159 @@ export function normalizeRequestedModel(model: unknown): string | null {
   if (!normalized) {
     return null;
   }
-  // The routing skill's invariant ("never pass a claude:* selection to the
-  // companion") enforced at the boundary, symmetric with the codex:claude:*
-  // rejection below. Without it, `--model claude:opus` reaches Codex as a
-  // literal model id and fails late, after a job record already exists.
-  if (normalized.toLowerCase().startsWith('claude:')) {
-    throw new Error(
-      `Unsupported model "${normalized}". claude: selections are Claude Code routes, not Codex models; --model accepts Codex selections only.`,
-    );
-  }
   const qualified = parseQualifiedModel(stripCodexPrefix(normalized));
-  const resolvedModel = MODEL_ALIASES.get(qualified.model.toLowerCase()) ?? qualified.model;
-  return qualified.modelProvider ? `${resolvedModel}@${qualified.modelProvider}` : resolvedModel;
+  return {
+    normalized,
+    key: qualified.model.toLowerCase(),
+    bareModel: qualified.model,
+    modelProvider: qualified.modelProvider,
+  };
 }
 
-export function normalizeReasoningEffort(effort: unknown): ReasoningEffort | null {
+// Why a family-shaped selection does not resolve, in one message: a catalog
+// that is only the built-in snapshot says why (the failed or missing fetch),
+// then the family's versions or, for an unknown family, the families.
+function unresolvedFamilyMessage(
+  selection: CodexSelection,
+  family: string,
+  versions: readonly CodexCatalogModel[],
+  catalog: CodexCatalog,
+): string {
+  const source =
+    catalog.source !== 'builtin'
+      ? 'the Codex model catalog'
+      : `${
+          catalog.fetchFailure
+            ? `fetching the Codex model catalog failed (${catalog.fetchFailure})`
+            : 'no Codex model catalog has been fetched yet (/stereo:setup fetches it)'
+        }, and the built-in snapshot`;
+  const listed =
+    versions.length > 0
+      ? `${family} versions ${versions.map((model) => `${model.version} (${model.id})`).join(', ')}`
+      : `no ${family} family, only ${
+          listCodexCatalogFamilies(catalog)
+            .map((name) => `codex:${name}`)
+            .join(', ') || 'none'
+        }`;
+  return `Cannot resolve "${selection.normalized}": ${source} lists ${listed}. Use a listed codex:<family>[-<version>], or <id>@<provider> for another provider's model.`;
+}
+
+// Third-party alias or registry model id, then `<family>[-<version>]` against
+// the catalog (the newest version, or the pinned one), then the catalog's own
+// spelling of a raw id, then raw passthrough. A family-shaped selection the
+// catalog cannot resolve is refused, whatever the catalog's source, rather
+// than sent to Codex to fail after the job record exists, when its family is
+// one the catalog lists or a purely alphabetic word (a typo such as `atsra`);
+// a word with a digit the catalog does not list (`llama3`, `qwen3`) is a
+// provider's raw id and passes through. A provider-qualified id runs outside
+// the catalog, which describes only the OpenAI models.
+export function resolveCodexSelection(selection: CodexSelection, catalog: CodexCatalog): string {
+  const { key, bareModel, modelProvider } = selection;
+  // A registry id (`glm-5.2`, what a `codex:glm` job records and a resume
+  // passes back) is family-shaped, so it must match before the family grammar.
+  let resolvedModel = MODEL_ALIASES.get(key) ?? ENTRIES_BY_MODEL.get(key)?.model ?? null;
+  const family = resolvedModel ? null : parseFamilySelection(key);
+  if (family) {
+    const versions = catalogFamilyVersions(catalog, family.family);
+    const version = family.version;
+    resolvedModel =
+      (version === null
+        ? versions[0]
+        : versions.find((model) => compareModelVersions(model.version as string, version) === 0)
+      )?.id ?? null;
+    const familyWord = versions.length > 0 || /^[a-z]+$/.test(family.family);
+    if (!resolvedModel && !modelProvider && familyWord && !findCatalogModel(catalog, key)) {
+      throw new Error(unresolvedFamilyMessage(selection, family.family, versions, catalog));
+    }
+  }
+  // A raw OpenAI id in another case (`GPT-6-Astra`) runs as the slug the
+  // catalog lists, so its effort default and tier check find it too. A
+  // provider-qualified id runs outside the catalog and keeps its spelling.
+  if (!resolvedModel && !modelProvider) {
+    resolvedModel = findCatalogModel(catalog, bareModel)?.id ?? null;
+  }
+  resolvedModel ??= bareModel;
+  return modelProvider ? `${resolvedModel}@${modelProvider}` : resolvedModel;
+}
+
+export type ModelSelection =
+  { runtime: 'claude'; claude: ClaudeSelection } | { runtime: 'codex'; codex: CodexSelection };
+
+// The runtime-aware entry point for every companion command: a `claude:`
+// selection is parsed by the Claude grammar (which rejects `claude:session`
+// and the removed `claude:inherit`), everything else by the Codex grammar.
+export function parseModelSelection(model: unknown): ModelSelection | null {
+  if (model == null || !String(model).trim()) {
+    return null;
+  }
+  if (isClaudeSelection(model)) {
+    return { runtime: 'claude', claude: parseClaudeSelection(String(model)) };
+  }
+  const codex = parseCodexSelection(model);
+  return codex ? { runtime: 'codex', codex } : null;
+}
+
+// The default effort a launch of `resolvedModel` applies when nothing
+// overrides it: Claude ids ask the version table; third-party Codex rows take
+// none; an OpenAI model takes its version row when the table has one, else
+// xhigh stepped down to a tier the catalog lists.
+export function defaultModelEffort(
+  resolvedModel: string,
+  options: ModelResolutionOptions = {},
+): ReasoningEffort | null {
+  if (options.runtime === 'claude') {
+    return defaultClaudeEffort(resolvedModel);
+  }
+  const { model } = parseQualifiedModel(resolvedModel);
+  const entry = registryEntryForModel(model);
+  if (entry) {
+    return entry.defaultModelEffort ?? null;
+  }
+  const parsed = parseOpenAiModelId(model);
+  const row = parsed ? findModelVersion('codex', parsed.family, parsed.version) : null;
+  if (row) {
+    return row.effort;
+  }
+  return defaultCatalogEffort(model, options.catalog ?? loadCodexCatalog());
+}
+
+// The model listing setup and config render: every Claude version the table
+// knows and every Codex family the catalog lists (none without a catalog),
+// each version with the default effort a role launch applies to it; a Codex
+// task without a role sends none and runs at Codex's own default.
+export function describeModels(catalog: CodexCatalog | null): {
+  claude: Record<string, FamilyModels>;
+  codex: Record<string, FamilyModels>;
+} {
+  const codex: Record<string, FamilyModels> = {};
+  for (const family of catalog ? listCodexCatalogFamilies(catalog) : []) {
+    codex[family] = familyModels(
+      catalogFamilyVersions(catalog as CodexCatalog, family).map((model) => ({
+        version: model.version as string,
+        id: model.id,
+        effort: defaultModelEffort(model.id, { catalog: catalog as CodexCatalog }),
+      })),
+    );
+  }
+  return { claude: describeClaudeModels(), codex };
+}
+
+export function modelProviderFor(resolvedModel: string): string | null {
+  return registryEntryForModel(resolvedModel)?.modelProvider ?? null;
+}
+
+// Each runtime validates its own ladder: Claude Code accepts low..max, the
+// Codex app-server none..ultra. A null runtime means the Codex ladder, which
+// is the superset; callers that know the role pass its route instead.
+// `source` names the effort in the Claude message (`--effort` by default).
+export function normalizeReasoningEffort(
+  effort: unknown,
+  runtime: ModelRuntime | null = 'codex',
+  source?: string,
+): ReasoningEffort | null {
+  if (runtime === 'claude') {
+    return normalizeClaudeEffort(effort, source);
+  }
   if (effort == null) {
     return null;
   }

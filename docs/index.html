@@ -1346,7 +1346,7 @@
               >
                 <path d="M13 2.5 4.5 13.5H11l-1 8 9.5-11H13z" />
               </svg>
-              Durable Codex jobs
+              Durable background jobs
             </li>
             <li>
               <svg
@@ -1394,7 +1394,8 @@
                 <span class="stepnum">01 · PLAN</span>
                 <h3>Claude drafts the plan</h3>
                 <p>
-                  A contained planner explores the repository read-only. <code>claude:fable</code>
+                  A contained planner explores the repository read-only.
+                  <code>claude:fable-5.1</code>
                 </p>
               </div>
             </li>
@@ -1417,7 +1418,9 @@
               <div class="duo-card">
                 <span class="stepnum">02 · CHALLENGE</span>
                 <h3>A second model challenges assumptions</h3>
-                <p>Adversarial review through bounded revision rounds. <code>codex:astra</code></p>
+                <p>
+                  Adversarial review through bounded revision rounds. <code>codex:astra-6</code>
+                </p>
               </div>
             </li>
             <li class="side-c">
@@ -1437,10 +1440,10 @@
               </span>
               <div class="duo-card">
                 <span class="stepnum">03 · BUILD</span>
-                <h3>Claude builds and verifies in a contained agent</h3>
+                <h3>Claude builds and verifies in a contained session</h3>
                 <p>
                   The delta is built and tested before the review gate — in any-language repos.
-                  <code>claude:opus</code>
+                  <code>claude:opus-5.5</code>
                 </p>
               </div>
             </li>
@@ -1463,7 +1466,7 @@
               <div class="duo-card">
                 <span class="stepnum">04 · GATE</span>
                 <h3>A fresh reviewer gates the diff</h3>
-                <p>The gate runs outside the session. <code>codex:astra</code></p>
+                <p>The gate runs outside the session. <code>codex:astra-6</code></p>
               </div>
             </li>
           </ol>
@@ -1550,15 +1553,15 @@
           <div class="term">
             <div class="term-bar"><i></i><i></i><i></i>&nbsp; claude — ~/dev/api</div>
             <pre><span class="d">&gt;</span> /stereo:plan add rate limiting to the public API
-<span class="c">◆ planner claude:fable</span> <span class="d">— drafting (read-only)…</span>
-<span class="x">◆ plan-reviewer codex:astra</span> <span class="d">— round 1: needs-revision · 3 findings</span>
-<span class="x">◆ plan-reviewer codex:astra</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
+<span class="c">◆ planner claude:fable-5.1</span> <span class="d">— claude-fable-5-1 · drafting (read-only)…</span>
+<span class="x">◆ plan-reviewer codex:astra-6</span> <span class="d">— gpt-6-astra · round 1: needs-revision · 3 findings</span>
+<span class="x">◆ plan-reviewer codex:astra-6</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
 <span class="ok">✓</span> plan stored <span class="d">— run /stereo:implement</span>
 
 <span class="d">&gt;</span> /stereo:implement
-<span class="c">◆ implementer claude:opus</span> <span class="d">— 14 files changed</span>
+<span class="c">◆ implementer claude:opus-5.5</span> <span class="d">— claude-opus-5-5 · 14 files changed</span>
 <span class="d">◆ implementer-run tests</span> <span class="ok">✓</span> <span class="d">· static checks</span> <span class="ok">✓</span>
-<span class="x">◆ implementation-reviewer codex:astra</span> <span class="d">— acceptable · 0 fixes</span>
+<span class="x">◆ implementation-reviewer codex:astra-6</span> <span class="d">— gpt-6-astra · acceptable · 0 fixes</span>
 <span class="ok">✓</span> done <span class="d">— nothing committed; review and commit yourself</span></pre>
           </div>
           <figcaption>
@@ -1569,7 +1572,10 @@
         <ul class="flows" aria-label="Typical flows">
           <li>
             <code>/stereo:review</code>
-            <p>Review your tree or branch — Codex&rsquo;s built-in reviewer or Claude-routed.</p>
+            <p>
+              Review your tree or branch with the structured reviewer on either runtime, or
+              Codex&rsquo;s built-in one.
+            </p>
           </li>
           <li>
             <code>/stereo:rescue</code>
@@ -1582,8 +1588,8 @@
           <li>
             <code>--background</code>
             <p>
-              Long work as durable Codex jobs — check in with <code>/stereo:status</code> and reopen
-              runs in Codex. Claude agent runs stay session-bound.
+              Long work as durable jobs on either runtime — check in with
+              <code>/stereo:status</code>; only <code>claude:session</code> stays inline.
             </p>
           </li>
         </ul>
@@ -1592,7 +1598,8 @@
       <section class="shell" id="features">
         <h2>Built for real repository work.</h2>
         <p class="lede">
-          Contained agents, durable state, and honest gates: the mechanics under the pair workflow.
+          Contained sessions, durable state, and honest gates: the mechanics under the pair
+          workflow.
         </p>
         <ul class="features">
           <li>
@@ -1651,7 +1658,10 @@
               <path d="M13 2.5 4.5 13.5H11l-1 8 9.5-11H13z" />
             </svg>
             <h3>Durable background jobs</h3>
-            <p>Long Codex runs survive turn boundaries, with logs and <code>codex resume</code>.</p>
+            <p>
+              Long runs on either runtime survive turn boundaries, with logs and
+              <code>codex resume</code> or <code>claude --resume</code>.
+            </p>
           </li>
           <li>
             <svg
@@ -1775,7 +1785,10 @@
               rel="noopener"
               >/stereo:review</a
             >
-            <span>review your working tree or branch, Codex&rsquo;s built-in or Claude-routed</span>
+            <span
+              >structured review of your working tree or branch on Claude or Codex; Codex&rsquo;s
+              built-in with <code>--native</code></span
+            >
           </li>
           <li>
             <a
@@ -1855,18 +1868,20 @@
       <section class="shell" id="routing">
         <h2>Every role is a flag.</h2>
         <p class="lede">
-          One addressing convention. <code>claude:*</code> names the closed Claude Code set:
-          <code>session</code>, <code>inherit</code>, <code>sonnet</code>, <code>opus</code>,
-          <code>haiku</code>, <code>fable</code>. Everything else routes through the Codex runtime —
-          registry aliases, raw model ids, or qualified <code>model@provider</code> selections,
-          written here with the optional <code>codex:</code> prefix.
+          One addressing convention on both sides. <code>claude:&lt;family&gt;</code> runs the
+          newest Claude version the plugin knows as a headless Claude Code session, and
+          <code>claude:opus-4.8</code> pins one; <code>claude:session</code> keeps a planner or
+          reviewer inline. Everything else runs on the Codex runtime: a family from your Codex
+          catalog (<code>codex:sol</code>, or <code>codex:sol-5.6</code> for one version), a raw
+          model id, or a third-party alias. The defaults run at xhigh, and
+          <code>/stereo:config</code> changes any role&rsquo;s model or effort per workspace.
         </p>
         <form class="console" id="rc" aria-label="Compose a pair-workflow command">
           <fieldset>
             <legend>Planner</legend>
             <label class="lc">
-              <input type="radio" name="planner" value="claude:fable" checked />
-              <span>claude:fable</span>
+              <input type="radio" name="planner" value="claude:fable-5.1" checked />
+              <span>claude:fable-5.1</span>
             </label>
             <label class="lc">
               <input type="radio" name="planner" value="claude:session" />
@@ -1884,8 +1899,8 @@
           <fieldset>
             <legend>Plan reviewer</legend>
             <label class="lx">
-              <input type="radio" name="plan-reviewer" value="codex:astra" checked />
-              <span>codex:astra</span>
+              <input type="radio" name="plan-reviewer" value="codex:astra-6" checked />
+              <span>codex:astra-6</span>
             </label>
             <label class="lx">
               <input type="radio" name="plan-reviewer" value="codex:sol" />
@@ -1907,16 +1922,20 @@
           <fieldset>
             <legend>Implementer</legend>
             <label class="lc">
-              <input type="radio" name="implementer" value="claude:opus" checked />
-              <span>claude:opus</span>
+              <input type="radio" name="implementer" value="claude:opus-5.5" checked />
+              <span>claude:opus-5.5</span>
+            </label>
+            <label class="lc">
+              <input type="radio" name="implementer" value="claude:opus-4.8" />
+              <span>claude:opus-4.8</span>
             </label>
             <label class="lx">
               <input type="radio" name="implementer" value="codex:sol" />
               <span>codex:sol</span>
             </label>
             <label class="lx">
-              <input type="radio" name="implementer" value="codex:mini" />
-              <span>codex:mini</span>
+              <input type="radio" name="implementer" value="codex:sol-5.6" />
+              <span>codex:sol-5.6</span>
             </label>
             <label class="lx">
               <input type="radio" name="implementer" value="codex:kimi" />
@@ -1926,8 +1945,8 @@
           <fieldset>
             <legend>Implementation reviewer</legend>
             <label class="lx">
-              <input type="radio" name="implementation-reviewer" value="codex:astra" checked />
-              <span>codex:astra</span>
+              <input type="radio" name="implementation-reviewer" value="codex:astra-6" checked />
+              <span>codex:astra-6</span>
             </label>
             <label class="lx">
               <input type="radio" name="implementation-reviewer" value="codex:sol" />
@@ -1967,57 +1986,66 @@
         </div>
         <p class="console-note">
           Amber chips route to Claude, cyan to the Codex runtime. The <code>codex:</code> prefix is
-          optional in commands, and tool output prints resolved model ids (<code>codex:astra</code>
-          runs <code>gpt-6-astra</code>). Flags matching the defaults are omitted, so the default
-          selection is just the two bare commands. The implementer defaults to the contained
-          <code>claude:opus</code> agent, which builds and tests its own changes; a Codex
-          implementer instead resumes the stored plan-review thread when it is the model that
-          produced it. <code>claude:session</code> is not offered for the implementer — Claude
-          writes always run in a contained agent. Trust a third-party provider with implementation
-          work only after a small <code>--plan-reviewer codex:&lt;alias&gt;</code> round.
+          optional in commands, and tool output prints the exact ids launches pass (<code
+            >codex:astra-6</code
+          >
+          runs <code>gpt-6-astra</code>, <code>claude:opus</code> runs
+          <code>claude-opus-5-5</code>). Flags matching the defaults are omitted, so the default
+          selection is just the two bare commands. The implementer defaults to a contained
+          <code>claude:opus-5.5</code> session, which builds and tests its own changes inside the
+          working tree; on either runtime the implementer starts fresh and never resumes the plan
+          reviewer's thread or session. <code>claude:session</code> is not offered for the
+          implementer — Claude writes always run in a contained session. Trust a third-party
+          provider with implementation work only after a small
+          <code>--plan-reviewer codex:&lt;alias&gt;</code> round.
         </p>
         <details class="routing-defaults">
           <summary>View the default model matrix</summary>
           <div class="rt">
             <table>
               <caption class="visually-hidden">
-                Default model for each role per command
+                Default model and version for each pair role, the model it runs, and its effort
               </caption>
               <thead>
                 <tr>
                   <th scope="col">Role</th>
-                  <th scope="col">/stereo:plan + /stereo:implement</th>
-                  <th scope="col">/stereo:quick</th>
+                  <th scope="col">Default (plan, implement, quick)</th>
+                  <th scope="col">Runs</th>
+                  <th scope="col">Effort</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td>Planner</td>
-                  <td><code class="cc">claude:fable</code></td>
-                  <td><code class="cc">claude:fable</code></td>
+                  <td><code class="cc">claude:fable-5.1</code></td>
+                  <td>Fable 5.1 (<code class="cc">claude-fable-5-1</code>)</td>
+                  <td>xhigh (version default)</td>
                 </tr>
                 <tr>
                   <td>Plan reviewer</td>
-                  <td><code class="cx">codex:astra</code></td>
-                  <td><code class="cx">codex:astra</code></td>
+                  <td><code class="cx">codex:astra-6</code></td>
+                  <td>GPT-6 Astra (<code class="cx">gpt-6-astra</code>)</td>
+                  <td>xhigh (version default)</td>
                 </tr>
                 <tr>
                   <td>Implementer</td>
-                  <td><code class="cc">claude:opus</code></td>
-                  <td><code class="cc">claude:opus</code></td>
+                  <td><code class="cc">claude:opus-5.5</code></td>
+                  <td>Opus 5.5 (<code class="cc">claude-opus-5-5</code>)</td>
+                  <td>xhigh (version default)</td>
                 </tr>
                 <tr>
                   <td>Implementation reviewer</td>
-                  <td><code class="cx">codex:astra</code></td>
-                  <td><code class="cx">codex:astra</code></td>
+                  <td><code class="cx">codex:astra-6</code></td>
+                  <td>GPT-6 Astra (<code class="cx">gpt-6-astra</code>)</td>
+                  <td>xhigh (version default)</td>
                 </tr>
               </tbody>
             </table>
           </div>
         </details>
         <p class="how-links">
-          Aliases, prefix semantics, effort rules, and reviewer continuation live in the
-          README&rsquo;s
+          Families and versions, prefix semantics, effort rules, and reviewer continuation live in
+          the README&rsquo;s
           <a
             href="https://github.com/vsladkov/claudex-stereo#model-routing-primer"
             target="_blank"
@@ -2138,9 +2166,9 @@
             >
             or a configured custom provider — <code>/stereo:setup</code> checks runtime readiness,
             authentication, provider configuration, sandbox state, and the review gate. The default
-            pipeline also needs a harness exposing named <code>opus</code> and
-            <code>fable</code> models. Anything OpenAI-backed counts against your Codex usage
-            limits. Details under
+            pipeline also needs Claude Code 2.1.281 or newer, logged in, because Claude roles run as
+            headless <code>claude -p</code> sessions. Anything OpenAI-backed counts against your
+            Codex usage limits. Details under
             <a
               href="https://github.com/vsladkov/claudex-stereo#requirements"
               target="_blank"
@@ -2243,10 +2271,10 @@
       const rcForm = document.getElementById('rc');
       if (rcForm) {
         const defaults = {
-          planner: 'claude:fable',
-          'plan-reviewer': 'codex:astra',
-          implementer: 'claude:opus',
-          'implementation-reviewer': 'codex:astra',
+          planner: 'claude:fable-5.1',
+          'plan-reviewer': 'codex:astra-6',
+          implementer: 'claude:opus-5.5',
+          'implementation-reviewer': 'codex:astra-6',
         };
         const planOut = document.getElementById('rc-plan');
         const implOut = document.getElementById('rc-impl');

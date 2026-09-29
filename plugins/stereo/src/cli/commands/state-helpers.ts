@@ -4,7 +4,7 @@ import {
   loadPairPlanState,
   planSlotOrDefault,
 } from '../../workspace/state.ts';
-import { readUserFile } from '../io.ts';
+import { readJsonObjectFile } from '../io.ts';
 
 // Shared helpers for the implement-state and tournament-state subcommands.
 // These two commands grew as siblings and their common logic drifts when
@@ -16,22 +16,11 @@ export type JsonRecord = Record<string, unknown>;
 export const MAX_STATE_FILE_BYTES = 512 * 1024;
 
 export function readStatePayload(cwd: string, value: unknown, oversizeHint: string): JsonRecord {
-  const contents = readUserFile(cwd, '--state-file', String(value));
-  if (Buffer.byteLength(contents, 'utf8') > MAX_STATE_FILE_BYTES) {
-    throw new Error(`--state-file is larger than 512 KiB. ${oversizeHint}`);
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(contents);
-  } catch {
-    throw new Error('Could not parse --state-file as JSON.');
-  }
-  const payload = recordLike(parsed);
-  if (!payload) {
-    throw new Error('Provide --state-file containing a JSON object.');
-  }
-  return payload;
+  return readJsonObjectFile(cwd, '--state-file', String(value), (contents) => {
+    if (Buffer.byteLength(contents, 'utf8') > MAX_STATE_FILE_BYTES) {
+      throw new Error(`--state-file is larger than 512 KiB. ${oversizeHint}`);
+    }
+  });
 }
 
 export function currentPlanSummary(

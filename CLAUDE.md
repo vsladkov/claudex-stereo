@@ -12,19 +12,46 @@ development is dogfooded — the plugin under development is also the tool in us
   That nesting is the packaging boundary (installs copy this dir's working
   tree): never flatten it, or `node_modules/`, `tests/`, and `.generated/`
   ship into every install.
-  - `scripts/*.ts` — four thin entry points referenced by `hooks/hooks.json`
-    and the command markdown. Paths and filenames are load-bearing.
+  - `scripts/` — thin entry points: `codex-companion.ts` (the CLI the command
+    markdown invokes), `app-server-broker.ts`, and the hook entry points
+    `session-lifecycle-hook.ts` / `stop-review-gate-hook.ts`, which
+    `hooks/hooks.json` reaches through the `.cjs` shims of the same name
+    (`session-lifecycle-hook.cjs`, `stop-review-gate-hook.cjs`: each runs
+    `node-version-guard.cjs`, then imports its `.ts`). Paths and filenames are
+    load-bearing.
   - `src/` — layered, imports point strictly downward:
     `shared → platform → protocol/broker/workspace → transport →
-runtime/jobs/models → render/workflows → cli/hooks`.
-    `models/registry.ts` is the expansion point for new provider models
-    (one row per model). `protocol/` bridges the codegen types.
-    It also holds the broker RPC/endpoint constants shared across layers.
-    `broker/server.ts` is a process entry point whose transport client is
-    injected by `scripts/app-server-broker.ts`, so `broker/` never imports
-    upward.
-  - `commands/ skills/ agents/ prompts/ schemas/ hooks/` — the plugin surface
-    Claude actually reads; prompts/schemas are loaded via `shared/paths.ts`.
+models → runtime → jobs → render/workflows → cli/hooks` (models, runtime,
+    and jobs are one tier in spirit, but imports within it point that way).
+    `protocol/` bridges the codegen types and holds the broker RPC/endpoint
+    constants shared across layers. `broker/server.ts` is a process entry
+    point whose transport client is injected by `scripts/app-server-broker.ts`,
+    so `broker/` never imports upward. `transport/claude-cli.ts` spawns
+    `claude -p` and parses its stream-json events; `runtime/claude-runner.ts`
+    turns a role request into flags, environment, and a turn result.
+  - Models: `models/model-table.ts` is the one table of model versions for
+    both runtimes (one row per version, with its default effort); adding a row
+    is the only maintenance for a new version. `ROLE_DEFINITIONS` in
+    `models/role-defaults.ts` holds each role's built-in default, which moves
+    only when that table changes. `models/registry.ts` holds the third-party
+    provider aliases (one row per model). OpenAI models are not rows:
+    `models/catalog.ts` resolves `codex:<family>[-<version>]` against the live
+    Codex catalog (`model/list`, cached at
+    `$CODEX_HOME/companion-state/codex-models.json`, with a one-model built-in
+    snapshot as the only fallback). Never read Codex's own
+    `models_cache.json`: it is version-gated per client and lags the live
+    list. `models/claude-models.ts` holds the `claude:<family>[-<version>]`
+    grammar; never pass Claude Code a bare alias. Selection, model, and
+    effort resolution live in one launch block (`cli/launch.ts`, over
+    `models/role-defaults.ts`) shared by `task`, `plan-review`, and the
+    reviews; `config` and `setup` render role defaults through it, and the
+    pair commands read each role's dry run instead of re-deriving it. The
+    user-facing rules live in `skills/model-routing/SKILL.md`.
+  - `commands/ skills/ agents/ roles/ prompts/ schemas/ hooks/` — the plugin
+    surface Claude actually reads; prompts/schemas are loaded via
+    `shared/paths.ts`. `agents/` holds only `codex-rescue.md` (the one Agent
+    type, launched by `/stereo:rescue`); the six Claude role definitions live
+    in `roles/`, so Claude Code never registers them as Agent types.
 - `.claude-plugin/marketplace.json` — the repo doubles as the marketplace
   (`claudex-stereo`, added by local path or GitHub slug); install source
   points at `./plugins/stereo`.
@@ -34,9 +61,11 @@ runtime/jobs/models → render/workflows → cli/hooks`.
   `npm run typecheck`'s prestep, which needs the `codex` CLI on PATH).
 - `docs/` — the GitHub Pages source for claudex-stereo.com (marketing site,
   social card, CNAME/robots/sitemap/404); publishing-only.
-- `scripts/bump-version.ts`, `scripts/provider-probe.ts`, `tests/`, `docs/`,
-  and `.github/` — dev-only, never shipped. The provider probe backs
-  `npm run provider-probe`.
+- `scripts/bump-version.ts`, `scripts/provider-probe.ts`,
+  `scripts/test-windows.ts`, `tests/`, `docs/`, and `.github/` — dev-only, never
+  shipped. The provider probe backs `npm run provider-probe`; the Windows test
+  runner backs `npm run test:windows` (every test file except its exclusion
+  list).
 
 ## TypeScript discipline (no build step — ever)
 
@@ -76,8 +105,8 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
 - CI also runs `npm test` and `npm run build` (an alias for typecheck, still
   with no emit). `.gitattributes` normalizes line endings. The required Windows
   lane (promoted from advisory after three consecutive green `main` runs) runs
-  the portable `npm run test:windows` subset plus formatting, lint, and version
-  checks, and the Codex codegen/typecheck build step. CI installs a pinned
+  `npm run test:windows` (`scripts/test-windows.ts`) and the Codex codegen/typecheck
+  build step; formatting, lint, and version checks run on the Linux lane. CI installs a pinned
   Codex CLI for the codegen prestep on both lanes — bump the pin in
   `.github/workflows/ci.yml` when upgrading Codex locally.
 - Codex write runs need `sysctl kernel.apparmor_restrict_unprivileged_userns=0`
@@ -94,25 +123,36 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
 ## Tests
 
 - `npm test` — node:test over every `tests/*.test.ts` file, one process per
-  file, parallel; ~50–60s. Support modules (`env-bootstrap.cjs`, `helpers.ts`,
-  `runtime-helpers.ts`, `fake-codex-fixture.ts`, `broker-reaper.ts`,
+  file, parallel; about a minute (50–80 s, depending on load). Support modules
+  (`env-bootstrap.cjs`, `helpers.ts`, `runtime-helpers.ts`,
+  `fake-codex-fixture.ts`, `fake-claude-fixture.ts`, `broker-reaper.ts`,
   `global-setup.ts`) are not matched by the glob. The test script preloads
-  `env-bootstrap.cjs` with `--require`; it scrubs leaked `CLAUDE_PLUGIN_DATA`,
-  `CODEX_COMPANION_SESSION_ID`, `CODEX_COMPANION_TRANSCRIPT_PATH`,
-  `CLAUDE_ENV_FILE`, and `CLAUDE_PROJECT_DIR` values, then redirects both
-  `CLAUDE_PLUGIN_DATA` and `CODEX_HOME` to fresh temporary directories so
-  tests cannot touch real user state.
-- **Any test file that runs the CLI or spawns brokers must call
-  `registerBrokerReaping()` from `tests/runtime-helpers.ts`.** The companion
-  auto-starts a detached broker per workspace and only SessionEnd stops it;
-  an unswept file strands ~1 process per test (a full unswept run once hung
-  the machine). `tests/global-setup.ts` is the Linux-only safety net — treat
-  a nonzero reap count in its output as a bug in a test file.
+  `env-bootstrap.cjs` with `--require`: it scrubs leaked session variables (the
+  parent session's ids, env file, project dir, broker endpoint, effort markers,
+  and the env-based Claude auth keys `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`,
+  `CLAUDE_CODE_USE_VERTEX`) and the one timing override
+  (`STEREO_TURN_INACTIVITY_TIMEOUT_MS`), makes sure no test can reach a real
+  `claude` or `codex` (it drops a leaked `CLAUDE_CODE_EXECPATH`, and decoy
+  `codex` and `claude` binaries lead PATH; on Windows the exec path names the
+  `claude` decoy), then redirects `CLAUDE_PLUGIN_DATA`, `CODEX_HOME`, and
+  `CLAUDE_CONFIG_DIR` (whose `settings.json` `apiKeyHelper` a Claude run carries
+  into its child) to fresh temporary directories so tests cannot touch real user
+  state.
+- **Any test file that runs a CLI command able to start a broker must call
+  `registerBrokerReaping()` from `tests/runtime-helpers.ts`; a file that only
+  runs broker-free commands (config, version, the portable Claude CLI checks)
+  asserts `loadBrokerSession(cwd) === null` instead and may stay in the
+  Windows lane.** The companion auto-starts a detached broker per workspace
+  and only SessionEnd stops it; an unswept file strands ~1 process per test
+  (a full unswept run once hung the machine). `tests/global-setup.ts` is the
+  Linux-only safety net — treat a nonzero reap count in its output as a bug
+  in a test file.
 - `commands.test.ts` pins **structural wiring only** (command surface, entry
   points, frontmatter, hooks). Never add prose-regex pins on doc sentences:
   they froze stale docs (a pinned example once asserted a model that no
   longer existed) and tax every legitimate edit.
-- Broker/runtime-sessions tests are timing-sensitive; rerun once before
+- Broker and `runtime-sessions*` tests are timing-sensitive; rerun once before
   treating a failure as a regression.
 - A test that reads a file which a live process rewrites (state.json, fake
   fixture state) must go through `readJsonIfReadable` plus a retrying waitFor
@@ -126,34 +166,164 @@ claude plugin install stereo@claudex-stereo`, then `/reload-plugins` in the
   resolved one.
 - Set `STEREO_KEEP_TEST_TMP=1` to retain test temp directories for debugging;
   otherwise each test process removes the directories it created at exit.
+- A Claude run keeps its agents file in a `stereo-claude-*` directory under the
+  system temp directory and removes it when it ends; nothing sweeps one a
+  killed run left. A test that kills a worker outright (SIGKILL) removes it
+  with `removeFakeClaudeRunDirs` (`tests/fake-claude-fixture.ts`), so a full
+  run leaves no `stereo-*` directory behind.
 
 ## Plugin surface authoring
 
 - Installed plugins ship only `plugins/stereo/` — in-plugin instructions must
   never point at repo-root files (README, CLAUDE.md); they do not exist in an
   install.
-- A command that invokes the `Agent` tool needs `Agent` in its `allowed-tools`
-  frontmatter, and every Agent call in command markdown must state
-  `run_in_background: false` explicitly.
+- Named Claude roles never use the `Agent` tool: each is a companion job
+  (`task --role <role>`, `plan-review`, `review`, `adversarial-review` with a
+  `claude:` model) running one headless `claude -p` session whose system prompt
+  comes from `roles/<role>.md` (`runtime/role-agents.ts`), with hooks and MCP
+  disabled, project settings only (a user-level `apiKeyHelper` is carried over),
+  the effort pinned, and `dontAsk` (read roles) or `acceptEdits` plus the
+  built-in runner grants (implementer; `IMPLEMENTER_DEFAULT_GRANTS`,
+  `runtime/claude-runner.ts`). An `--allow` rule is `Bash(<command>)`, checked
+  for shape only (`cli/allow-rules.ts`): which commands to grant is the
+  orchestrator's choice, and a grant is not containment. `--role implementer`
+  needs `--write` and no other role takes it, on either runtime. Only
+  `claude:session` runs inline, so the pair commands need no `Agent` in
+  `allowed-tools`; `/stereo:rescue` is the one command that still launches an
+  agent (`stereo:codex-rescue`, the Codex bridge) and keeps it.
+- The pair commands pin every role to the `selection` its launch's dry run
+  prints (`task --dry-run --json`, `plan-review --dry-run`) and launch the
+  implementer and the implementation reviewer through `task --launch-args-file`,
+  whose object (`selection`, `effort`, `role`, `allowRules`, `sandbox`; any
+  other key is refused) the task dry run prints as `launchArgs`; `cli/usage.ts`
+  documents both. Where a run works is no part of it: an isolated launch passes
+  `--cwd` and `--workspace` on the command line beside the file.
 - Never `cd` before a companion invocation: the CLI resolves its workspace
   from the process cwd, so a stray `cd` runs the job against the wrong
   workspace and strands a broker there.
+- Never put user or model text in a shell string: command markdown composes
+  companion argv from parsed flags (each value single-quoted); the directly
+  wired `!` blocks pass `$ARGUMENTS` on stdin through a quoted heredoc
+  (`status --args-stdin <<'STEREO_ARGS_Q7X2'`, a delimiter no one types on its
+  own line); and task, plan, and focus text travel through `--prompt-file`,
+  `--plan-file`, `--focus-file`, or a quoted stdin heredoc (`<<'STEREO_EOF'`,
+  rescue only). Only the stdin text of `--args-stdin` is split into arguments
+  (`normalizeArgv`, `cli/io.ts`; `splitRawArgumentString`: quotes group words
+  and open only at the start of a word or after `=`, and a backslash is
+  literal except before a quote); an argument on the command line is taken as
+  it is.
+- The routing skill is six files under `skills/model-routing/`, each read only
+  by the commands that need it and cited by quoted heading: `SKILL.md`
+  (shared routing, effort, job, pinning, and quoting rules) and
+  `pair-procedures.md` (parsing and report lines) for the four pair commands;
+  `plan-procedures.md` (plan draft, review rounds, persistence) for
+  `/stereo:plan` and `/stereo:quick`; `implement-procedures.md` (grants,
+  preflight, implementer launches, staged verification, implementation review)
+  for `/stereo:implement`, `/stereo:quick`, and `/stereo:tournament`;
+  `worktree-procedure.md` for an `--isolated` run and the tournament; and the
+  self-contained `review-procedure.md` for `/stereo:review` and
+  `/stereo:adversarial-review` alone. State a rule once, in the file every
+  reader of it loads, and cite it elsewhere; `commands.test.ts` checks that
+  every heading a file quotes resolves in a file its readers load. Keep each
+  under the Read tool's 25k-token cap so it loads in one read.
+- Isolated worktrees come from the companion (`worktree create|remove`,
+  `cli/commands/worktree.ts`): `create` picks the path when `--path` is omitted
+  and prints its `removeCommand`, and every printed cleanup names
+  `worktree remove`. The dependency directories it links are guarded by the
+  implementer prompt alone. Pair-command polls use
+  `status <jobId> --wait --timeout-ms 90000 --brief`; on a `stalled` phase they
+  run `cancel <jobId> --json`, which settles the record, then the failed-job
+  flow.
 
 ## Runtime invariants worth knowing before editing
 
 - Durable workspace state belongs under `CODEX_HOME/companion-state`; only the
   install-scoped `broker.json` stays under `CLAUDE_PLUGIN_DATA` so stale-code
   brokers lose their ownership record during upgrades.
-- The workspace broker is **shared by every session in the same directory**.
-  SessionEnd kills its own jobs first, then sends a guarded ifIdle shutdown;
-  a busy answer with nothing killed means another session owns it — leave it.
-  Never reintroduce an unconditional kill.
+- The workspace broker is **shared by every session in the same directory**. The
+  session-end sweep stops its own jobs first, then sends a guarded ifIdle
+  shutdown to the broker of every root the session used; a busy answer with
+  nothing killed means another session owns it — leave it. The sweep never
+  kills a broker process: on a busy answer or a
+  timed-out probe the broker, its record, and its files stay, and anything else
+  clears the record and the session's files. Never add a broker kill to it
+  (`hooks/session-lifecycle.ts`).
 - A broker spawned for a workspace record self-checks that record only while
-  idle and exits after two mismatches, so plugin-data removal is self-healing
-  once the broker becomes idle.
-  Endpoint-pinned and manually spawned record-less brokers never self-check.
+  idle and exits after two mismatches (`broker/server.ts`), so plugin-data
+  removal is self-healing once the broker becomes idle. Endpoint-pinned and
+  manually spawned record-less brokers never self-check.
 - A client that dies mid-turn is handled by the broker (interrupt + short
-  grace gate); clients fall back to a direct app-server on busy rejections.
+  grace gate); a client the busy broker rejects retries on a private
+  app-server with a fresh thread (`runtime/turn-runner.ts`). A resume first
+  waits out the broker's abandoned-turn answer
+  (`BROKER_ABANDONED_TURN_MESSAGE`, at most the broker's grace plus two
+  seconds): that turn may be on the resumed thread, which must never be
+  driven from two app-servers at once. A thread that
+  ran a turn on the broker stays loaded there, so a later turn run elsewhere
+  is missing from the broker's copy until it restarts — a known limitation.
+- Every terminal job write goes through `settleJob` (`jobs/job-lifecycle.ts`),
+  which never overwrites a terminal record. Cancel and SessionEnd share one
+  order: settle the record first, then stop the processes it took off
+  (`stopJobProcesses`). A process counts as stopped only once confirmed gone,
+  and nothing retries the stop later (cancel names the pids for the user).
+  Neither releases the job's reservation: a run ended by SIGTERM, SIGINT, or
+  SIGHUP releases every reservation it holds before it exits, a turn in flight
+  included (`releaseLiveReservations`), and a dead owner's lock is taken over
+  later. A worker whose job is already terminal runs nothing (its running
+  write refuses it under the index lock). Doctor lists a job whose worker is
+  gone as stalled; `/stereo:cancel <id>` settles it.
+- Recorded pids are signalled only when `processVerdict`
+  (`platform/process.ts`) says `ours`; liveness and takeover checks treat
+  `unknown` as possibly ours (`processMaybeOurs`). Status, `status --wait`,
+  doctor, and the stranded-reservation scan share one cheap check,
+  `recordedProcessGone` (`platform/process.ts`: ESRCH or a Linux zombie, or a
+  Linux start token `/proc` contradicts; no `ps`/PowerShell probe). Every
+  recorded pid carries one opaque start token (`*Start`: `linux:<boot>:<ticks>`,
+  exact, or `wall:<ms>`, compared within a window off Linux;
+  `currentProcessStartToken`, `spawnedProcessIdentity`); never add a kill or
+  liveness site that skips it. Tests replace the process seams as one
+  `ProcessOps` object (`ops`), which the stop, the reservation acquire, and
+  the stranded-reservation scan take. File locks (the state index, the session
+  registry; `withFileLock`, `shared/fs.ts`) are the exception: held for
+  milliseconds and taken over by age alone, their pid is informational. So is
+  the pid in `broker.json`: it only feeds the availability shortcut and
+  doctor's report, and nothing is signalled on it.
+- Claude sessions and Codex threads share one reservation lock
+  (`acquireThreadReservation`, `runtime/reservations.ts`), so one run drives a
+  thread or session at a time. Only companion CLI processes hold locks and
+  cleanup claims: the broker never touches them, and a record whose pid now runs
+  anything else (a broker, the session hook) names a reused pid and is taken
+  over. A dead owner's lock goes at the next acquire of its thread or session,
+  or at the next stranded-reservation scan (status, setup;
+  `listStrandedThreadReservations`). The lock records the Claude child pid: a
+  takeover refuses while that child may still run, and its error names the pid
+  for the user to check and end. The scan judges by the cheap check and never
+  names a pid: it reaps a dead claimant's claim and a dead owner's lock, leaves
+  a lock whose Claude child is not provably gone, unlisted, to the next acquire,
+  and lists only what it could not read or remove (`unreadable`, `scan-error`).
+- A thread or session belongs to the role that ran it: a `--thread` whose record
+  ran a role resumes only with that same `--role` (`assertSameRoleResume`,
+  `workflows/task.ts`: another role, or a resume naming none, is refused), and a
+  role-less record (a rescue run) is not judged. `--thread` only names the
+  thread (the run takes its `--model` and `--role` from the flags), and
+  `--resume-last` continues only a role-less Codex rescue thread.
+- Claude Code gives a plugin's SessionEnd hook 1.5 s in total, whatever timeout
+  `hooks.json` asks for, so the hook only hands its input to one detached
+  process (the same hook script with the argument `SessionEndSweep`, the input
+  on its stdin) and returns; a sweep that cannot be started does not run. The
+  sweep has no time budget. It covers every root listed in
+  `companion-state/session-workspaces/<sessionId>.json`
+  (`workspace/session-registry.ts`, written by `createJobRecord`): it settles
+  every root's jobs, stops all their processes in one phased stop
+  (`stopJobsProcesses`), and removes the registry file. A SessionEnd whose
+  `reason` is `clear` or `resume` spares the jobs and keeps the registry. Tests
+  that need the sweep finished on return run the `SessionEndSweep` event.
+- `state.json` (`workspace/state.ts`): a transient read error is retried and
+  then fails the command without writing; only a parse error moves the file
+  aside as `state.json.corrupt-<timestamp>`. A failed progress write is logged
+  to the job log and never fails the run.
+- `outputReportResult` (`cli/io.ts`) adds `rendered` to report-style JSON
+  payloads and is deliberately not used for status or result.
 - A helper that takes an explicit `platform` argument must build paths with
   `path.posix`/`path.win32` explicitly, never the host-bound `path` facade —
   `createBrokerEndpoint` once returned `unix:\tmp\...` when a Windows host

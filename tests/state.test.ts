@@ -1,26 +1,38 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeTempDir } from './helpers.ts';
+import { captureStderr, makeTempDir, seedState, useTempCodexHome, waitFor } from './helpers.ts';
+import { SESSION_HOOK, runNodeWithTimeout } from './runtime-helpers.ts';
+import type { NodeRunOutcome } from './runtime-helpers.ts';
 import { loadBrokerSession } from '../plugins/stereo/src/broker/lifecycle.ts';
 import { buildSingleJobSnapshot } from '../plugins/stereo/src/jobs/job-control.ts';
+import {
+  readJsonFileTolerant,
+  withFileLock,
+  writeTextAtomic,
+} from '../plugins/stereo/src/shared/fs.ts';
 import {
   clearImplementState,
   clearPairPlanState,
   DEFAULT_PLAN_SLOT,
   fingerprintPlanText,
+  getConfig,
+  listJobs,
   listPairPlanSlots,
-  loadImplementState,
   loadState,
   loadPairPlanState,
   normalizePlanSlot,
   planSlotOrDefault,
+  readStoredJobOrNull,
   resolveDurableStateDir,
   resolveJobFile,
   resolveJobLogFile,
+  readImplementStateFile,
   resolveImplementStateFile,
   resolvePairPlanFile,
   resolvePairPlanMarkdownFile,
@@ -28,9 +40,9 @@ import {
   resolveStateFile,
   savePairPlanState,
   saveImplementState,
-  saveState,
+  setConfig,
+  updateState,
   upsertJob,
-  writeTextAtomic,
   writeJobFile,
 } from '../plugins/stereo/src/workspace/state.ts';
 import type { JobRecord } from '../plugins/stereo/src/workspace/state.ts';
@@ -400,7 +412,7 @@ test('role defaults normalize on read and write while preserving valid selection
     lastJobAnnouncementAt: null,
   });
 
-  saveState(workspace, loaded);
+  seedState(workspace, loaded);
   assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')).config.roleDefaults, {
     planner: { model: 'codex:terra', effort: 'high' },
     planReviewer: { model: null, effort: 'medium' },
@@ -503,9 +515,9 @@ test('implementation state round-trips in the durable directory and clears idemp
 
   assert.equal(statePath.startsWith(resolveDurableStateDir(workspace)), true);
   assert.deepEqual(saveImplementState(workspace, record), record);
-  assert.deepEqual(loadImplementState(workspace), record);
+  assert.deepEqual(readImplementStateFile(workspace).record, record);
   assert.deepEqual(clearImplementState(workspace), [statePath]);
-  assert.equal(loadImplementState(workspace), null);
+  assert.equal(readImplementStateFile(workspace).record, null);
   assert.deepEqual(clearImplementState(workspace), []);
 });
 
@@ -542,7 +554,7 @@ test('clearPairPlanState migrates then removes a legacy pair plan permanently', 
 
 test('ordinary durable JSON writers preserve bytes and leave no temporary files', () => {
   const workspace = makeTempDir();
-  const state = saveState(workspace, {
+  const state = seedState(workspace, {
     version: 1,
     config: { stopReviewGate: true },
     jobs: [],
@@ -729,9 +741,9 @@ test('state index strips request payloads from legacy, updated, and new jobs', (
   );
 });
 
-test('saveState preserves a concurrently written terminal row over a stale running snapshot', () => {
+test('a stale snapshot write preserves a concurrently written terminal row over its running one', () => {
   const workspace = makeTempDir();
-  saveState(workspace, {
+  seedState(workspace, {
     jobs: [
       {
         id: 'job-race',
@@ -742,7 +754,7 @@ test('saveState preserves a concurrently written terminal row over a stale runni
     ],
   });
   const stale = loadState(workspace);
-  saveState(workspace, {
+  seedState(workspace, {
     jobs: [
       {
         id: 'job-race',
@@ -753,16 +765,16 @@ test('saveState preserves a concurrently written terminal row over a stale runni
     ],
   });
 
-  saveState(workspace, stale);
+  seedState(workspace, stale);
 
   const row = loadState(workspace).jobs.find((job) => job.id === 'job-race');
   assert.equal(row?.status, 'completed');
   assert.equal(row?.phase, 'done');
 });
 
-test('saveState treats terminal status as absorbing even when a running candidate is newer', () => {
+test('a state write treats terminal status as absorbing even when a running candidate is newer', () => {
   const workspace = makeTempDir();
-  saveState(workspace, {
+  seedState(workspace, {
     jobs: [
       {
         id: 'job-absorbing',
@@ -773,7 +785,7 @@ test('saveState treats terminal status as absorbing even when a running candidat
     ],
   });
 
-  saveState(workspace, {
+  seedState(workspace, {
     jobs: [
       {
         id: 'job-absorbing',
@@ -790,9 +802,9 @@ test('saveState treats terminal status as absorbing even when a running candidat
   assert.equal(row?.phase, undefined);
 });
 
-test("saveState keeps the caller's newer row and another writer's newer unrelated row", () => {
+test("a stale snapshot write keeps the caller's newer row and another writer's newer unrelated row", () => {
   const workspace = makeTempDir();
-  saveState(workspace, {
+  seedState(workspace, {
     jobs: [
       { id: 'job-owned', status: 'running', phase: 'old', updatedAt: '2026-01-01T00:00:00Z' },
       { id: 'job-other', status: 'running', phase: 'old', updatedAt: '2026-01-01T00:00:00Z' },
@@ -804,7 +816,7 @@ test("saveState keeps the caller's newer row and another writer's newer unrelate
   callerOwned.phase = 'caller update';
   callerOwned.updatedAt = '2026-01-01T00:02:00Z';
 
-  saveState(workspace, {
+  seedState(workspace, {
     jobs: [
       { id: 'job-owned', status: 'running', phase: 'old', updatedAt: '2026-01-01T00:00:00Z' },
       {
@@ -816,7 +828,7 @@ test("saveState keeps the caller's newer row and another writer's newer unrelate
     ],
   });
 
-  saveState(workspace, callerSnapshot);
+  seedState(workspace, callerSnapshot);
 
   const rows = new Map(loadState(workspace).jobs.map((job) => [job.id, job]));
   assert.equal(rows.get('job-owned')?.phase, 'caller update');
@@ -831,9 +843,9 @@ test('job artifact resolvers reject unsafe job ids', () => {
   }
 });
 
-test('saveState retains an unsafe indexed id without resolving or deleting its artifacts', () => {
+test('a state write retains an unsafe indexed id without resolving or deleting its artifacts', () => {
   const workspace = makeTempDir();
-  saveState(workspace, { jobs: [] });
+  seedState(workspace, { jobs: [] });
   const stateFile = resolveStateFile(workspace);
   const escapedJobFile = path.join(resolveDurableStateDir(workspace), 'escape.json');
   const escapedLogFile = path.join(resolveDurableStateDir(workspace), 'escape.log');
@@ -860,13 +872,13 @@ test('saveState retains an unsafe indexed id without resolving or deleting its a
     'utf8',
   );
 
-  assert.doesNotThrow(() => saveState(workspace, { jobs: [] }));
+  assert.doesNotThrow(() => seedState(workspace, { jobs: [] }));
   assert.equal(loadState(workspace).jobs[0]?.id, '../escape');
   assert.equal(fs.readFileSync(escapedJobFile, 'utf8'), 'sentinel job bytes\n');
   assert.equal(fs.readFileSync(escapedLogFile, 'utf8'), 'sentinel log bytes\n');
 });
 
-test('saveState prunes dropped job artifacts when indexed jobs exceed the cap', () => {
+test('a state write prunes dropped job artifacts when indexed jobs exceed the cap', () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
@@ -901,7 +913,7 @@ test('saveState prunes dropped job artifacts when indexed jobs exceed the cap', 
     'utf8',
   );
 
-  saveState(workspace, {
+  seedState(workspace, {
     version: 1,
     config: { stopReviewGate: false },
     jobs,
@@ -929,7 +941,7 @@ test('saveState prunes dropped job artifacts when indexed jobs exceed the cap', 
   );
 });
 
-test("saveState keeps a live job's artifacts and index entry when dropped by a stale snapshot", () => {
+test("a state write keeps a live job's artifacts and index entry when dropped by a stale snapshot", () => {
   const workspace = makeTempDir();
   const jobFile = resolveJobFile(workspace, 'job-live');
   const logFile = resolveJobLogFile(workspace, 'job-live');
@@ -940,14 +952,14 @@ test("saveState keeps a live job's artifacts and index entry when dropped by a s
     'utf8',
   );
   // The on-disk index knows about the live job...
-  saveState(workspace, {
+  seedState(workspace, {
     version: 1,
     config: {},
     jobs: [{ id: 'job-live', status: 'running', logFile, updatedAt: '2026-01-02T00:00:00.000Z' }],
   });
 
   // ...but a concurrent writer saves a stale snapshot that omits it.
-  saveState(workspace, { version: 1, config: {}, jobs: [] });
+  seedState(workspace, { version: 1, config: {}, jobs: [] });
 
   assert.equal(fs.existsSync(jobFile), true);
   assert.equal(fs.existsSync(logFile), true);
@@ -959,7 +971,7 @@ test("saveState keeps a live job's artifacts and index entry when dropped by a s
   assert.equal('request' in jobs[0], false);
 });
 
-test('saveState still deletes terminal jobs dropped from the snapshot', () => {
+test('a state write still deletes terminal jobs dropped from the snapshot', () => {
   const workspace = makeTempDir();
   const jobFile = resolveJobFile(workspace, 'job-done');
   const logFile = resolveJobLogFile(workspace, 'job-done');
@@ -969,15 +981,561 @@ test('saveState still deletes terminal jobs dropped from the snapshot', () => {
     `${JSON.stringify({ id: 'job-done', status: 'completed', logFile, updatedAt: '2026-01-02T00:00:00.000Z' }, null, 2)}\n`,
     'utf8',
   );
-  saveState(workspace, {
+  seedState(workspace, {
     version: 1,
     config: {},
     jobs: [{ id: 'job-done', status: 'completed', logFile, updatedAt: '2026-01-02T00:00:00.000Z' }],
   });
 
-  saveState(workspace, { version: 1, config: {}, jobs: [] });
+  seedState(workspace, { version: 1, config: {}, jobs: [] });
 
   assert.equal(fs.existsSync(jobFile), false);
   assert.equal(fs.existsSync(logFile), false);
   assert.equal(loadState(workspace).jobs.length, 0);
+});
+
+// A job-done row with its job file and log, plus a non-default config: the
+// state a transient read error must never reset or prune.
+function seedFinishedWorkspace(workspace: string): { jobFile: string; logFile: string } {
+  const jobFile = resolveJobFile(workspace, 'job-done');
+  const logFile = resolveJobLogFile(workspace, 'job-done');
+  fs.writeFileSync(logFile, 'done\n', 'utf8');
+  const job = {
+    id: 'job-done',
+    status: 'completed',
+    logFile,
+    updatedAt: '2026-01-02T00:00:00.000Z',
+  };
+  fs.writeFileSync(jobFile, `${JSON.stringify(job)}\n`, 'utf8');
+  seedState(workspace, { version: 1, config: { stopReviewGate: true }, jobs: [job] });
+  return { jobFile, logFile };
+}
+
+function failStateReads(
+  t: TestContext,
+  stateFile: string,
+  failures: number,
+  code = 'EMFILE',
+): { calls: () => number } {
+  const originalRead = fs.readFileSync;
+  let calls = 0;
+  t.mock.method(fs, 'readFileSync', ((file: fs.PathOrFileDescriptor, options?: unknown) => {
+    if (file === stateFile) {
+      calls += 1;
+      if (calls <= failures) {
+        throw Object.assign(new Error(`${code}: injected failure, open '${stateFile}'`), { code });
+      }
+    }
+    return originalRead(file, options as Parameters<typeof fs.readFileSync>[1]);
+  }) as typeof fs.readFileSync);
+  return { calls: () => calls };
+}
+
+test('a state read that fails for an I/O reason is retried, then thrown, never reset', (t) => {
+  const workspace = makeTempDir();
+  const { jobFile, logFile } = seedFinishedWorkspace(workspace);
+  const stateFile = resolveStateFile(workspace);
+  const before = fs.readFileSync(stateFile, 'utf8');
+
+  // A brief failure is retried and the real state comes back.
+  failStateReads(t, stateFile, 2, 'EBUSY');
+  assert.equal(loadState(workspace).config.stopReviewGate, true);
+  t.mock.restoreAll();
+
+  // A lasting one is thrown: nothing is written, moved aside, or deleted.
+  const lasting = failStateReads(t, stateFile, Number.POSITIVE_INFINITY);
+  const isReadFailure = (error: unknown) =>
+    (error as NodeJS.ErrnoException).code === 'EMFILE' &&
+    (error as Error).message.startsWith(`Could not read the state file ${stateFile}:`);
+  assert.throws(() => loadState(workspace), isReadFailure);
+  assert.ok(lasting.calls() > 1, 'the read was retried');
+  assert.throws(
+    () =>
+      updateState(workspace, (state) => {
+        state.jobs = [];
+      }),
+    isReadFailure,
+  );
+  t.mock.restoreAll();
+
+  assert.equal(fs.readFileSync(stateFile, 'utf8'), before);
+  assert.equal(fs.existsSync(jobFile), true);
+  assert.equal(fs.existsSync(logFile), true);
+  assert.deepEqual(
+    fs.readdirSync(path.dirname(stateFile)).filter((name) => name.includes('.corrupt-')),
+    [],
+  );
+});
+
+test('a state write takes over a stale index lock of a dead writer and writes under a fresh one', () => {
+  const workspace = makeTempDir();
+  seedState(workspace, { jobs: [] });
+  const lockPath = `${resolveStateFile(workspace)}.lock`;
+
+  // A lock a dead writer left behind, older than the stale threshold: it is
+  // taken over rather than waited out (the timeout fallback would leave it).
+  fs.writeFileSync(lockPath, '2147483600', 'utf8');
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(lockPath, old, old);
+  seedState(workspace, {
+    jobs: [{ id: 'job-after-stale-lock', status: 'queued', updatedAt: '2026-01-01T00:00:00Z' }],
+  });
+  assert.equal(fs.existsSync(lockPath), false, 'the stale lock is gone');
+  assert.deepEqual(
+    loadState(workspace).jobs.map((job) => job.id),
+    ['job-after-stale-lock'],
+  );
+
+  // The read-modify-write runs under the lock, which names this process
+  // (`<pid> <token>`) and is released once the write is done.
+  const updated = updateState(workspace, (state) => {
+    assert.match(
+      fs.readFileSync(lockPath, 'utf8'),
+      new RegExp(`^${process.pid} [0-9a-f-]{36}$`),
+      'held while mutating',
+    );
+    state.config.stopReviewGate = true;
+    state.jobs.push({ id: 'job-updated', status: 'queued', updatedAt: '2026-01-02T00:00:00Z' });
+  });
+  assert.equal(updated.config.stopReviewGate, true);
+  assert.equal(fs.existsSync(lockPath), false, 'the lock is released after the write');
+  const reloaded = loadState(workspace);
+  assert.equal(reloaded.config.stopReviewGate, true);
+  assert.deepEqual(reloaded.jobs.map((job) => job.id).sort(), [
+    'job-after-stale-lock',
+    'job-updated',
+  ]);
+});
+
+test('two state writers that overlap under the lock both keep their rows', () => {
+  const workspace = makeTempDir();
+  seedState(workspace, { jobs: [] });
+  const lockPath = `${resolveStateFile(workspace)}.lock`;
+  const row = (id: string): JobRecord => ({
+    id,
+    status: 'running',
+    updatedAt: '2026-01-01T00:00:00Z',
+  });
+  // Each job has its file, as the production writers leave it.
+  writeJobFile(workspace, 'job-first', row('job-first'));
+  writeJobFile(workspace, 'job-second', row('job-second'));
+
+  updateState(workspace, (state) => {
+    // Two waiters can both take one stale lock over: a second holder gets in
+    // while this one still holds it, and writes first.
+    fs.rmSync(lockPath);
+    upsertJob(workspace, row('job-second'));
+    state.jobs.unshift(row('job-first'));
+  });
+
+  assert.deepEqual(
+    loadState(workspace)
+      .jobs.map((job) => job.id)
+      .sort(),
+    ['job-first', 'job-second'],
+  );
+});
+
+const STATE_MODULE = fileURLToPath(
+  new URL('../plugins/stereo/src/workspace/state.ts', import.meta.url),
+);
+
+// One writer process: it announces itself on its ready file, waits for the
+// shared go file so every writer's read-merge-write cycles overlap, then
+// upserts its own ids. upsertJob writes no per-job file, so a row a stale
+// unlocked snapshot drops is gone for good: only the index lock keeps it.
+const UPSERT_WRITER_SOURCE = [
+  "import fs from 'node:fs';",
+  "import { pathToFileURL } from 'node:url';",
+  'const [stateModule, workspace, readyFile, goFile, worker, count] = process.argv.slice(1);',
+  'const { upsertJob } = await import(pathToFileURL(stateModule).href);',
+  "fs.writeFileSync(readyFile, '');",
+  'const until = Date.now() + 30000;',
+  'const pause = new Int32Array(new SharedArrayBuffer(4));',
+  'while (!fs.existsSync(goFile)) {',
+  '  if (Date.now() > until) { process.exit(3); }',
+  '  Atomics.wait(pause, 0, 0, 5);',
+  '}',
+  'for (let index = 0; index < Number(count); index += 1) {',
+  "  upsertJob(workspace, { id: `job-${worker}-${index}`, status: 'queued' });",
+  '}',
+].join('\n');
+
+test('writers in separate processes serialize on the index lock and every row survives', async (t) => {
+  const codexHome = useTempCodexHome(t, 'state-lock-home-');
+  const workspace = makeTempDir();
+  const barrier = makeTempDir();
+  const goFile = path.join(barrier, 'go');
+  // 36 rows stay under the MAX_JOBS prune cap, so every one must be listed.
+  const writers = 6;
+  const perWriter = 6;
+  const env = { ...process.env, CODEX_HOME: codexHome };
+  const exited: NodeRunOutcome[] = [];
+  const runs = Array.from({ length: writers }, (_, worker) =>
+    runNodeWithTimeout(
+      [
+        '--input-type=module',
+        '-e',
+        UPSERT_WRITER_SOURCE,
+        STATE_MODULE,
+        workspace,
+        path.join(barrier, `ready-${worker}`),
+        goFile,
+        String(worker),
+        String(perWriter),
+      ],
+      { env, timeoutMs: 60_000 },
+    ).then((outcome) => {
+      exited.push(outcome);
+      return outcome;
+    }),
+  );
+  // Release them together once all are loaded (or stop waiting if one died).
+  await waitFor(
+    () =>
+      exited.length > 0 ||
+      fs.readdirSync(barrier).filter((name) => name.startsWith('ready-')).length === writers,
+    { timeoutMs: 45_000 },
+  );
+  fs.writeFileSync(goFile, '');
+  const outcomes = await Promise.all(runs);
+  for (const outcome of outcomes) {
+    assert.equal(outcome.status, 0, `${outcome.timedOut ? 'timed out: ' : ''}${outcome.stderr}`);
+  }
+
+  const expected = Array.from({ length: writers }, (_, worker) =>
+    Array.from({ length: perWriter }, (_, index) => `job-${worker}-${index}`),
+  ).flat();
+  assert.deepEqual(
+    loadState(workspace)
+      .jobs.map((job) => job.id)
+      .sort(),
+    expected.sort(),
+  );
+  assert.equal(fs.existsSync(`${resolveStateFile(workspace)}.lock`), false, 'no lock is left');
+});
+
+test('a writer that cannot take a fresh index lock in its budget writes unlocked and leaves it', () => {
+  const workspace = makeTempDir();
+  seedState(workspace, { jobs: [] });
+  const lockPath = `${resolveStateFile(workspace)}.lock`;
+  // A live writer's lock: fresh, so it is waited on, never taken over.
+  const held = '424242 held-by-a-live-writer';
+  fs.writeFileSync(lockPath, held, 'utf8');
+
+  const started = Date.now();
+  updateState(
+    workspace,
+    (state) => {
+      state.jobs.push({ id: 'job-unlocked', status: 'queued' });
+    },
+    { attempts: 3 },
+  );
+  // A deadline already past allows one attempt, then the same fallback.
+  updateState(
+    workspace,
+    (state) => {
+      state.config.stopReviewGate = true;
+    },
+    { deadline: Date.now() },
+  );
+  const elapsed = Date.now() - started;
+
+  const state = loadState(workspace);
+  assert.deepEqual(
+    state.jobs.map((job) => job.id),
+    ['job-unlocked'],
+  );
+  assert.equal(state.config.stopReviewGate, true);
+  assert.equal(fs.readFileSync(lockPath, 'utf8'), held, 'the holder keeps its lock');
+  // The default budget waits seconds (and takes a lock over once stale).
+  assert.ok(elapsed < 2500, `the small budget bounded the wait (${elapsed} ms)`);
+  fs.rmSync(lockPath);
+});
+
+// The one SessionStart budget test: the hook announces a finished job and
+// writes its watermark past an index lock another writer keeps holding.
+test('SessionStart writes its watermark past a held index lock within its hook budget', async (t) => {
+  const hooks = JSON.parse(
+    fs.readFileSync(
+      fileURLToPath(new URL('../plugins/stereo/hooks/hooks.json', import.meta.url)),
+      'utf8',
+    ),
+  ) as { hooks: { SessionStart: Array<{ hooks: Array<{ timeout: number }> }> } };
+  const budgetMs = (hooks.hooks.SessionStart[0]?.hooks[0]?.timeout ?? 0) * 1000;
+  assert.ok(budgetMs > 0, 'hooks.json gives SessionStart a timeout');
+
+  const codexHome = useTempCodexHome(t, 'session-start-lock-home-');
+  const workspace = makeTempDir();
+  // A job finished after the watermark: the hook announces it and moves the
+  // watermark, which is the one state write it makes.
+  seedState(workspace, {
+    config: { stopReviewGate: false, lastJobAnnouncementAt: '2026-08-01T10:00:00.000Z' },
+    jobs: [
+      {
+        id: 'plan-finished',
+        status: 'completed',
+        kind: 'plan-review',
+        createdAt: '2026-08-01T10:15:00.000Z',
+        completedAt: '2026-08-01T10:45:00.000Z',
+        updatedAt: '2026-08-01T10:45:00.000Z',
+      },
+    ],
+  });
+  const lockPath = `${resolveStateFile(workspace)}.lock`;
+  const held = '424242 held-by-a-live-writer';
+  fs.writeFileSync(lockPath, held, 'utf8');
+  // Keep the lock fresh for as long as the hook runs, as a live holder would,
+  // so it never turns stale however slowly this machine starts node.
+  const refresh = setInterval(() => {
+    const now = new Date();
+    fs.utimesSync(lockPath, now, now);
+  }, 250);
+  t.after(() => clearInterval(refresh));
+
+  const started = Date.now();
+  const outcome = await runNodeWithTimeout([SESSION_HOOK, 'SessionStart'], {
+    cwd: workspace,
+    env: { ...process.env, CODEX_HOME: codexHome },
+    timeoutMs: budgetMs * 3,
+  });
+  const elapsed = Date.now() - started;
+  clearInterval(refresh);
+
+  assert.equal(outcome.timedOut, false, 'the hook ended on its own');
+  assert.equal(outcome.status, 0, outcome.stderr);
+  assert.match(JSON.parse(outcome.stdout).hookSpecificOutput.additionalContext, /plan-finished/);
+  // The watermark write fell back to unlocked; the holder's lock is intact.
+  assert.equal(loadState(workspace).config.lastJobAnnouncementAt, '2026-08-01T10:45:00.000Z');
+  assert.equal(fs.readFileSync(lockPath, 'utf8'), held, 'the lock was never taken over');
+  // A small lock budget costs half a second: the old 200-attempt wait
+  // outlasted the 5 s stale threshold. Windows runners start node too slowly
+  // for a wall-clock bound to mean anything; the fallback and the kept lock
+  // above are the contract there.
+  if (process.platform !== 'win32') {
+    assert.ok(elapsed < 4500, `SessionStart took ${elapsed} ms of its ${budgetMs} ms budget`);
+  }
+  fs.rmSync(lockPath);
+});
+
+// The unreadable state files moved aside so far.
+function corruptCopies(workspace: string): string[] {
+  const dir = path.dirname(resolveStateFile(workspace));
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.startsWith('state.json.corrupt-'))
+    .sort()
+    .map((name) => path.join(dir, name));
+}
+
+test('the first write after an unreadable state read moves the corrupt file aside', () => {
+  const workspace = makeTempDir();
+  const stateFile = resolveStateFile(workspace);
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  const corruptBytes = '{"config": {"stopReviewGate": true}, "jobs": [\n';
+  fs.writeFileSync(stateFile, corruptBytes, 'utf8');
+
+  // Reads fall back to defaults and leave the file alone.
+  const read = captureStderr(() => loadState(workspace));
+  assert.deepEqual(read.value.jobs, []);
+  assert.match(read.stderr, /Ignoring unreadable state file/);
+  assert.equal(fs.readFileSync(stateFile, 'utf8'), corruptBytes);
+  assert.deepEqual(corruptCopies(workspace), []);
+
+  const write = captureStderr(() => setConfig(workspace, 'stopReviewGate', true));
+  assert.match(write.stderr, /Moved unreadable state file .* aside to .*state\.json\.corrupt-/);
+  assert.equal(getConfig(workspace).stopReviewGate, true);
+
+  const after = corruptCopies(workspace);
+  assert.equal(after.length, 1);
+  const copy = after[0] as string;
+  assert.match(path.basename(copy), /^state\.json\.corrupt-\d{4}-\d{2}-\d{2}T[\d-]+Z$/);
+  assert.equal(fs.readFileSync(copy, 'utf8'), corruptBytes);
+
+  // A healthy file is replaced as usual: no further copies appear.
+  upsertJob(workspace, { id: 'task-after', status: 'completed', jobClass: 'task' });
+  assert.equal(corruptCopies(workspace).length, 1);
+  assert.equal(listJobs(workspace)[0]?.id, 'task-after');
+});
+
+test('a state file that parses to a non-object counts as unreadable', () => {
+  const workspace = makeTempDir();
+  const stateFile = resolveStateFile(workspace);
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(stateFile, '[]\n', 'utf8');
+
+  assert.match(captureStderr(() => loadState(workspace)).stderr, /Ignoring unreadable state file/);
+  captureStderr(() => setConfig(workspace, 'stopReviewGate', true));
+  const [copy] = corruptCopies(workspace);
+  assert.ok(copy);
+  assert.equal(fs.readFileSync(copy, 'utf8'), '[]\n');
+});
+
+test('withFileLock keeps the work errors apart from contention and runs the work once', () => {
+  const dir = makeTempDir();
+  const lockPath = path.join(dir, 'file.lock');
+  let calls = 0;
+  const exists = Object.assign(new Error('the work hit an existing file'), { code: 'EEXIST' });
+  assert.throws(
+    () =>
+      withFileLock(lockPath, () => {
+        calls += 1;
+        throw exists;
+      }),
+    (error: unknown) => error === exists,
+  );
+  assert.equal(calls, 1, 'an EEXIST from the work is not lock contention');
+  assert.equal(fs.existsSync(lockPath), false, 'the lock is released');
+
+  // A holder whose lock was taken over meanwhile leaves its successor's lock.
+  withFileLock(lockPath, () => {
+    fs.writeFileSync(lockPath, '4242 successor-token', 'utf8');
+  });
+  assert.equal(fs.readFileSync(lockPath, 'utf8'), '4242 successor-token');
+
+  // A lock that cannot be taken in time is a timeout naming the lock.
+  assert.throws(
+    () => withFileLock(lockPath, () => 'never', { attempts: 2 }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message ===
+        `Timed out waiting for the lock ${lockPath}. If no Stereo process holds it, delete it and retry.`,
+  );
+  // With the unlocked fallback the work runs anyway, holding nothing.
+  assert.equal(
+    withFileLock(lockPath, () => 'unlocked', { attempts: 2, unlockedFallback: true }),
+    'unlocked',
+  );
+  assert.equal(fs.readFileSync(lockPath, 'utf8'), '4242 successor-token', 'the holder keeps it');
+});
+
+test('withFileLock holds its lock exclusively while the work runs', () => {
+  const dir = makeTempDir();
+  const lockPath = path.join(dir, 'file.lock');
+  const inner = withFileLock(lockPath, () => {
+    assert.match(fs.readFileSync(lockPath, 'utf8'), new RegExp(`^${process.pid} [0-9a-f-]{36}$`));
+    // A fresh lock is waited on, whoever holds it: no second holder.
+    assert.throws(
+      () => withFileLock(lockPath, () => 'never', { attempts: 3 }),
+      /Timed out waiting for the lock/,
+    );
+    return 'held';
+  });
+  assert.equal(inner, 'held');
+  assert.deepEqual(fs.readdirSync(dir), [], 'released, nothing left behind');
+});
+
+test('a stale lock is taken over by its age alone, and only while it holds what was read', (t) => {
+  const dir = makeTempDir();
+  const lockPath = path.join(dir, 'file.lock');
+  const old = new Date(Date.now() - 60_000);
+  const writeStale = (contents: string, mtime: Date = old): void => {
+    fs.writeFileSync(lockPath, contents, 'utf8');
+    fs.utimesSync(lockPath, mtime, mtime);
+  };
+
+  // Older than staleMs: taken over, even though the pid it names (this live
+  // process) still runs; the pid is informational.
+  writeStale(`${process.pid} slow-holder`, new Date(Date.now() - 10_000));
+  assert.equal(
+    withFileLock(lockPath, () => 'taken', { attempts: 3 }),
+    'taken',
+  );
+  assert.equal(fs.existsSync(lockPath), false);
+
+  // Between the read and the removal a successor replaced the stale lock:
+  // the re-read sees other contents, so the successor's lock is never deleted.
+  const successor = '4242 successor-token';
+  writeStale('2147483641 stale-holder');
+  const originalStat = fs.statSync;
+  let raced = false;
+  t.mock.method(fs, 'statSync', ((target: fs.PathLike, options?: fs.StatSyncOptions) => {
+    if (!raced && String(target) === lockPath) {
+      raced = true;
+      writeStale(successor);
+    }
+    return originalStat(target, options);
+  }) as typeof fs.statSync);
+  const unlinkSync = t.mock.method(fs, 'unlinkSync');
+  assert.throws(
+    () => withFileLock(lockPath, () => 'never', { attempts: 1 }),
+    /Timed out waiting for the lock/,
+  );
+  t.mock.restoreAll();
+  assert.equal(raced, true);
+  assert.equal(unlinkSync.mock.callCount(), 0, 'nothing was removed');
+  assert.equal(fs.readFileSync(lockPath, 'utf8'), successor, 'the successor keeps its lock');
+  fs.rmSync(lockPath);
+});
+
+test('a held lock that cannot be read is never taken over, and each retry sleeps', (t) => {
+  const dir = makeTempDir();
+  const lockPath = path.join(dir, 'file.lock');
+  // Stale: readable, it would be taken over.
+  fs.writeFileSync(lockPath, '2147483646 dead-holder', 'utf8');
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(lockPath, old, old);
+  const originalRead = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', ((file: fs.PathOrFileDescriptor, options?: unknown) => {
+    if (String(file) === lockPath) {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    }
+    return originalRead(file, options as Parameters<typeof fs.readFileSync>[1]);
+  }) as typeof fs.readFileSync);
+  const startedAt = Date.now();
+  assert.throws(
+    () => withFileLock(lockPath, () => 'never', { attempts: 4 }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message ===
+        `Timed out waiting for the lock ${lockPath}. If no Stereo process holds it, delete it and retry.`,
+  );
+  t.mock.restoreAll();
+  assert.ok(Date.now() - startedAt >= 40, 'every attempt slept before the next');
+  assert.equal(fs.readFileSync(lockPath, 'utf8'), '2147483646 dead-holder', 'never taken over');
+});
+
+test('a release that fails for a moment is retried, and the lock ends up free', (t) => {
+  const dir = makeTempDir();
+  const lockPath = path.join(dir, 'file.lock');
+  const originalUnlink = fs.unlinkSync;
+  let failures = 0;
+  t.mock.method(fs, 'unlinkSync', (target: fs.PathLike) => {
+    if (String(target) === lockPath && failures < 2) {
+      failures += 1;
+      throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+    }
+    return originalUnlink(target);
+  });
+  assert.equal(
+    withFileLock(lockPath, () => 'done', { attempts: 2 }),
+    'done',
+  );
+  t.mock.restoreAll();
+  assert.equal(failures, 2, 'the release failed twice before it went through');
+  assert.deepEqual(fs.readdirSync(dir), [], 'no lock is left');
+});
+
+test('the tolerant JSON reader reports missing, unreadable, and parsed records', () => {
+  const dir = makeTempDir();
+  assert.deepEqual(readJsonFileTolerant(path.join(dir, 'absent.json')), {
+    missing: true,
+    record: null,
+    parseError: null,
+  });
+  fs.writeFileSync(path.join(dir, 'torn.json'), '{"a":', 'utf8');
+  const torn = readJsonFileTolerant(path.join(dir, 'torn.json'));
+  assert.equal(torn.missing, false);
+  assert.equal(torn.record, null);
+  assert.equal(typeof torn.parseError, 'string');
+  fs.writeFileSync(path.join(dir, 'ok.json'), '{"a":1}', 'utf8');
+  assert.deepEqual(readJsonFileTolerant(path.join(dir, 'ok.json')), {
+    missing: false,
+    record: { a: 1 },
+    parseError: null,
+  });
+
+  const workspace = makeTempDir();
+  fs.writeFileSync(resolveJobFile(workspace, 'job-array'), '[1, 2]', 'utf8');
+  assert.equal(readStoredJobOrNull(workspace, 'job-array'), null, 'a non-object is no record');
 });

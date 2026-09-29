@@ -4,13 +4,14 @@ import path from 'node:path';
 
 import { readJsonFile } from '../shared/fs.ts';
 import type { ExternalAgentConfigImportParams, MigrationDetails } from '../protocol/app-server.ts';
-import { getCodexAvailability } from './availability.ts';
+import { CODEX_CLI_MISSING_ERROR, getCodexAvailability } from './availability.ts';
 import { resolveCodexHome } from './reservations.ts';
 import { withDirectAppServer } from './threads.ts';
 import type { AppServerClient } from './threads.ts';
 import { emitProgress } from './turn-capture.ts';
 import type { ProgressReporter } from './turn-capture.ts';
 import { cleanCodexStderr } from './turn-runner.ts';
+import { errorMessage } from '../shared/errors.ts';
 
 const EXTERNAL_AGENT_IMPORT_COMPLETED = 'externalAgentConfig/import/completed';
 const EXTERNAL_AGENT_IMPORT_TIMEOUT_MS = 2 * 60 * 1000;
@@ -45,7 +46,7 @@ function importedThreadIdForSource(sourcePath: string): string | null {
   try {
     ledger = readJsonFile(ledgerPath) as { records?: unknown } | null;
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     throw new Error(
       `Could not read Codex's external session import ledger at ${ledgerPath}: ${detail}. Remove or repair that file, then rerun /stereo:transfer.`,
     );
@@ -53,10 +54,12 @@ function importedThreadIdForSource(sourcePath: string): string | null {
   let canonicalSource: string;
   let contentSha256: string;
   try {
-    canonicalSource = fs.realpathSync(sourcePath);
+    // realpathSync.native, as everywhere a path must match Codex's own
+    // canonical form (Windows 8.3 short names expand only through it).
+    canonicalSource = fs.realpathSync.native(sourcePath);
     contentSha256 = sourceContentSha256(canonicalSource);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     throw new Error(`Could not read the Claude session file ${sourcePath}: ${detail}.`);
   }
   const records: Array<ImportLedgerRecord | null | undefined> = Array.isArray(ledger?.records)
@@ -142,9 +145,7 @@ export async function importExternalAgentSession(
 ): Promise<ImportExternalAgentSessionResult> {
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
-    throw new Error(
-      'Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/stereo:setup`.',
-    );
+    throw new Error(CODEX_CLI_MISSING_ERROR);
   }
   if (!options.sourcePath) {
     throw new Error('A Claude session source path is required.');

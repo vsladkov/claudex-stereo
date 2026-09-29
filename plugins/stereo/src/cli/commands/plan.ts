@@ -1,13 +1,10 @@
 import { spawn } from 'node:child_process';
+import type { SpawnOptions } from 'node:child_process';
 
-import {
-  defaultPairEffort,
-  normalizeReasoningEffort,
-  normalizeRequestedModel,
-  PAIR_DEFAULT_MODEL,
-} from '../../models/registry.ts';
+import { normalizeReasoningEffort, parseModelSelection } from '../../models/registry.ts';
+import { resolveCommandLaunch } from '../../platform/process.ts';
 import { diffPlanTexts } from '../../shared/diff.ts';
-import { readStdinTextIfPiped } from '../../shared/fs.ts';
+import { readStdinTextIfPiped, writeTextAtomic } from '../../shared/fs.ts';
 import { optionalString, recordLike } from '../../shared/json.ts';
 import {
   clearImplementState,
@@ -16,17 +13,16 @@ import {
   ensureStateDir,
   listPairPlanSlots,
   loadPairPlanState,
+  loadState,
   normalizePlanSlot,
   nowIso,
   planSlotOrDefault,
   readImplementStateFile,
   resolvePairPlanMarkdownFile,
   savePairPlanState,
-  writeTextAtomic,
 } from '../../workspace/state.ts';
 import {
   createCompanionJob,
-  ensureCodexLaunchReady,
   enqueueBackgroundTask,
   renderQueuedTaskLaunch,
   runForegroundCommand,
@@ -35,7 +31,10 @@ import {
   buildPlanReviewTitle,
   executePlanReviewRun,
   normalizePlanReviewRound,
+  PLAN_REVIEWER_ROLE,
 } from '../../workflows/plan-review.ts';
+import { assertResumeFits } from '../../workflows/task.ts';
+import { resolveWorkspaceRoot } from '../../workspace/workspace.ts';
 import {
   renderPlanSlotComparison,
   renderPlanSlotList,
@@ -45,6 +44,7 @@ import {
 import type { PlanSlotSummary, StoredPairPlanState } from '../../render/render.ts';
 import {
   outputCommandResult,
+  outputReportResult,
   parseCommandInput,
   readPlanInput,
   readUserFile,
@@ -53,19 +53,50 @@ import {
   resolvePlanSlotOption,
 } from '../io.ts';
 import { shorten } from '../../shared/text.ts';
+import { chooseLaunchSelection, outputDryRun, resolveLaunch } from '../launch.ts';
+import { worktreeRemoveCommand } from './worktree.ts';
 
 export interface PlanStateDeps {
   openInEditor: (filePath: string) => Promise<boolean>;
 }
 
-async function openInVsCode(filePath: string): Promise<boolean> {
+export interface EditorChild {
+  once(event: 'spawn' | 'error', listener: () => void): unknown;
+  unref(): void;
+}
+
+export interface OpenInVsCodeOptions {
+  /** Test seam: the platform to launch for (the host's by default). */
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  /** Test seam: whether a PATH candidate exists as a file (see resolveCommandLaunch). */
+  fileExists?: (file: string) => boolean;
+  /** Test seam: starts the editor process in place of child_process.spawn. */
+  spawnImpl?: (file: string, args: string[], options: SpawnOptions) => EditorChild;
+}
+
+// `code` is a `.cmd` shim on Windows, which only cmd.exe runs: the launch
+// hands cmd one command line with the path quoted in it, never a bare path
+// beside the shell. Elsewhere the path is a plain argument and no shell runs.
+export function openInVsCode(
+  filePath: string,
+  options: OpenInVsCodeOptions = {},
+): Promise<boolean> {
+  const launch = resolveCommandLaunch('code', [filePath], {
+    platform: options.platform,
+    env: options.env,
+    fileExists: options.fileExists,
+  });
+  const spawnImpl = options.spawnImpl ?? spawn;
   return new Promise((resolve) => {
-    let child;
+    let child: EditorChild;
     try {
-      child = spawn('code', [filePath], {
+      child = spawnImpl(launch.file, launch.args, {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
+        shell: launch.shell,
+        ...(options.env ? { env: options.env } : {}),
       });
     } catch {
       resolve(false);
@@ -83,7 +114,7 @@ async function openInVsCode(filePath: string): Promise<boolean> {
 }
 
 export const defaultPlanStateDeps: PlanStateDeps = {
-  openInEditor: openInVsCode,
+  openInEditor: (filePath) => openInVsCode(filePath),
 };
 
 function stringArray(value: unknown): string[] {
@@ -143,7 +174,7 @@ function normalizeStoredPlanRound(round: unknown): number {
 export async function handlePlanReview(argv: string[]): Promise<void> {
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ['model', 'effort', 'cwd', 'workspace', 'plan-file', 'thread', 'round', 'slot'],
-    booleanOptions: ['json', 'background'],
+    booleanOptions: ['json', 'background', 'dry-run'],
     aliasMap: {
       m: 'model',
     },
@@ -151,66 +182,90 @@ export async function handlePlanReview(argv: string[]): Promise<void> {
 
   const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
+  const dryRun = Boolean(options['dry-run']);
   const slot = resolvePlanSlotOption(options);
-  const model =
-    normalizeRequestedModel(options.model) ?? normalizeRequestedModel(PAIR_DEFAULT_MODEL);
-  const effort =
-    normalizeReasoningEffort(options.effort) ??
-    normalizeReasoningEffort(defaultPairEffort(model as string));
+  const threadId = optionalString(options.thread);
+  // Malformed selections and efforts fail before any runtime probe. Without
+  // --model the plan reviewer's role default runs (the workspace's stored
+  // model, else the built-in), a later round on --thread included; the
+  // thread's record must have run the plan reviewer on that runtime.
+  const state = loadState(workspaceRoot);
+  const launch = chooseLaunchSelection({
+    explicit: parseModelSelection(options.model),
+    role: PLAN_REVIEWER_ROLE,
+    takeDefault: true,
+    stored: state.config.roleDefaults,
+  });
+  // The plan reviewer always has a default, so a selection is always chosen.
+  const runtime = launch.selection?.runtime ?? 'codex';
+  // The directory the review runs in, recorded on the job: a Claude session
+  // resumes only from there, as a task session does.
+  const runCwd = resolveWorkspaceRoot(cwd);
+  assertResumeFits({ jobs: state.jobs, threadId, role: PLAN_REVIEWER_ROLE, runtime, runCwd });
+  const requestedEffort = normalizeReasoningEffort(options.effort, runtime);
   const round = normalizePlanReviewRound(options.round);
-  const threadId =
-    typeof options.thread === 'string' && options.thread.trim() ? options.thread.trim() : null;
-  const plan = await readPlanInput(cwd, options, positionals);
-  if (!plan.trim()) {
+  // A dry run checks a --plan-file but never waits on stdin for the plan.
+  const plan =
+    dryRun && !options['plan-file']
+      ? positionals.join(' ')
+      : await readPlanInput(cwd, options, positionals);
+  if (!plan.trim() && !dryRun) {
     throw new Error('Provide the plan via --plan-file, piped stdin, or positional text.');
   }
 
   // Validate availability and auth before creating either a foreground or a
   // detached job record, so launch failures never appear as failed jobs.
-  await ensureCodexLaunchReady(cwd);
-  const job = createCompanionJob({
-    prefix: 'plan',
-    kind: 'plan-review',
-    title: buildPlanReviewTitle(round),
-    workspaceRoot,
-    jobClass: 'review',
-    summary: shorten(plan),
-    model,
+  // The Codex check also refreshes the model catalog that the selection and
+  // its effort default resolve against.
+  const resolved = await resolveLaunch({
+    probeCwd: dryRun ? null : cwd,
+    launch,
+    requestedEffort,
   });
+  const model = resolved.model as string;
+  const effort = resolved.effort;
+  if (dryRun) {
+    // Every launch check passed: say what a launch would run, create nothing.
+    outputDryRun({ runtime, model, effort, role: PLAN_REVIEWER_ROLE }, options.json);
+    return;
+  }
+  const job = {
+    ...createCompanionJob({
+      prefix: 'plan',
+      kind: 'plan-review',
+      title: buildPlanReviewTitle(round, runtime),
+      workspaceRoot,
+      jobClass: 'review',
+      summary: shorten(plan),
+      model,
+      runtime,
+      role: PLAN_REVIEWER_ROLE,
+    }),
+    cwd: runCwd,
+  };
+  const request = {
+    cwd,
+    workspaceRoot,
+    runtime,
+    model,
+    effort,
+    role: PLAN_REVIEWER_ROLE,
+    plan,
+    slot,
+    threadId,
+    round,
+    jobId: job.id,
+  };
 
   if (options.background) {
-    const request = {
-      kind: 'plan-review',
-      cwd,
-      workspaceRoot,
-      model,
-      effort,
-      plan,
-      slot,
-      threadId,
-      round,
-      jobId: job.id,
-    };
-    const { payload } = enqueueBackgroundTask(cwd, job, request);
-    outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
+    const { payload } = enqueueBackgroundTask(cwd, job, { kind: 'plan-review', ...request });
+    outputReportResult(payload, renderQueuedTaskLaunch(payload), options.json);
     return;
   }
 
   await runForegroundCommand(
     job,
-    (progress) =>
-      executePlanReviewRun({
-        cwd,
-        workspaceRoot,
-        model,
-        effort,
-        plan,
-        slot,
-        threadId,
-        round,
-        jobId: job.id,
-        onProgress: progress,
-      }),
+    (progress) => executePlanReviewRun({ ...request, onProgress: progress }),
     { json: options.json },
   );
 }
@@ -368,7 +423,7 @@ export async function handlePlanState(
       : '';
     const implementWorktreeRendered =
       implementStateWorktree && clearedImplementState.length > 0
-        ? `Isolated worktree ${implementStateWorktree}; remove it with git -C "${workspaceRoot}" worktree remove --force "${implementStateWorktree}".\n`
+        ? `Isolated worktree ${implementStateWorktree}; remove it with ${worktreeRemoveCommand(workspaceRoot, implementStateWorktree)}.\n`
         : '';
     const implementRendered = `${implementClearRendered}${keptImplementRendered}${implementWorktreeRendered}`;
     const rendered = `${planRendered}${implementRendered}`;
@@ -455,18 +510,14 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
       'findings-file',
       'open-questions-file',
       'residual-risks-file',
-      'thread',
       'slot',
     ],
     arrayOptions: ['open-question', 'residual-risk'],
-    booleanOptions: ['json', 'no-thread'],
+    booleanOptions: ['json'],
   });
 
   if (positionals.length > 0) {
     throw new Error('plan-store reads the plan from stdin; unexpected positional arguments.');
-  }
-  if (options.thread && options['no-thread']) {
-    throw new Error('Choose either --thread <id> or --no-thread.');
   }
   const hasSummaryFile = Object.hasOwn(options, 'summary-file');
   if (Object.hasOwn(options, 'summary') && hasSummaryFile) {
@@ -506,25 +557,12 @@ export async function handlePlanStore(argv: string[]): Promise<void> {
   );
   const workspaceRoot = resolveCommandWorkspace(options);
   const slot = resolvePlanSlotOption(options);
-  const previous = loadPairPlanState(workspaceRoot, slot) as StoredPairPlanState | null;
-  // Nulling these on a Claude-side persist destroyed a resumable review thread
-  // and the implementer's stored model/effort defaults. Command call sites
-  // always pass --thread or --no-thread, so preservation cannot inherit a
-  // thread from an unrelated plan.
-  const threadId = options['no-thread']
-    ? null
-    : (optionalString(options.thread) ?? optionalString(previous?.threadId));
-  const model = optionalString(previous?.model);
-  const effort = optionalString(previous?.effort);
   // This fresh record intentionally does not preserve implementedAt: a newly
   // stored plan or revision has not completed a full implementation phase.
   const record = savePairPlanState(
     workspaceRoot,
     {
       plan,
-      threadId,
-      model,
-      effort,
       round: normalizeStoredPlanRound(options.round),
       verdict,
       summary: hasSummaryFile ? summaryFromFile : optionalString(options.summary),

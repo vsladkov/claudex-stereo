@@ -1,8 +1,22 @@
-import type { ConfigReadResponse, GetAccountResponse } from '../protocol/app-server.ts';
-import { optionalString } from '../shared/json.ts';
+import type {
+  ConfigReadResponse,
+  GetAccountResponse,
+  Model,
+  ModelListResponse,
+} from '../protocol/app-server.ts';
+import {
+  CODEX_CATALOG_TTL_MS,
+  fromLiveModel,
+  isCodexCatalogFresh,
+  loadCodexCatalog,
+  recordCatalogFetchFailure,
+  writeCodexCatalogCache,
+} from '../models/catalog.ts';
+import { optionalString, recordLike } from '../shared/json.ts';
 import { CodexAppServerClient } from '../transport/app-server-client.ts';
 import { getCodexAvailability } from './availability.ts';
 import type { AppServerClient } from './threads.ts';
+import { errorMessage } from '../shared/errors.ts';
 
 export interface CodexAuthStatus {
   available: boolean;
@@ -18,6 +32,18 @@ export interface CodexAuthStatus {
 
 export interface CodexAuthStatusOptions {
   env?: NodeJS.ProcessEnv;
+  /** Re-fetch the model catalog even when the cached copy is younger than the TTL. */
+  forceCatalogRefresh?: boolean;
+  /** Test seam: replaces the app-server connection. */
+  connectImpl?: (cwd: string, env: NodeJS.ProcessEnv | undefined) => Promise<AppServerClient>;
+}
+
+// Launches are the hot path: a catalog fetched within the catalog TTL is
+// reused instead of paying a model/list round trip and a cache rewrite per
+// command (the same window config's staleness rule reads). Setup and doctor
+// force a refresh because they exist to show current state.
+function catalogNeedsRefresh(force: boolean): boolean {
+  return force || !isCodexCatalogFresh(loadCodexCatalog(), CODEX_CATALOG_TTL_MS);
 }
 
 export interface ConfiguredProvider {
@@ -42,7 +68,7 @@ function formatProviderLabel(
   providerId: string | null,
   providerConfig: ProviderConfigLike | null = null,
 ): string {
-  const configuredName = typeof providerConfig?.name === 'string' ? providerConfig.name.trim() : '';
+  const configuredName = optionalString(providerConfig?.name);
   if (configuredName) {
     return configuredName;
   }
@@ -84,32 +110,16 @@ function resolveProviderConfig(configResponse: ConfigReadResponse | null | undef
   const providerId = optionalString(config.model_provider);
   // `model_providers` (the custom provider table) is not part of the generated
   // Config type, so it is read structurally.
-  const providersValue = (config as { model_providers?: unknown }).model_providers;
-  const providers =
-    providersValue && typeof providersValue === 'object' && !Array.isArray(providersValue)
-      ? (providersValue as Record<string, unknown>)
-      : null;
-  const providerConfig =
-    providerId &&
-    providers?.[providerId] &&
-    typeof providers[providerId] === 'object' &&
-    !Array.isArray(providers[providerId])
-      ? (providers[providerId] as ProviderConfigLike)
-      : null;
-  const configuredProviders = providers
-    ? Object.entries(providers).flatMap(([id, value]) => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) {
-          return [];
-        }
-        const provider = value as ProviderConfigLike;
-        return [
-          {
-            id,
-            envKey: typeof provider.env_key === 'string' ? provider.env_key : null,
-          },
-        ];
-      })
-    : [];
+  const providers = recordLike((config as { model_providers?: unknown }).model_providers);
+  const providerConfig: ProviderConfigLike | null = providerId
+    ? recordLike(providers?.[providerId])
+    : null;
+  const configuredProviders = Object.entries(providers ?? {}).flatMap(([id, value]) => {
+    const provider: ProviderConfigLike | null = recordLike(value);
+    return provider
+      ? [{ id, envKey: typeof provider.env_key === 'string' ? provider.env_key : null }]
+      : [];
+  });
 
   return {
     providerId,
@@ -131,8 +141,7 @@ export function buildAppServerAuthStatus(
   const providerLabel = formatProviderLabel(providerId, providerConfig);
 
   if (account?.type === 'chatgpt') {
-    const email =
-      typeof account.email === 'string' && account.email.trim() ? account.email.trim() : null;
+    const email = optionalString(account.email);
     return buildAuthStatus({
       loggedIn: true,
       detail: email ? `ChatGPT login active for ${email}` : 'ChatGPT login active',
@@ -179,24 +188,77 @@ export function buildAppServerAuthStatus(
   });
 }
 
+// The catalog fetch rides on the connection every launch already opens: one
+// model/list request for the visible models, bounded by the client's request
+// timeout. Older CLIs without model/list, transport errors, a timeout, and an
+// empty list keep the previously loaded catalog: availability is advisory,
+// never blocking. The failure is recorded on that catalog so setup, doctor,
+// and a launch that cannot resolve a family can say why.
+async function fetchCodexModels(client: AppServerClient): Promise<Model[] | null> {
+  let response: ModelListResponse;
+  try {
+    response = await client.request('model/list', {
+      includeHidden: false,
+      limit: 200,
+      cursor: null,
+    });
+  } catch (error) {
+    recordCatalogFetchFailure(errorMessage(error));
+    return null;
+  }
+  const models = Array.isArray(response?.data) ? response.data : [];
+  if (models.length === 0) {
+    recordCatalogFetchFailure('it returned no models');
+    return null;
+  }
+  return models;
+}
+
+function refreshCodexCatalog(models: Model[] | null): void {
+  if (!models) {
+    return;
+  }
+  const entries = models
+    .map((model) => fromLiveModel(model))
+    .filter((model): model is NonNullable<typeof model> => model !== null);
+  if (entries.length === 0) {
+    recordCatalogFetchFailure('no listed model carried an id');
+    return;
+  }
+  // The writer records its own failure and serves the live list in-process.
+  writeCodexCatalogCache(entries, { fetchedAt: new Date().toISOString() });
+}
+
 async function getCodexAuthStatusFromClient(
   client: AppServerClient,
   cwd: string,
+  refreshCatalog: boolean,
 ): Promise<CodexAuthStatus> {
   try {
-    const [accountResponse, configResponse] = await Promise.all([
+    // Settled, not raced: an auth failure must not abandon the in-flight
+    // model/list, whose rejection on client close would then be recorded as
+    // a spurious catalog fetch failure.
+    const [accountResult, configResult, modelsResult] = await Promise.allSettled([
       client.request('account/read', { refreshToken: false }),
       client.request('config/read', {
         includeLayers: false,
         cwd,
       }),
+      refreshCatalog ? fetchCodexModels(client) : Promise.resolve(null),
     ]);
+    refreshCodexCatalog(modelsResult.status === 'fulfilled' ? modelsResult.value : null);
+    if (accountResult.status === 'rejected') {
+      throw accountResult.reason;
+    }
+    if (configResult.status === 'rejected') {
+      throw configResult.reason;
+    }
 
-    return buildAppServerAuthStatus(accountResponse, configResponse);
+    return buildAppServerAuthStatus(accountResult.value, configResult.value);
   } catch (error) {
     return buildAuthStatus({
       loggedIn: false,
-      detail: error instanceof Error ? error.message : String(error),
+      detail: errorMessage(error),
       source: 'app-server',
     });
   }
@@ -208,30 +270,32 @@ export async function getCodexAuthStatus(
 ): Promise<CodexAuthStatus> {
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
-    return {
+    return buildAuthStatus({
       available: false,
-      loggedIn: false,
       detail: availability.detail,
       source: 'availability',
-      authMethod: null,
-      verified: null,
-      requiresOpenaiAuth: null,
-      provider: null,
-      configuredProviders: [],
-    };
+    });
   }
 
+  const refreshCatalog = catalogNeedsRefresh(options.forceCatalogRefresh === true);
+  const connect =
+    options.connectImpl ??
+    ((connectCwd: string, env: NodeJS.ProcessEnv | undefined) =>
+      CodexAppServerClient.connect(connectCwd, { env, reuseExistingBroker: true }));
   let client: AppServerClient | null = null;
   try {
-    client = await CodexAppServerClient.connect(cwd, {
-      env: options.env,
-      reuseExistingBroker: true,
-    });
-    return await getCodexAuthStatusFromClient(client, cwd);
+    client = await connect(cwd, options.env);
+    return await getCodexAuthStatusFromClient(client, cwd, refreshCatalog);
   } catch (error) {
+    const message = errorMessage(error);
+    if (refreshCatalog) {
+      // Setup would otherwise say "no catalog fetched yet; /stereo:setup
+      // refreshes it" right after setup failed to reach the runtime.
+      recordCatalogFetchFailure(`connection failed: ${message}`);
+    }
     return buildAuthStatus({
       loggedIn: false,
-      detail: error instanceof Error ? error.message : String(error),
+      detail: message,
       source: 'app-server',
     });
   } finally {

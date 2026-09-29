@@ -36,3 +36,9 @@ export function outputResult(value: unknown, asJson: unknown): void {
     process.stdout.write(value as string);
   }
 }
+
+// POSIX single quoting: a quote inside the value closes the string, is
+// escaped, and reopens it.
+export function shellQuote(value: unknown): string {
+  return `'${String(value).replaceAll("'", `'\\''`)}'`;
+}

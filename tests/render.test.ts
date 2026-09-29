@@ -106,14 +106,14 @@ test('renderStatusReport preserves its non-verbose output byte-for-byte', () => 
   // finished-job details, with no Live details or Progress blocks.
   assert.equal(
     renderStatusReport(statusReport),
-    '# Codex Status\n\nSession runtime: direct startup\nReview gate: disabled\n\nActive jobs:\n| Job | Kind | Model | Status | Phase | Elapsed | Codex Session ID | Summary | Actions |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| task-running | rescue | kimi-k3@moonshot | running | editing | 42s | thr_running | Implement status diagnostics | `/stereo:status task-running`<br>`/stereo:cancel task-running` |\n\nLatest finished:\n- review-complete | completed | review | Codex Review\n  Model: gpt-5.6-sol\n  Summary: Review working tree diff\n  Phase: done\n  Duration: 1m 5s\n  Codex session ID: thr_complete\n  Resume in Codex: codex resume thr_complete\n\nRecent jobs:\n- task-recent | completed | rescue | Codex Task | 12s\n',
+    '# Stereo Status\n\nSession runtime: direct startup\nReview gate: disabled\n\nActive jobs:\n| Job | Kind | Model | Status | Phase | Elapsed | Session ID | Summary | Actions |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| task-running | rescue | kimi-k3@moonshot | running | editing | 42s | thr_running | Implement status diagnostics | `/stereo:status task-running`<br>`/stereo:cancel task-running` |\n\nLatest finished:\n- review-complete | completed | review | Codex Review\n  Model: gpt-5.6-sol\n  Summary: Review working tree diff\n  Phase: done\n  Duration: 1m 5s\n  Codex session ID: thr_complete\n  Resume in Codex: codex resume thr_complete\n\nRecent jobs:\n- task-recent | completed | rescue | Codex Task | 12s\n',
   );
 });
 
 test('renderJobStatusReport preserves its non-verbose output byte-for-byte', () => {
   assert.equal(
     renderJobStatusReport(completedStatusJob),
-    '# Codex Job Status\n\n- review-complete | completed | review | Codex Review\n  Model: gpt-5.6-sol\n  Summary: Review working tree diff\n  Phase: done\n  Duration: 1m 5s\n  Codex session ID: thr_complete\n  Resume in Codex: codex resume thr_complete\n  Log: /tmp/review-complete.log\n  Result: /stereo:result review-complete\n',
+    '# Stereo Job Status\n\n- review-complete | completed | review | Codex Review\n  Model: gpt-5.6-sol\n  Summary: Review working tree diff\n  Phase: done\n  Duration: 1m 5s\n  Codex session ID: thr_complete\n  Resume in Codex: codex resume thr_complete\n  Log: /tmp/review-complete.log\n  Result: /stereo:result review-complete\n',
   );
 });
 
@@ -197,6 +197,33 @@ test('renderSetupReport prints the active and configured provider key status', (
   assert.match(output, /- Custom provider moonshot \(codex:kimi → kimi-k3\): MOONSHOT_API_KEY set/);
 });
 
+test('renderSetupReport renders the model listing it is given after the checks', () => {
+  const base = {
+    ready: true,
+    node: { detail: 'v24' },
+    npm: { detail: '11' },
+    codex: { detail: 'codex-cli' },
+    auth: { detail: 'ChatGPT login active' },
+    providers: { active: 'openai', configured: [], aliases: [] },
+    sessionRuntime: { label: 'direct startup' },
+    actionsTaken: [],
+    nextSteps: [],
+  };
+  const output = renderSetupReport(base, {
+    claude: {
+      haiku: { latest: '4.5', versions: { '4.5': { id: 'claude-haiku-4-5', effort: null } } },
+    },
+    codex: { astra: { latest: '6', versions: { '6': { id: 'gpt-6-astra', effort: 'xhigh' } } } },
+    catalogSource: 'built-in snapshot',
+  });
+  assert.match(
+    output,
+    /\n- review gate: disabled\n- role defaults: none configured\n\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- Codex catalog: built-in snapshot\n- claude:haiku → claude-haiku-4-5 \(no effort\)\n- codex:astra → gpt-6-astra \(effort xhigh\)\n$/,
+  );
+  // No listing given: no model lines at all.
+  assert.doesNotMatch(renderSetupReport(base), /Models|claude:/);
+});
+
 test('renderSetupReport renders sparse rate-limit windows and warnings defensively', () => {
   const output = renderSetupReport({
     ready: true,
@@ -252,7 +279,7 @@ test('renderReviewResult degrades gracefully when JSON is missing required revie
     },
   );
 
-  assert.match(output, /Codex returned JSON with an unexpected review shape\./);
+  assert.match(output, /The reviewer returned JSON with an unexpected review shape\./);
   assert.match(output, /Missing array `findings`\./);
   assert.match(output, /Raw final message:/);
 });
@@ -399,10 +426,15 @@ test('renderStoredJobReport returns only the normalized report or missing-report
   );
 });
 
+// touchedFiles lists edit-tool writes only, so the note never claims the
+// tree is unchanged: a shell command may still have written files.
+const NO_EDIT_NOTE =
+  'Note: this write-capable run recorded no edit-tool file changes; shell commands may still have changed files.';
+
 test('renderTaskResult warns only when a write run with output reports no touched files', () => {
   assert.equal(
     renderTaskResult({ rawOutput: 'Implemented the change.' }, { write: true, touchedFiles: [] }),
-    'Implemented the change.\n\nNote: this write-capable run reported no file changes.\n',
+    `Implemented the change.\n\n${NO_EDIT_NOTE}\n`,
   );
   assert.equal(
     renderTaskResult(
@@ -500,76 +532,122 @@ test('renderStoredPlanState renders metadata, lists, and the stored plan verbati
       verdict: 'approve',
       round: 3,
       updatedAt: '2026-07-25T17:00:00.000Z',
-      model: 'gpt-5.6-sol',
-      effort: 'max',
-      threadId: 'thr_plan',
       openQuestions: ['Keep the compatibility alias?'],
       residualRisks: ['Legacy records still lack schema validation.'],
       plan,
     }),
-    'Stored plan (verdict: approve, round 3, updated 2026-07-25T17:00:00.000Z)\nModel: gpt-5.6-sol@max · Thread: thr_plan\nOpen questions:\n- Keep the compatibility alias?\nResidual risks:\n- Legacy records still lack schema validation.\n\n---\n\n# Plan\n\n```ts\nconst enabled = true;\n```\n',
+    'Stored plan (verdict: approve, round 3, updated 2026-07-25T17:00:00.000Z)\nOpen questions:\n- Keep the compatibility alias?\nResidual risks:\n- Legacy records still lack schema validation.\n\n---\n\n# Plan\n\n```ts\nconst enabled = true;\n```\n',
   );
 });
 
-test('renderStoredPlanState renders implementedAt after runtime metadata', () => {
+test('renderStoredPlanState renders implementedAt after the header', () => {
   assert.equal(
     renderStoredPlanState({
       verdict: 'approve',
       round: 2,
-      model: 'gpt-5.6-sol',
-      threadId: 'thr_plan',
       implementedAt: '2026-08-01T12:00:00.000Z',
       plan: '# Implemented plan\n',
     }),
-    'Stored plan (verdict: approve, round 2)\nModel: gpt-5.6-sol · Thread: thr_plan\nImplemented: 2026-08-01T12:00:00.000Z\nOpen questions: none\nResidual risks: none\n\n---\n\n# Implemented plan\n',
+    'Stored plan (verdict: approve, round 2)\nImplemented: 2026-08-01T12:00:00.000Z\nOpen questions: none\nResidual risks: none\n\n---\n\n# Implemented plan\n',
   );
 });
 
-test('renderConfigReport renders mixed defaults, actions, and warnings byte-exactly', () => {
+test('renderConfigReport shows what each role launch runs beside the stored values byte-exactly', () => {
+  const entry = {
+    route: null,
+    inline: false,
+    invalidReason: null,
+  };
   assert.equal(
-    renderConfigReport({
-      roleDefaults: [
+    renderConfigReport(
+      {
+        roleDefaults: [
+          {
+            ...entry,
+            role: 'planReviewer',
+            flag: 'plan-reviewer',
+            model: null,
+            effort: 'turbo',
+            invalidReason: 'Unsupported reasoning effort.',
+          },
+          {
+            ...entry,
+            role: 'implementer',
+            flag: 'implementer',
+            model: 'claude:opus-4.8',
+            effort: 'high',
+            route: 'claude',
+          },
+          {
+            ...entry,
+            role: 'implementationReviewer',
+            flag: 'implementation-reviewer',
+            model: 'codex:sol-9',
+            effort: null,
+            route: 'codex',
+          },
+        ],
+        actionsTaken: [],
+        warnings: ['sol-9 cannot run.'],
+      },
+      [
         {
-          role: 'planner',
-          flag: 'planner',
-          model: 'codex:terra',
-          effort: 'high',
-          route: 'codex',
-          resolvedModel: 'gpt-5.6-terra',
-          invalidReason: null,
-        },
-        {
-          role: 'planReviewer',
           flag: 'plan-reviewer',
-          model: 'claude:opus',
-          effort: null,
-          route: 'claude',
-          resolvedModel: null,
-          invalidReason: null,
+          selection: 'codex:astra-6',
+          source: 'built-in',
+          model: 'gpt-6-astra',
+          effort: 'xhigh',
+          error: null,
         },
         {
-          role: 'implementer',
           flag: 'implementer',
-          model: 'claude:fabel',
-          effort: null,
-          route: null,
-          resolvedModel: null,
-          invalidReason: 'Unsupported model.',
+          selection: 'claude:opus-4.8',
+          source: 'stored',
+          model: 'claude-opus-4-8',
+          effort: 'high',
+          error: null,
         },
         {
-          role: 'implementationReviewer',
           flag: 'implementation-reviewer',
+          selection: 'codex:sol-9',
+          source: 'stored',
           model: null,
           effort: null,
-          route: null,
-          resolvedModel: null,
-          invalidReason: null,
+          error: 'sol-9 cannot run.',
         },
       ],
-      actionsTaken: ['Set planner to codex:terra for /work/repo.'],
-      warnings: ['implementer stored model "claude:fabel" is invalid.'],
+      {
+        claude: {},
+        codex: {
+          sol: {
+            latest: '6',
+            versions: {
+              '6': { id: 'gpt-6-sol', effort: 'xhigh' },
+              '5.6': { id: 'gpt-5.6-sol', effort: 'high' },
+            },
+          },
+        },
+      },
+    ),
+    "# Stereo Config\n\nRole defaults:\n- plan-reviewer: not set (effort turbo) [invalid] → gpt-6-astra (effort xhigh, built-in codex:astra-6)\n- implementer: claude:opus-4.8 (effort high) → claude-opus-4-8 (effort high)\n- implementation-reviewer: codex:sol-9 → cannot run (see warnings)\n\nModels (efforts are role-launch defaults; a Codex task without a role runs at Codex's own):\n- codex:sol → gpt-6-sol (effort xhigh; also 5.6 high)\n\nWarnings:\n- sol-9 cannot run.\n\nUse `/stereo:config --clear roles` to clear all workspace role defaults.\n",
+  );
+});
+
+test("the model listing names a family's other versions newest first", () => {
+  // Whole-number versions come first when a record is enumerated (5, 6, 7, 5.6).
+  const versions = Object.fromEntries(
+    ['7', '6', '5.6', '5'].map((version) => [
+      version,
+      { id: `gpt-${version}-sol`, effort: 'xhigh' as const },
+    ]),
+  );
+  assert.deepEqual(Object.keys(versions), ['5', '6', '7', '5.6']);
+  assert.match(
+    renderConfigReport({ roleDefaults: [], actionsTaken: [], warnings: [] }, [], {
+      claude: {},
+      codex: { sol: { latest: '7', versions } },
     }),
-    '# Stereo Config\n\nRole defaults:\n- planner: codex:terra (effort high)\n- plan-reviewer: claude:opus\n- implementer: claude:fabel [invalid]\n- implementation-reviewer: not set\n\nActions taken:\n- Set planner to codex:terra for /work/repo.\n\nWarnings:\n- implementer stored model "claude:fabel" is invalid.\n\nUse `/stereo:config --clear roles` to clear all workspace role defaults.\n',
+    /\n- codex:sol → gpt-7-sol \(effort xhigh; also 6 xhigh, 5\.6 xhigh, 5 xhigh\)\n/,
   );
 });
 
@@ -666,9 +744,6 @@ test('renderPlanSlotComparison renders both metadata blocks and the plan diff by
           verdict: 'approve',
           round: 2,
           updatedAt: '2026-08-02T08:00:00.000Z',
-          model: 'gpt-5.6-sol',
-          effort: 'max',
-          threadId: 'thr_opus',
           summary: 'Draft the rate limiter with a token bucket.',
           implementedAt: '2026-08-02T09:30:00.000Z',
           openQuestions: [],
@@ -697,7 +772,7 @@ test('renderPlanSlotComparison renders both metadata blocks and the plan diff by
         diff: '@@ -1,1 +1,1 @@\n-# Plan A\n+# Plan B',
       },
     ),
-    'Stored plan comparison (rate-limit-opus vs rate-limit-fable)\n\nStored plan (slot rate-limit-opus, verdict: approve, round 2, updated 2026-08-02T08:00:00.000Z)\nSummary: Draft the rate limiter with a token bucket.\nModel: gpt-5.6-sol@max · Thread: thr_opus\nImplemented: 2026-08-02T09:30:00.000Z\nOpen questions: none\nResidual risks:\n- Burst traffic still needs a load test.\n\nStored plan (slot rate-limit-fable, verdict: needs-revision, round 1, updated 2026-08-02T08:15:00.000Z)\nFindings (2):\n- high: The limiter shares one bucket across tenants\n- low: Document the retry-after header\nOpen questions:\n- Per-tenant or global budget?\nResidual risks: none\n\nPlan diff (rate-limit-opus -> rate-limit-fable):\n@@ -1,1 +1,1 @@\n-# Plan A\n+# Plan B\n',
+    'Stored plan comparison (rate-limit-opus vs rate-limit-fable)\n\nStored plan (slot rate-limit-opus, verdict: approve, round 2, updated 2026-08-02T08:00:00.000Z)\nSummary: Draft the rate limiter with a token bucket.\nImplemented: 2026-08-02T09:30:00.000Z\nOpen questions: none\nResidual risks:\n- Burst traffic still needs a load test.\n\nStored plan (slot rate-limit-fable, verdict: needs-revision, round 1, updated 2026-08-02T08:15:00.000Z)\nFindings (2):\n- high: The limiter shares one bucket across tenants\n- low: Document the retry-after header\nOpen questions:\n- Per-tenant or global budget?\nResidual risks: none\n\nPlan diff (rate-limit-opus -> rate-limit-fable):\n@@ -1,1 +1,1 @@\n-# Plan A\n+# Plan B\n',
   );
 });
 
@@ -880,7 +955,7 @@ test('renderUsageReport renders a scoped window, exact tables, and escaped keys'
     ],
   });
 
-  assert.match(output, /^# Codex Usage/m);
+  assert.match(output, /^# Stereo Usage/m);
   assert.match(output, /3 counted of 4 retained jobs .*cap 50.*scope: current session sess-1/);
   assert.match(output, /not Codex account usage, and not all-time history/);
   assert.match(output, /Total: 1\.4K tokens/);

@@ -1,4 +1,5 @@
 import { formatElapsedDuration, getJobTypeLabel, sortJobsNewestFirst } from './job-control.ts';
+import { isActiveJob, isTerminalJob } from '../workspace/state.ts';
 import type { JobRecord } from '../workspace/state.ts';
 
 export interface SessionJobAnnouncement {
@@ -41,7 +42,7 @@ export function buildSessionJobAnnouncement(
   const sortedJobs = sortJobsNewestFirst(Array.isArray(jobs) ? jobs : []);
 
   const allActive = sortedJobs
-    .filter((job) => job.status === 'queued' || job.status === 'running')
+    .filter((job) => isActiveJob(job))
     .map((job) => ({
       id: job.id,
       kind: getJobTypeLabel(job),
@@ -54,10 +55,7 @@ export function buildSessionJobAnnouncement(
 
   const terminalJobs = hasWatermark
     ? sortedJobs
-        .filter(
-          (job) =>
-            job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled',
-        )
+        .filter((job) => isTerminalJob(job))
         .map((job) => ({ job, timestamp: parsedTerminalTimestamp(job) }))
         .filter(
           (entry): entry is { job: JobRecord; timestamp: number } =>

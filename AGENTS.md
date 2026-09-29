@@ -1,7 +1,7 @@
 # Codex contributor notes
 
 Read `CLAUDE.md` first. It is canonical for the repository layout, TypeScript discipline, tests,
-development workflow, and runtime invariants.
+development workflow, plugin surface authoring, and runtime invariants.
 
 Codex-specific operating notes:
 

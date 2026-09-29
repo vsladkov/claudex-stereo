@@ -1,11 +1,6 @@
 import path from 'node:path';
 
-import {
-  parseStructuredOutput,
-  readOutputSchema,
-  runAppServerReview,
-  runAppServerTurn,
-} from '../runtime/index.ts';
+import { readOutputSchema, runAppServerReview } from '../runtime/index.ts';
 import type { ProgressReporter } from '../runtime/index.ts';
 import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from '../platform/git.ts';
 import type { ReviewContext, ReviewTarget } from '../platform/git.ts';
@@ -13,24 +8,41 @@ import type { ReviewTarget as NativeReviewTarget } from '../protocol/app-server.
 import { loadPromptTemplate, interpolateTemplate } from '../shared/prompts.ts';
 import { PROMPTS_ROOT, SCHEMAS_DIR } from '../shared/paths.ts';
 import { renderNativeReviewResult, renderReviewResult } from '../render/render.ts';
+import { jobRuntime, runtimeLabel } from '../shared/runtime.ts';
+import type { CompanionRuntime } from '../shared/runtime.ts';
 import { firstMeaningfulLine } from '../shared/text.ts';
-import { ensureCodexAvailable } from './companion-jobs.ts';
+import {
+  droppedNotificationsField,
+  parseTurnOutput,
+  runRoleTurn,
+  turnEnvelope,
+  turnExecutionFields,
+} from './companion-jobs.ts';
 import type { CompanionExecution } from './companion-jobs.ts';
 
 const REVIEW_SCHEMA = path.join(SCHEMAS_DIR, 'review-output.schema.json');
 
 export const NATIVE_REVIEW_EFFORT_ERROR =
-  "`/stereo:review` maps to Codex's built-in reviewer, which has no reasoning-effort control. Retry with `/stereo:adversarial-review --effort <effort>` for an effort-controlled review.";
+  "`/stereo:review --native` runs Codex's built-in reviewer, which has no reasoning-effort control. Drop `--native` for an effort-controlled review.";
+export const NATIVE_REVIEW_RUNTIME_ERROR =
+  "`--native` runs Codex's built-in reviewer; pass a Codex selection or drop `--native` for the Claude reviewer role.";
+export const NATIVE_REVIEW_COMMAND_ERROR =
+  '`--native` applies to `/stereo:review` only; `/stereo:adversarial-review` always runs the adversarial reviewer role.';
 
-export function assertReviewEffortSupported(reviewName: string, effortProvided: boolean): void {
-  if (reviewName === 'Review' && effortProvided) {
+// Only Codex's built-in reviewer lacks an effort control; the reviewer role
+// is an ordinary turn on either runtime.
+export function assertReviewEffortSupported(native: boolean, effortProvided: boolean): void {
+  if (native && effortProvided) {
     throw new Error(NATIVE_REVIEW_EFFORT_ERROR);
   }
 }
 
-export function buildAdversarialReviewPrompt(context: ReviewContext, focusText: string): string {
-  const template = loadPromptTemplate(PROMPTS_ROOT, 'adversarial-review');
-  return interpolateTemplate(template, {
+export function buildReviewPrompt(
+  context: ReviewContext,
+  focusText: string,
+  template: 'review' | 'adversarial-review' = 'adversarial-review',
+): string {
+  return interpolateTemplate(loadPromptTemplate(PROMPTS_ROOT, template), {
     TARGET_LABEL: context.target.label,
     USER_FOCUS: focusText || 'No extra focus provided.',
     REVIEW_COLLECTION_GUIDANCE: context.collectionGuidance,
@@ -56,37 +68,46 @@ export function validateNativeReviewRequest(
 ): NativeReviewTarget {
   if (focusText.trim()) {
     throw new Error(
-      `\`/stereo:review\` now maps directly to the built-in reviewer and does not support custom focus text. Retry with \`/stereo:adversarial-review ${focusText.trim()}\` for focused review instructions.`,
+      `\`/stereo:review --native\` runs Codex's built-in reviewer, which does not support custom focus text. Drop \`--native\` for \`/stereo:review ${focusText.trim()}\` on the reviewer role.`,
     );
   }
 
   const nativeTarget = buildNativeReviewTarget(target);
   if (!nativeTarget) {
     throw new Error(
-      'This `/stereo:review` target is not supported by the built-in reviewer. Retry with `/stereo:adversarial-review` for custom targeting.',
+      'This `/stereo:review --native` target is not supported by the built-in reviewer. Drop `--native` for custom targeting.',
     );
   }
 
   return nativeTarget;
 }
 
+export type ReviewRole = 'reviewer' | 'adversarial-reviewer';
+
 export interface ReviewRunRequest {
   cwd: string;
+  /** Keys the shared broker; absent means the review cwd (pre-workspace requests). */
+  workspaceRoot?: string | null;
   base?: string | null;
   scope?: string;
   target?: ReviewTarget;
+  /** Absent means Codex (requests written before Claude jobs existed). */
+  runtime?: CompanionRuntime;
   model?: string | null;
   effort?: string | null;
   focusText?: string;
   reviewName?: string;
+  /** The role the review runs as; absent means the reviewer. */
+  role?: ReviewRole;
+  /** `/stereo:review --native`: Codex's built-in reviewer instead of the reviewer role. */
+  native?: boolean;
+  jobId?: string | null;
   onProgress?: ProgressReporter | null;
 }
 
 export async function executeReviewRun(request: ReviewRunRequest): Promise<CompanionExecution> {
-  // The CLI preflight runs before job creation. Keep this availability-only
-  // defense for detached workers and direct programmatic callers, before
-  // collectReviewContext does potentially heavy git work.
-  ensureCodexAvailable(request.cwd);
+  // The CLI checked the runtime's availability before the job existed.
+  const runtime = jobRuntime(request);
   ensureGitRepository(request.cwd);
 
   // The handler resolves the target up front (git subprocesses); reuse it
@@ -99,13 +120,17 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
     });
   const focusText = request.focusText?.trim() ?? '';
   const reviewName = request.reviewName ?? 'Review';
-  if (reviewName === 'Review') {
-    assertReviewEffortSupported(reviewName, Boolean(request.effort));
+  const role = request.role ?? 'reviewer';
+  // Codex's built-in reviewer, opted into with --native; the default review
+  // is the reviewer role on either runtime.
+  if (role === 'reviewer' && runtime === 'codex' && request.native) {
+    assertReviewEffortSupported(true, Boolean(request.effort));
     const reviewTarget = validateNativeReviewRequest(target, focusText);
     const result = await runAppServerReview(request.cwd, {
       target: reviewTarget,
       model: request.model,
       onProgress: request.onProgress,
+      brokerCwd: request.workspaceRoot ?? null,
     });
     const payload = {
       review: reviewName,
@@ -118,9 +143,7 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
         stdout: result.reviewText,
         reasoning: result.reasoningSummary,
       },
-      ...(result.droppedNotifications > 0
-        ? { droppedNotifications: result.droppedNotifications }
-        : {}),
+      ...droppedNotificationsField(result),
     };
     const rendered = renderNativeReviewResult(
       {
@@ -136,10 +159,7 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
     );
 
     return {
-      exitStatus: result.status,
-      threadId: result.threadId,
-      turnId: result.turnId,
-      ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
+      ...turnExecutionFields(result),
       payload,
       rendered,
       summary: firstMeaningfulLine(result.reviewText, `${reviewName} completed.`),
@@ -150,20 +170,23 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
   }
 
   const context = collectReviewContext(request.cwd, target);
-  const prompt = buildAdversarialReviewPrompt(context, focusText);
-  const result = await runAppServerTurn(context.repoRoot, {
-    prompt,
+  const prompt = buildReviewPrompt(
+    context,
+    focusText,
+    role === 'adversarial-reviewer' ? 'adversarial-review' : 'review',
+  );
+  const result = await runRoleTurn(runtime, {
+    cwd: context.repoRoot,
     model: request.model,
-    effort: request.effort ?? null,
-    sandbox: 'read-only',
+    effort: request.effort,
+    role,
+    prompt,
     outputSchema: readOutputSchema(REVIEW_SCHEMA),
     onProgress: request.onProgress,
+    jobId: request.jobId,
+    codex: { sandbox: 'read-only', brokerCwd: request.workspaceRoot ?? null },
   });
-  const parsed = parseStructuredOutput(result.finalMessage, {
-    status: result.status,
-    failureMessage:
-      (result.error as { message?: string } | null | undefined)?.message ?? result.stderr,
-  });
+  const parsed = parseTurnOutput(result);
   const payload = {
     review: reviewName,
     target,
@@ -173,38 +196,28 @@ export async function executeReviewRun(request: ReviewRunRequest): Promise<Compa
       branch: context.branch,
       summary: context.summary,
     },
-    // rawOutput and reasoningSummary below are the canonical copies; the
-    // codex envelope repeating them cost thousands of duplicated output
-    // tokens per --json read.
-    codex: {
-      status: result.status,
-      stderr: result.stderr,
-    },
+    ...turnEnvelope(result),
     result: parsed.parsed,
     rawOutput: parsed.rawOutput,
     parseError: parsed.parseError,
     reasoningSummary: result.reasoningSummary,
-    ...(result.droppedNotifications > 0
-      ? { droppedNotifications: result.droppedNotifications }
-      : {}),
+    ...droppedNotificationsField(result),
   };
 
   return {
-    exitStatus: result.status,
-    threadId: result.threadId,
-    turnId: result.turnId,
-    ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
+    ...turnExecutionFields(result),
     payload,
     rendered: renderReviewResult(parsed, {
       reviewLabel: reviewName,
       targetLabel: context.target.label,
       reasoningSummary: result.reasoningSummary,
+      runtime,
     }),
     summary:
       (parsed.parsed as { summary?: string | null } | null)?.summary ??
       parsed.parseError ??
       firstMeaningfulLine(result.finalMessage, `${reviewName} finished.`),
-    jobTitle: `Codex ${reviewName}`,
+    jobTitle: `${runtimeLabel(runtime)} ${reviewName}`,
     jobClass: 'review',
     targetLabel: context.target.label,
   };

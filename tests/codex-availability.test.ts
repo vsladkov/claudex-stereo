@@ -6,7 +6,10 @@ import {
   getCodexAvailability,
   resetCodexAvailabilityCache,
 } from '../plugins/stereo/src/runtime/availability.ts';
-import { binaryAvailable } from '../plugins/stereo/src/platform/process.ts';
+import { PROBE_TIMEOUT_MS } from '../plugins/stereo/src/platform/process.ts';
+import type { binaryAvailable } from '../plugins/stereo/src/platform/process.ts';
+import { buildEnv, installFakeCodex } from './fake-codex-fixture.ts';
+import { makeTempDir } from './helpers.ts';
 
 test('injected Codex availability probes are never memoized', (t) => {
   resetCodexAvailabilityCache();
@@ -31,15 +34,36 @@ test('injected Codex availability probes are never memoized', (t) => {
   });
 });
 
+test('Codex availability probes are bounded, and a hung one is unavailable', () => {
+  const timeouts: Array<number | undefined> = [];
+  const probeImpl: typeof binaryAvailable = (command, args = [], options = {}) => {
+    timeouts.push(options.timeout);
+    return args[0] === '--version'
+      ? { available: true, detail: 'codex test version' }
+      : { available: false, detail: `${command} ${args.join(' ')} timed out after 15000 ms` };
+  };
+  assert.deepEqual(getCodexAvailability(process.cwd(), { probeImpl }), {
+    available: false,
+    detail:
+      'codex test version; advanced runtime unavailable: codex app-server --help timed out after 15000 ms',
+  });
+  assert.deepEqual(timeouts, [PROBE_TIMEOUT_MS, PROBE_TIMEOUT_MS]);
+});
+
 test('default Codex availability probes are memoized by cwd and resettable', (t) => {
-  if (!binaryAvailable('codex').available) {
-    t.skip('codex is not available on PATH');
-    return;
-  }
+  // The default probes spawn `codex` from PATH: the fake, never the real CLI.
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const previousPath = process.env.PATH;
+  process.env.PATH = buildEnv(binDir).PATH;
+  t.after(() => {
+    process.env.PATH = previousPath;
+  });
 
   resetCodexAvailabilityCache();
   t.after(resetCodexAvailabilityCache);
   const first = getCodexAvailability(process.cwd());
+  assert.equal(first.available, true, first.detail);
   const cached = getCodexAvailability(process.cwd());
   assert.strictEqual(cached, first);
 

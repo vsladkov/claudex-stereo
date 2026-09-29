@@ -6,14 +6,12 @@ import process from 'node:process';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createBrokerEndpoint, parseBrokerEndpoint } from './endpoint.ts';
-import { processHasExited, terminateProcessTree } from '../platform/process.ts';
+import { childTarget, processHasExited, terminateProcessTree } from '../platform/process.ts';
+import { errorCode } from '../shared/errors.ts';
+import { writeJsonAtomic } from '../shared/fs.ts';
 import { BROKER_ENTRY } from '../shared/paths.ts';
-import { resolveStateDir, writeJsonAtomic } from '../workspace/state.ts';
+import { resolveStateDir } from '../workspace/state.ts';
 
-export { processHasExited };
-
-export const PID_FILE_ENV = 'CODEX_COMPANION_APP_SERVER_PID_FILE';
-export const LOG_FILE_ENV = 'CODEX_COMPANION_APP_SERVER_LOG_FILE';
 const BROKER_STATE_FILE = 'broker.json';
 
 export interface BrokerSession {
@@ -25,7 +23,8 @@ export interface BrokerSession {
 }
 
 export type ShutdownOutcome =
-  { accepted: true; pid: number } | { accepted: false; detail: string; busy?: boolean };
+  | { accepted: true; pid: number }
+  | { accepted: false; detail: string; busy?: boolean; timedOut?: boolean };
 
 export interface SpawnBrokerProcessOptions {
   scriptPath: string;
@@ -52,6 +51,11 @@ export interface TeardownBrokerSessionOptions {
   logFile: string | null;
   sessionDir?: string | null;
   pid?: number | null;
+  /**
+   * Kills the pid; null kills nothing. Only for a pid the caller knows is
+   * still the broker's (a child whose handle it holds): a pid read from disk
+   * may name another process by now.
+   */
   killProcess?: ((pid: number) => unknown) | null;
 }
 
@@ -126,16 +130,19 @@ async function sleepUntilNextProbe(deadline: number): Promise<void> {
   }
 }
 
-export async function waitForBrokerEndpoint(
+// Probes the endpoint until it reports the wanted outcome or the deadline
+// passes.
+async function waitForEndpointOutcome(
   endpoint: string,
-  timeoutMs = 2000,
-  options: ProbeBrokerEndpointOptions = {},
+  wanted: BrokerEndpointProbeOutcome,
+  timeoutMs: number,
+  options: ProbeBrokerEndpointOptions,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const remaining = deadline - Date.now();
     const outcome = await probeBrokerEndpointOutcome(endpoint, Math.min(500, remaining), options);
-    if (outcome === 'connected') {
+    if (outcome === wanted) {
       return true;
     }
     await sleepUntilNextProbe(deadline);
@@ -143,31 +150,75 @@ export async function waitForBrokerEndpoint(
   return false;
 }
 
-export async function sendBrokerShutdown(endpoint: string, timeoutMs = 2000): Promise<void> {
-  await new Promise((resolve) => {
+export function waitForBrokerEndpoint(
+  endpoint: string,
+  timeoutMs = 2000,
+  options: ProbeBrokerEndpointOptions = {},
+): Promise<boolean> {
+  return waitForEndpointOutcome(endpoint, 'connected', timeoutMs, options);
+}
+
+export function waitForBrokerEndpointClosed(
+  endpoint: string,
+  timeoutMs: number,
+  options: ProbeBrokerEndpointOptions = {},
+): Promise<boolean> {
+  return waitForEndpointOutcome(endpoint, 'closed', timeoutMs, options);
+}
+
+// How one broker/shutdown request ended: the broker's first reply line, the
+// timeout, a socket error, or a close before any reply.
+type ShutdownExchange =
+  | { kind: 'reply'; line: string }
+  | { kind: 'timeout' }
+  | { kind: 'error'; error: NodeJS.ErrnoException }
+  | { kind: 'closed' };
+
+// Sends one broker/shutdown request and waits, at most timeoutMs, for the
+// first reply line. The socket is always destroyed, never ended: a half-close
+// waits on the peer, and a listener that accepted but never reads would hold
+// the caller until it is killed.
+function exchangeShutdown(
+  endpoint: string,
+  params: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<ShutdownExchange> {
+  return new Promise((resolve) => {
     const socket = connectToEndpoint(endpoint);
-    // A broker that accepts the connection but never replies must not hang
-    // the caller (the test reaper calls this unconditionally).
-    const timeout = setTimeout(() => {
-      socket.destroy();
-      resolve(undefined);
-    }, timeoutMs);
-    timeout.unref?.();
-    const finish = () => {
+    let buffer = '';
+    let settled = false;
+    const finish = (exchange: ShutdownExchange): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       clearTimeout(timeout);
-      resolve(undefined);
+      socket.destroy();
+      resolve(exchange);
     };
+    const timeout = setTimeout(() => finish({ kind: 'timeout' }), timeoutMs);
+    timeout.unref?.();
     socket.setEncoding('utf8');
     socket.on('connect', () => {
-      socket.write(`${JSON.stringify({ id: 1, method: 'broker/shutdown', params: {} })}\n`);
+      socket.write(`${JSON.stringify({ id: 1, method: 'broker/shutdown', params })}\n`);
     });
-    socket.on('data', () => {
-      socket.end();
-      finish();
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      const newlineIndex = buffer.indexOf('\n');
+      if (newlineIndex !== -1) {
+        finish({ kind: 'reply', line: buffer.slice(0, newlineIndex) });
+      }
     });
-    socket.on('error', finish);
-    socket.on('close', finish);
+    socket.on('error', (error) => finish({ kind: 'error', error }));
+    socket.on('close', () => finish({ kind: 'closed' }));
   });
+}
+
+// The unconditional shutdown. A broker that accepts the connection but never
+// replies must not hang the caller (the test reaper calls this
+// unconditionally).
+export async function sendBrokerShutdown(endpoint: string, timeoutMs = 2000): Promise<void> {
+  await exchangeShutdown(endpoint, {}, timeoutMs);
 }
 
 async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
@@ -181,21 +232,45 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boole
   return processHasExited(pid);
 }
 
-export async function waitForBrokerEndpointClosed(
-  endpoint: string,
-  timeoutMs: number,
-  options: ProbeBrokerEndpointOptions = {},
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const remaining = deadline - Date.now();
-    const outcome = await probeBrokerEndpointOutcome(endpoint, Math.min(500, remaining), options);
-    if (outcome === 'closed') {
-      return true;
-    }
-    await sleepUntilNextProbe(deadline);
+function readGuardedShutdownReply(exchange: ShutdownExchange): ShutdownOutcome {
+  switch (exchange.kind) {
+    case 'timeout':
+      return {
+        accepted: false,
+        detail: 'Timed out waiting for the broker shutdown response.',
+        timedOut: true,
+      };
+    case 'closed':
+      return {
+        accepted: false,
+        detail: 'The broker connection closed before acknowledging shutdown.',
+      };
+    case 'error':
+      return { accepted: false, detail: exchange.error.message };
+    case 'reply':
+      break;
   }
-  return false;
+  try {
+    const message = JSON.parse(exchange.line);
+    if (message.error) {
+      return { accepted: false, detail: message.error.message ?? 'Broker shutdown was rejected.' };
+    }
+    if (message.result?.busy) {
+      return { accepted: false, busy: true, detail: 'The shared broker is busy.' };
+    }
+    if (!message.result?.ok || !Number.isFinite(message.result?.pid)) {
+      return {
+        accepted: false,
+        detail: 'The broker returned an invalid guarded-shutdown response.',
+      };
+    }
+    return { accepted: true, pid: message.result.pid };
+  } catch (error) {
+    return {
+      accepted: false,
+      detail: `Invalid broker shutdown response: ${(error as Error).message}`,
+    };
+  }
 }
 
 export async function sendBrokerShutdownIfIdle(
@@ -207,80 +282,9 @@ export async function sendBrokerShutdownIfIdle(
   // close), so the worst case stays ~timeoutMs instead of the phases each
   // spending their own copy of the budget.
   const deadline = Date.now() + timeoutMs;
-  const response = await new Promise<ShutdownOutcome>((resolve) => {
-    const socket = connectToEndpoint(endpoint);
-    let buffer = '';
-    let settled = false;
-    const timeout = setTimeout(
-      () => {
-        finish({ accepted: false, detail: 'Timed out waiting for the broker shutdown response.' });
-      },
-      Math.min(timeoutMs, 2000),
-    );
-    timeout.unref?.();
-
-    function finish(result: ShutdownOutcome): void {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      socket.end();
-      resolve(result);
-    }
-
-    socket.setEncoding('utf8');
-    socket.on('connect', () => {
-      socket.write(
-        `${JSON.stringify({ id: 1, method: 'broker/shutdown', params: { ifIdle: true } })}\n`,
-      );
-    });
-    socket.on('data', (chunk) => {
-      buffer += chunk;
-      const newlineIndex = buffer.indexOf('\n');
-      if (newlineIndex === -1) {
-        return;
-      }
-      try {
-        const message = JSON.parse(buffer.slice(0, newlineIndex));
-        if (message.error) {
-          finish({
-            accepted: false,
-            detail: message.error.message ?? 'Broker shutdown was rejected.',
-          });
-          return;
-        }
-        if (message.result?.busy) {
-          finish({ accepted: false, busy: true, detail: 'The shared broker is busy.' });
-          return;
-        }
-        if (!message.result?.ok || !Number.isFinite(message.result?.pid)) {
-          finish({
-            accepted: false,
-            detail: 'The broker returned an invalid guarded-shutdown response.',
-          });
-          return;
-        }
-        finish({ accepted: true, pid: message.result.pid });
-      } catch (error) {
-        finish({
-          accepted: false,
-          detail: `Invalid broker shutdown response: ${(error as Error).message}`,
-        });
-      }
-    });
-    socket.on('error', (error) => {
-      finish({ accepted: false, detail: error.message });
-    });
-    socket.on('close', () => {
-      if (!settled) {
-        finish({
-          accepted: false,
-          detail: 'The broker connection closed before acknowledging shutdown.',
-        });
-      }
-    });
-  });
+  const response = readGuardedShutdownReply(
+    await exchangeShutdown(endpoint, { ifIdle: true }, Math.min(timeoutMs, 2000)),
+  );
 
   if (!response.accepted) {
     return response;
@@ -441,19 +445,20 @@ export async function ensureBrokerSession(
 
   const ready = await waitForBrokerEndpoint(endpoint, options.timeoutMs ?? 2000);
   if (!ready) {
+    // The child may have exited during the wait and its pid been reused: the
+    // handle this process holds says whether it still runs (an exited child's
+    // pid is never signalled). The stale-session teardown above keeps
+    // killProcess null: its pid comes from disk. hasOwn: an explicit
+    // killProcess: null still suppresses the kill.
+    const stillOurs = childTarget(child)?.isRunning() ?? false;
+    const kill = Object.hasOwn(options, 'killProcess') ? options.killProcess : terminateProcessTree;
     teardownBrokerSession({
       endpoint,
       pidFile,
       logFile,
       sessionDir,
       pid: child.pid ?? null,
-      // This pid is our own just-spawned child (a live owned handle), so a
-      // default kill is safe here; the stale-session teardown above must keep
-      // killProcess null because its pid comes from disk and may be reused.
-      // hasOwn: an explicit killProcess: null still suppresses the kill.
-      killProcess: Object.hasOwn(options, 'killProcess')
-        ? options.killProcess
-        : terminateProcessTree,
+      killProcess: stillOurs ? kill : null,
     });
     return null;
   }
@@ -485,8 +490,18 @@ export function teardownBrokerSession({
     }
   }
 
+  // Only files directly inside the session's own directory are the
+  // companion's to remove. An endpoint pinned through
+  // CODEX_COMPANION_APP_SERVER_ENDPOINT arrives with no session directory,
+  // and a socket recorded elsewhere belongs to whoever listens there.
+  const resolvedSessionDir =
+    sessionDir ?? (pidFile ? path.dirname(pidFile) : logFile ? path.dirname(logFile) : null);
+  const ownsFile = (file: string): boolean =>
+    resolvedSessionDir !== null &&
+    path.dirname(path.resolve(file)) === path.resolve(resolvedSessionDir);
+
   for (const file of [pidFile, logFile]) {
-    if (!file) {
+    if (!file || !ownsFile(file)) {
       continue;
     }
     try {
@@ -494,7 +509,7 @@ export function teardownBrokerSession({
     } catch (error) {
       // A concurrent teardown (second SessionEnd, reaper, or the broker's own
       // SIGTERM cleanup) may have removed the file between checks.
-      if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') {
+      if (errorCode(error) !== 'ENOENT') {
         throw error;
       }
     }
@@ -503,7 +518,7 @@ export function teardownBrokerSession({
   if (endpoint) {
     try {
       const target = parseBrokerEndpoint(endpoint);
-      if (target.kind === 'unix' && fs.existsSync(target.path)) {
+      if (target.kind === 'unix' && ownsFile(target.path) && fs.existsSync(target.path)) {
         fs.unlinkSync(target.path);
       }
     } catch {
@@ -511,8 +526,6 @@ export function teardownBrokerSession({
     }
   }
 
-  const resolvedSessionDir =
-    sessionDir ?? (pidFile ? path.dirname(pidFile) : logFile ? path.dirname(logFile) : null);
   if (resolvedSessionDir && fs.existsSync(resolvedSessionDir)) {
     try {
       fs.rmdirSync(resolvedSessionDir);

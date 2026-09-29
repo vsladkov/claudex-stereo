@@ -1,36 +1,51 @@
 import process from 'node:process';
 
-import {
-  interruptAppServerTurn,
-  releaseThreadReservationForCancelledJob,
-} from '../../runtime/index.ts';
-import { processHasExited, terminateProcessTree } from '../../platform/process.ts';
+import { interruptAppServerTurn } from '../../runtime/index.ts';
+import type { ProcessOps } from '../../platform/process.ts';
 import { readStoredJob, resolveCancelableJob } from '../../jobs/job-control.ts';
+import {
+  recordedProcesses,
+  settleJob,
+  stopJobProcesses,
+  unconfirmedStopWarning,
+} from '../../jobs/job-lifecycle.ts';
+import type { SettleJobResult } from '../../jobs/job-lifecycle.ts';
 import { appendLogLine } from '../../jobs/tracked-jobs.ts';
-import { nowIso, resolveJobFile, upsertJob, writeJobFile } from '../../workspace/state.ts';
+import { resolveJobFile } from '../../workspace/state.ts';
 import type { JobRecord } from '../../workspace/state.ts';
 import { renderCancelReport } from '../../render/render.ts';
 import {
-  outputCommandResult,
+  outputReportResult,
   parseCommandInput,
   resolveCommandCwd,
   resolveCommandWorkspace,
 } from '../io.ts';
+import { errorMessage } from '../../shared/errors.ts';
+import { jobRuntime } from '../../shared/runtime.ts';
 
 export interface CancelDeps {
   interruptAppServerTurn: typeof interruptAppServerTurn;
-  terminateProcessTree: typeof terminateProcessTree;
-  processHasExited?: typeof processHasExited;
-  releaseThreadReservationForCancelledJob: typeof releaseThreadReservationForCancelledJob;
+  /** The process seams the stop uses (the host's by default). */
+  ops?: ProcessOps;
   env?: NodeJS.ProcessEnv;
 }
 
-export const defaultCancelDeps: CancelDeps = {
-  interruptAppServerTurn,
-  terminateProcessTree,
-  processHasExited,
-  releaseThreadReservationForCancelledJob,
-};
+export const defaultCancelDeps: CancelDeps = { interruptAppServerTurn };
+
+// A job that finished while the cancel ran keeps its own outcome.
+function renderAlreadyFinished(jobId: string, status: string): string {
+  return `# Stereo Cancel\n\nJob ${jobId} already finished (${status}); nothing to cancel.\n`;
+}
+
+function logTo(logFile: string | null | undefined): (line: string) => void {
+  return (line) => {
+    try {
+      appendLogLine(logFile, line);
+    } catch {
+      // A log write must not prevent cancellation bookkeeping.
+    }
+  };
+}
 
 export async function handleCancel(
   argv: string[],
@@ -63,16 +78,63 @@ export async function handleCancel(
     existing = readStoredJob(resolved.workspaceRoot, job.id) ?? {};
   } catch (error) {
     existing = {};
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     storedJobWarning = `Stored job file is unreadable: ${jobFile} (${message}). Cancelling with index data only.`;
     appendLogLine(job.logFile, storedJobWarning);
   }
   const threadId = existing.threadId ?? job.threadId ?? null;
-  const requestThreadId =
-    (existing.request as { threadId?: string | null } | null | undefined)?.threadId ?? null;
   const turnId = existing.turnId ?? job.turnId ?? null;
 
-  const interrupt = await deps.interruptAppServerTurn(workspaceRoot ?? cwd, { threadId, turnId });
+  // Record the cancel before stopping anything: the worker's own signal
+  // handler, an interrupted turn, or a run finishing in the meantime then
+  // finds the job terminal and leaves this record alone. A job that settled
+  // on its own before this point keeps its outcome, and nothing is stopped.
+  // A job file that cannot be written still leaves the index row settled:
+  // the processes are stopped first, then the write error surfaces.
+  let settleError: unknown = null;
+  let settled: SettleJobResult;
+  try {
+    settled = settleJob(resolved.workspaceRoot, job.id, {
+      terminal: {
+        status: 'cancelled',
+        phase: 'cancelled',
+        errorMessage: 'Cancelled by user.',
+      },
+      fallback: job,
+    });
+    settleError = settled.writeError ?? null;
+  } catch (error) {
+    settleError = error;
+    // Only the snapshot is left to say which processes to stop.
+    settled = {
+      settled: true,
+      status: 'cancelled',
+      record: null,
+      processes: recordedProcesses(existing, job),
+    };
+  }
+  if (!settled.settled) {
+    logTo(job.logFile)(`Cancel found the job already ${settled.status}; its record stands.`);
+    outputReportResult(
+      {
+        jobId: job.id,
+        status: settled.status,
+        title: job.title,
+        alreadyFinished: true,
+        ...(storedJobWarning ? { storedJobWarning } : {}),
+      },
+      renderAlreadyFinished(job.id, settled.status),
+      options.json,
+    );
+    return;
+  }
+
+  // A Claude job has no app-server turn to interrupt; killing the worker's
+  // process tree below ends its `claude -p` child.
+  const interrupt =
+    jobRuntime(existing.runtime ? existing : job) === 'claude'
+      ? { attempted: false, interrupted: false, detail: null }
+      : await deps.interruptAppServerTurn(resolved.workspaceRoot, { threadId, turnId });
   if (interrupt.attempted) {
     appendLogLine(
       job.logFile,
@@ -82,86 +144,51 @@ export async function handleCancel(
     );
   }
 
-  const cancelledPid = job.pid ?? Number.NaN;
-  let killWarning: string | null = null;
-  const pidAlive =
-    Number.isInteger(cancelledPid) &&
-    cancelledPid > 0 &&
-    !(deps.processHasExited ?? processHasExited)(cancelledPid);
-  if (pidAlive) {
-    try {
-      deps.terminateProcessTree(cancelledPid);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      killWarning = `Failed to terminate worker pid ${cancelledPid}: ${message}`;
-      try {
-        appendLogLine(job.logFile, killWarning);
-      } catch {
-        // A log write must not prevent cancellation bookkeeping.
-      }
-    }
-  } else {
-    try {
-      appendLogLine(
-        job.logFile,
-        `Skipped process termination: worker pid ${cancelledPid} is no longer running.`,
-      );
-    } catch {
-      // A log write must not prevent cancellation bookkeeping.
-    }
+  // The processes the settle took off the record, read under the index lock
+  // (a worker that started after the lookup above is included). Pids are
+  // reused: a live pid that no longer runs the worker, or that started at
+  // another time, is someone else's process, and killing it is not this
+  // job's business. A headless Claude child leads its own process group, so
+  // the worker's tree kill does not reach it; it is killed by its recorded
+  // pid, with escalation. A process the stop cannot confirm gone is named in
+  // the warning for the user to end: nothing retries the stop. The job's
+  // thread or session reservation is reclaimed by the next run that needs it.
+  const pids = settled.processes;
+  const logLine = logTo(job.logFile);
+  const stop = stopJobProcesses(pids, { ops: deps.ops });
+  if (stop.worker === 'none') {
+    logLine('Skipped process termination: no worker pid was recorded.');
+  } else if (stop.worker === 'exited') {
+    logLine(`Skipped process termination: worker pid ${pids.pid} is no longer running.`);
+  } else if (stop.worker === 'foreign') {
+    logLine(`Skipped process termination: pid ${pids.pid} no longer runs the companion worker.`);
   }
-  const reservationCleanup = await deps.releaseThreadReservationForCancelledJob({
-    threadId,
-    requestThreadId,
-    jobId: job.id,
-    pid: cancelledPid,
-  });
-  appendLogLine(
-    job.logFile,
-    `Thread reservation cleanup: ${reservationCleanup.status}${
-      reservationCleanup.detail ? ` (${reservationCleanup.detail})` : ''
-    }.`,
-  );
-  appendLogLine(job.logFile, 'Cancelled by user.');
+  if (stop.claude === 'stopped') {
+    logLine(`Terminated the Claude process ${pids.claudePid}.`);
+  }
+  const killWarning = unconfirmedStopWarning(stop, pids);
+  if (killWarning) {
+    logLine(killWarning);
+  }
 
-  const completedAt = nowIso();
-  const nextJob = {
-    ...job,
-    status: 'cancelled',
-    phase: 'cancelled',
-    pid: null,
-    completedAt,
-    errorMessage: 'Cancelled by user.',
+  const interruptFields = {
+    turnInterruptAttempted: interrupt.attempted,
+    turnInterrupted: interrupt.interrupted,
+    ...(storedJobWarning ? { storedJobWarning } : {}),
+    ...(killWarning ? { killWarning } : {}),
   };
-
-  writeJobFile(resolved.workspaceRoot, job.id, {
-    ...existing,
-    ...nextJob,
-    cancelledAt: completedAt,
-  });
-  upsertJob(resolved.workspaceRoot, {
-    id: job.id,
-    status: 'cancelled',
-    phase: 'cancelled',
-    pid: null,
-    errorMessage: 'Cancelled by user.',
-    completedAt,
-  });
+  if (settleError) {
+    throw settleError;
+  }
+  logLine('Cancelled by user.');
 
   const payload = {
     jobId: job.id,
     status: 'cancelled',
     title: job.title,
-    turnInterruptAttempted: interrupt.attempted,
-    turnInterrupted: interrupt.interrupted,
-    reservationCleanup: reservationCleanup.status,
-    ...(storedJobWarning ? { storedJobWarning } : {}),
-    ...(killWarning ? { killWarning } : {}),
+    alreadyFinished: false,
+    ...interruptFields,
   };
 
-  outputCommandResult(
-    payload,
-    renderCancelReport(nextJob, storedJobWarning, killWarning),
-    options.json,
-  );
+  outputReportResult(payload, renderCancelReport(job, storedJobWarning, killWarning), options.json);
 }

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 
 import {
   collectReviewContext,
+  ensureGitRepository,
   getWorkingTreeState,
   gitCollect,
   listRepositoryFiles,
@@ -200,7 +201,25 @@ test('collectReviewContext skips broken untracked symlinks instead of crashing',
 
   assert.equal(target.mode, 'working-tree');
   assert.match(context.content, /### broken-link/);
-  assert.match(context.content, /skipped: broken symlink or unreadable file/i);
+  assert.match(context.content, /skipped: symbolic link/i);
+});
+
+test('collectReviewContext never reads an untracked symlink that points outside the repository', () => {
+  const cwd = makeTempDir();
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, 'app.js'), "console.log('v1');\n");
+  run('git', ['add', 'app.js'], { cwd });
+  run('git', ['commit', '-m', 'init'], { cwd });
+  const outside = path.join(makeTempDir(), 'secret.txt');
+  fs.writeFileSync(outside, 'OUTSIDE_SECRET_MARKER\n');
+  fs.symlinkSync(outside, path.join(cwd, 'leaked-link'));
+
+  const target = resolveReviewTarget(cwd, {});
+  const context = collectReviewContext(cwd, target);
+
+  assert.equal(target.mode, 'working-tree');
+  assert.match(context.content, /### leaked-link\n\(skipped: symbolic link\)/);
+  assert.doesNotMatch(context.content, /OUTSIDE_SECRET_MARKER/);
 });
 
 test('collectReviewContext falls back to lightweight context for larger adversarial reviews', () => {
@@ -385,3 +404,23 @@ test('listRepositoryFiles salvages complete records after ENOBUFS', () => {
   assert.equal(invocation.options.maxBuffer, 32);
   assert.equal(invocation.options.shell, false);
 });
+
+test(
+  'ensureGitRepository returns the working-tree root and names a missing git',
+  { skip: process.platform === 'win32' },
+  (t) => {
+    const cwd = makeTempDir();
+    initGitRepo(cwd);
+    const previousPath = process.env.PATH;
+    t.after(() => {
+      process.env.PATH = previousPath;
+    });
+    assert.equal(ensureGitRepository(cwd), cwd);
+
+    process.env.PATH = makeTempDir('no-git-');
+    assert.throws(
+      () => ensureGitRepository(cwd),
+      /^Error: git is not installed\. Install Git and retry\.$/,
+    );
+  },
+);

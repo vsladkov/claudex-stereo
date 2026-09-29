@@ -147,3 +147,40 @@ test('session job announcement rendering is byte exact', () => {
     'Stereo background jobs in /work/repo:\n- Active (2): plan-a1b2c3 plan-review 4m 12s; task-d4e5f6 rescue 31s\n- Finished since your last session (1): task-g7h8i9 rescue completed in 2m 3s\nRun /stereo:status for details, /stereo:result <id> for output, /stereo:cancel <id> to stop one.\n',
   );
 });
+
+test('a task announces under the pair role it ran as, on either runtime', () => {
+  const announcement = buildSessionJobAnnouncement(
+    [
+      {
+        id: 'task-planner',
+        status: 'running',
+        jobClass: 'task',
+        role: 'planner',
+        runtime: 'claude',
+        startedAt: '2026-08-01T11:59:00.000Z',
+        updatedAt: '2026-08-01T11:59:00.000Z',
+      },
+      {
+        id: 'task-implementer',
+        status: 'completed',
+        jobClass: 'task',
+        role: 'implementer',
+        startedAt: '2026-08-01T11:05:00.000Z',
+        completedAt: '2026-08-01T11:10:00.000Z',
+        updatedAt: '2026-08-01T11:10:00.000Z',
+      },
+    ],
+    { watermark: WATERMARK, now: NOW },
+  );
+
+  assert.deepEqual(announcement?.active, [
+    { id: 'task-planner', kind: 'planner', elapsed: '1m 0s', status: 'running' },
+  ]);
+  assert.deepEqual(announcement?.finished, [
+    { id: 'task-implementer', kind: 'implementer', status: 'completed', duration: '5m 0s' },
+  ]);
+  assert.match(
+    renderSessionJobAnnouncement({ ...announcement!, workspaceRoot: '/work/repo' }),
+    /- Active \(1\): task-planner planner 1m 0s\n- Finished since your last session \(1\): task-implementer implementer completed in 5m 0s\n/,
+  );
+});

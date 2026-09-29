@@ -2,6 +2,7 @@ import process from 'node:process';
 
 import { resetJsonRequestState, wasJsonRequested } from './io.ts';
 import { printUsage } from './usage.ts';
+import { errorMessage } from '../shared/errors.ts';
 
 // Each case imports its handler lazily: a static import list here pulled the
 // entire 60+-module graph (workflows, runtime, transport, broker, render)
@@ -69,6 +70,9 @@ async function main(fullArgv: string[]): Promise<void> {
     case 'version':
       (await import('./commands/version.ts')).handleVersion(argv);
       break;
+    case 'worktree':
+      (await import('./commands/worktree.ts')).handleWorktree(argv);
+      break;
     default:
       throw new Error(`Unknown subcommand: ${subcommand}`);
   }
@@ -77,7 +81,7 @@ async function main(fullArgv: string[]): Promise<void> {
 export function runCli(argv: string[]): Promise<void> {
   resetJsonRequestState();
   return main(argv).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     if (wasJsonRequested(argv)) {
       // --json consumers parse stdout; give failures the same structured
       // surface as successes (stderr keeps the human-readable text).
