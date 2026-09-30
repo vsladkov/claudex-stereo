@@ -767,7 +767,8 @@ test('a resume waits for the broker to finish an abandoned turn instead of runni
   // The worker dies without a word: the broker is left with its turn.
   process.kill(running.pid as number, 'SIGKILL');
   await waitFor(() => !processIsAlive(running.pid as number), { timeoutMs: 10000 });
-  const startsBefore = readFakeState(binDir).appServerStarts;
+  // The fake is recording the broker's interrupt about now: read through the wait.
+  const startsBefore = (await waitForFakeState(binDir, 'appServerStarts')).appServerStarts;
 
   const resumed = run(
     process.execPath,
@@ -776,7 +777,11 @@ test('a resume waits for the broker to finish an abandoned turn instead of runni
   );
   assert.equal(resumed.status, 0, resumed.stderr);
   assert.doesNotMatch(resumed.stderr, /retrying on a private app-server/);
-  assert.equal(readFakeState(binDir).appServerStarts, startsBefore, 'no second app-server ran');
+  assert.equal(
+    (await waitForFakeState(binDir, 'appServerStarts')).appServerStarts,
+    startsBefore,
+    'no second app-server ran',
+  );
 });
 
 test('a broker-routed turn fails promptly when the child app-server dies mid-turn', async (t) => {
