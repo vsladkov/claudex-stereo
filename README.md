@@ -48,8 +48,9 @@ thread reservations, plus an optional stop-time review gate.
   - OpenAI-backed usage contributes to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
 - **Codex CLI 0.156.1 or later.** The default review gates run GPT-6 Astra (`codex:astra-6`),
   which older CLIs cannot configure, and Codex model families resolve through the app-server's
-  model list. On an older CLI, pin the gates to a raw model id that CLI runs, for example
-  `/stereo:config --plan-reviewer codex:gpt-5.6-sol --implementation-reviewer codex:gpt-5.6-sol`,
+  model list, so a model reaches the plugin with the CLI release that carries it (GPT-6.1 Sol
+  needs 0.159.1 or later). On an older CLI, pin the gates to a raw model id that CLI runs, for
+  example `/stereo:config --plan-reviewer codex:gpt-5.6-sol --implementation-reviewer codex:gpt-5.6-sol`,
   or pass the role flags per run.
 - **Node.js 24 or later** (the plugin runs its TypeScript sources natively via Node's type stripping)
 - **Claude Code 2.1.281 or later, logged in, for Claude roles.** Named Claude selections
@@ -382,7 +383,7 @@ Examples:
 /stereo:plan --plan-reviewer claude:opus refactor the retry logic
 /stereo:plan --max-plan-rounds 3 refactor the retry logic
 /stereo:plan --plan-reviewer codex:terra --plan-reviewer-effort high migrate the config loader
-/stereo:plan --plan-reviewer codex:sol-5.6 review against the previous Sol generation
+/stereo:plan --plan-reviewer codex:sol-6 review against the previous Sol generation
 /stereo:plan --planner codex:luna --planner-effort high --plan-reviewer codex:sol --plan-reviewer-effort max migrate the config loader
 /stereo:plan --draft-only draft a migration plan
 /stereo:plan --slot api-rate-limit add rate limiting to the public API
