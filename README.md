@@ -180,12 +180,12 @@ Every multi-role command uses role-named model flags—`--planner`, `--plan-revi
 
 Defaults with no role flags, shared by `/stereo:plan`, `/stereo:implement`, and `/stereo:quick`:
 
-| Role                    | Built-in default (model and version) | Runs                           | Effort                |
-| ----------------------- | ------------------------------------ | ------------------------------ | --------------------- |
-| Planner                 | `claude:fable-5.2`                   | Fable 5.2 (`claude-fable-5-2`) | `high` (role default) |
-| Plan reviewer           | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `high` (role default) |
-| Implementer             | `claude:opus-5.5`                    | Opus 5.5 (`claude-opus-5-5`)   | `high` (role default) |
-| Implementation reviewer | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `high` (role default) |
+| Role                    | Built-in default (model and version) | Runs                           | Effort                   |
+| ----------------------- | ------------------------------------ | ------------------------------ | ------------------------ |
+| Planner                 | `claude:fable-5.2`                   | Fable 5.2 (`claude-fable-5-2`) | `high` (version default) |
+| Plan reviewer           | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `high` (version default) |
+| Implementer             | `claude:opus-5.5`                    | Opus 5.5 (`claude-opus-5-5`)   | `high` (version default) |
+| Implementation reviewer | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `high` (version default) |
 
 Each built-in default pins a version, so it moves only through a plugin release. Override a role per
 run with its flags or per workspace with [`/stereo:config`](#stereoconfig). Families, versions, and
@@ -278,7 +278,7 @@ Examples:
 /stereo:adversarial-review --pr 42 --effort high challenge the authorization boundary
 /stereo:adversarial-review --background look for race conditions and question the chosen approach
 /stereo:adversarial-review --model claude:opus challenge the rollback design
-/stereo:adversarial-review --background --model claude:fable-5.1 --effort max challenge the session's assumptions with fresh context
+/stereo:adversarial-review --background --model claude:fable-5.2 --effort max challenge the session's assumptions with fresh context
 ```
 
 This command is read-only. It does not fix code.
@@ -637,13 +637,12 @@ committed or pushed.
 Runs one already-approved stored plan through 2 or 3 independent implementers. With no
 `--implementer` flags, the default lineup uses the workspace `implementer` model for `c1` when it is
 valid and Codex-routed, otherwise `codex:astra-6`; `c2` is `claude:opus-5.5`. Each contestant's
-effort follows the [effort rules](#effort-rules) as an implementer—`xhigh` for `codex:astra-6`
-and `high` for `claude:opus-5.5`, the implementer's built-in default—and
-a paired `--implementer-effort` overrides it. Each contestant starts in its own detached
-temporary worktree at the same `HEAD`, so the main working tree stays untouched while contestants
-run and their evidence is reviewed. Two contestants are the minimum for a comparison; three is the
-cap because every extra contestant adds an implementation run and an independent review,
-increasing cost, rate-limit pressure, and cleanup work. Use `/stereo:implement` when you want one implementer.
+effort follows the [effort rules](#effort-rules) as an implementer—`high` for both defaults—and a
+paired `--implementer-effort` overrides it. Each contestant starts in its own detached temporary
+worktree at the same `HEAD`, so the main working tree stays untouched while contestants run and
+their evidence is reviewed. Two contestants are the minimum for a comparison; three is the cap
+because every extra contestant adds an implementation run and an independent review, increasing
+cost, rate-limit pressure, and cleanup work. Use `/stereo:implement` when you want one implementer.
 
 Contestants may be Codex selections or named Claude selections (`claude:<family>[-<version>]`);
 `claude:session` is rejected because Claude writes stay in the contained implementer role. Every
@@ -1054,7 +1053,7 @@ headless Claude Code session—and is required, so those selections are distingu
 open Codex passthrough. `codex:` names the Codex app-server and is optional in commands because the
 Codex side cannot be enumerated and includes third-party providers; this documentation writes it
 for symmetry. Stored state, status output, and reports carry the exact id a launch passed—
-`Model: gpt-6-sol` is what `codex:sol` resolved to, and `Model: claude-opus-5-5` is what
+`Model: gpt-6.1-sol` is what `codex:sol` resolved to, and `Model: claude-opus-5-5` is what
 `claude:opus` or `claude:opus-5.5` ran—never a third spelling and never a bare alias.
 
 ### Codex model families
@@ -1062,17 +1061,19 @@ for symmetry. Stored state, status output, and reports carry the exact id a laun
 A Codex selection names a model family; the companion resolves it to the newest version the
 account's Codex model catalog lists, and `-<version>` pins one:
 
-| Selection                       | Resolves to (catalog of 2026-09-24)    | Default effort |
-| ------------------------------- | -------------------------------------- | -------------- |
-| `codex:astra` / `codex:astra-6` | `gpt-6-astra`                          | `xhigh`        |
-| `codex:sol` / `codex:sol-6`     | `gpt-6-sol`                            | `xhigh`        |
-| `codex:sol-5.6`                 | `gpt-5.6-sol`                          | `xhigh`        |
-| `codex:luna`                    | `gpt-6-luna` (`codex:luna-5.6` is 5.6) | `xhigh`        |
-| `codex:terra`                   | `gpt-5.6-terra`                        | `xhigh`        |
-| `codex:gpt-5.5`                 | `gpt-5.5` (raw id; retires 2026-10-14) | `xhigh`        |
+| Selection                         | Resolves to (catalog of 2026-11-10) | Default effort |
+| --------------------------------- | ----------------------------------- | -------------- |
+| `codex:astra` / `codex:astra-6`   | `gpt-6-astra`                       | `high`         |
+| `codex:sol` / `codex:sol-6.1`     | `gpt-6.1-sol`                       | `xhigh`        |
+| `codex:sol-6`                     | `gpt-6-sol`                         | `xhigh`        |
+| `codex:sol-5.6`                   | `gpt-5.6-sol`                       | `xhigh`        |
+| `codex:terra` / `codex:terra-6.1` | `gpt-6.1-terra`                     | `max`          |
+| `codex:terra-5.6`                 | `gpt-5.6-terra`                     | `xhigh`        |
+| `codex:luna` / `codex:luna-6`     | `gpt-6-luna`                        | `max`          |
+| `codex:luna-5.6`                  | `gpt-5.6-luna`                      | `xhigh`        |
 
 A family alias follows the catalog: a family that gains a new version resolves to it
-automatically (`codex:sol` moved from `gpt-5.6-sol` to `gpt-6-sol` when GPT-6 Sol appeared), so
+automatically (`codex:sol` moved from `gpt-6-sol` to `gpt-6.1-sol` when GPT-6.1 Sol appeared), so
 new OpenAI models need no plugin release. Both review gates default to the pinned `codex:astra-6`,
 so a new Astra generation reaches the defaults only through a plugin release. A family or version
 the catalog does not list is refused before any job record, naming what the catalog does list; a
@@ -1134,15 +1135,16 @@ command-wide `--effort` on `/stereo:plan`, `/stereo:implement`, `/stereo:quick`,
 1. The role effort flag, when given.
 2. Otherwise the role default's effort, when the run uses that default's model and the default
    carries an effort. The default is the workspace's stored default when it names a model, else the
-   built-in, which carries `high` for every role—an effort stored with `/stereo:config` without a
-   model replaces the built-in effort on the built-in model. Models compare by the id they resolve
-   to, so `--implementer claude:opus` matches a `claude:opus-5.5` default while Opus 5.5 is the
-   newest Opus, and `--implementer claude:opus-4.8` does not.
+   built-in, which names no effort—an effort stored with `/stereo:config` without a model applies to
+   the built-in model. Models compare by the id they resolve to, so `--implementer claude:opus`
+   matches a `claude:opus-5.5` default while Opus 5.5 is the newest Opus, and
+   `--implementer claude:opus-4.8` does not.
 3. Otherwise the selected version's default effort. Opus 5.5 and Fable 5.2 default to `high`, and
    Haiku 5.5 to `max`. Every other Claude version defaults to `xhigh`, except Opus 4.6 and Sonnet
-   4.6, which have no `xhigh` and default to `high`, and Haiku 4.5, which takes none. A Codex
-   version defaults to `xhigh`, or the highest tier below it that the catalog lists for that model.
-   Third-party provider models take none.
+   4.6, which have no `xhigh` and default to `high`, and Haiku 4.5, which takes none. GPT-6 Astra
+   defaults to `high`, and GPT-6.1 Terra and GPT-6 Luna to `max`. Every other Codex version defaults
+   to `xhigh`, or the highest tier below it that the catalog lists for that model. Third-party
+   provider models take none.
 
 A stored effort therefore follows its stored model: after
 `/stereo:config --implementer claude:opus-4.8 --implementer-effort high`, the implementer runs Opus
@@ -1154,7 +1156,7 @@ stop-time review gate run no role, so without `--effort` they use Codex's own de
 
 Each runtime validates its own ladder. Codex accepts `none`, `minimal`, `low`, `medium`, `high`,
 `xhigh`, `max`, and `ultra`; `ultra` is the tier above `max` on the models whose catalog entry lists
-it (`/stereo:setup` shows each model's tiers), and no Codex default reaches `max` or `ultra`. Claude
+it (`/stereo:setup` shows each model's tiers), and no default reaches `ultra`. Claude
 accepts `low`, `medium`, `high`, `xhigh`, and `max`. An explicit or stored effort the resolved
 model does not take—a Haiku 4.5 effort, `xhigh` on Opus 4.6 or Sonnet 4.6, or a Codex tier its
 catalog entry does not list—is refused before any job record. A role effort flag is rejected for

@@ -316,7 +316,7 @@ test('setup renders one model listing with the catalog it came from, outside the
   assert.match(
     rendered,
     new RegExp(
-      String.raw`\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- Codex catalog: live Codex catalog fetched 2026-09-24T00:00:00\.000Z at \S+codex-models\.json\n- claude:opus → ${claudeModelId('opus', opus.version)} \(effort ${opus.effort}; also [^)]+\)\n[\s\S]*- codex:astra → gpt-6-astra \(effort xhigh\)\n- codex:luna → gpt-6-luna \(effort xhigh; also 5\.6 xhigh\)\n- codex:sol → gpt-6-sol \(effort xhigh; also 5\.6 xhigh\)\n- codex:terra → gpt-5\.6-terra \(effort xhigh\)\n`,
+      String.raw`\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- Codex catalog: live Codex catalog fetched 2026-09-24T00:00:00\.000Z at \S+codex-models\.json\n- claude:opus → ${claudeModelId('opus', opus.version)} \(effort ${opus.effort}; also [^)]+\)\n[\s\S]*- codex:astra → gpt-6-astra \(effort high\)\n- codex:luna → gpt-6-luna \(effort max; also 5\.6 xhigh\)\n- codex:sol → gpt-6-sol \(effort xhigh; also 5\.6 xhigh\)\n- codex:terra → gpt-5\.6-terra \(effort xhigh\)\n`,
     ),
   );
   assert.doesNotMatch(
@@ -338,7 +338,7 @@ test('setup shows the one-model built-in floor until a catalog has been fetched'
     rendered,
     /- Codex catalog: built-in snapshot \(no catalog fetched yet; \/stereo:setup refreshes it\)\n/,
   );
-  assert.match(rendered, /\n- codex:astra → gpt-6-astra \(effort xhigh\)\n/);
+  assert.match(rendered, /\n- codex:astra → gpt-6-astra \(effort high\)\n/);
   assert.doesNotMatch(rendered, /codex:sol/);
 });
 

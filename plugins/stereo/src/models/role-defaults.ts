@@ -35,8 +35,9 @@ export interface RoleDefinition {
   builtInSelection: string;
   /**
    * The effort the role runs its default model at, when the role should
-   * differ from the model (every built-in runs at `high` today); null means
-   * the version's own default effort from the model table.
+   * differ from the model; null (every built-in today) means the version's
+   * own default effort from the model table. An extension point: set it to
+   * give a role its own tier without a version row.
    */
   builtInEffort: ReasoningEffort | null;
 }
@@ -49,7 +50,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: 'planner',
     allowsClaudeSession: true,
     builtInSelection: 'claude:fable-5.2',
-    builtInEffort: 'high',
+    builtInEffort: null,
   },
   {
     key: 'planReviewer',
@@ -58,7 +59,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: 'plan reviewer',
     allowsClaudeSession: true,
     builtInSelection: 'codex:astra-6',
-    builtInEffort: 'high',
+    builtInEffort: null,
   },
   {
     key: 'implementer',
@@ -67,7 +68,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: 'implementer',
     allowsClaudeSession: false,
     builtInSelection: 'claude:opus-5.5',
-    builtInEffort: 'high',
+    builtInEffort: null,
   },
   {
     key: 'implementationReviewer',
@@ -76,7 +77,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: 'implementation reviewer',
     allowsClaudeSession: true,
     builtInSelection: 'codex:astra-6',
-    builtInEffort: 'high',
+    builtInEffort: null,
   },
 ];
 

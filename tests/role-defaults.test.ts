@@ -349,11 +349,15 @@ test('a role launch takes the effort of the role default it runs, else the versi
   // Codex's own effort.
   const sol = { planReviewer: { model: 'codex:sol', effort: 'high' } };
   assert.equal(launchEffort('plan-reviewer', 'codex', codexId('codex:sol'), sol), 'high');
-  assert.equal(launchEffort('plan-reviewer', 'codex', codexId(reviewerBuiltIn), sol), 'xhigh');
+  const reviewerDefault = defaultModelEffort(codexId(reviewerBuiltIn), { catalog });
+  assert.equal(
+    launchEffort('plan-reviewer', 'codex', codexId(reviewerBuiltIn), sol),
+    reviewerDefault,
+  );
   const claudeReviewer = { planReviewer: { model: 'claude:opus', effort: 'low' } };
   assert.equal(
     launchEffort('plan-reviewer', 'codex', codexId(reviewerBuiltIn), claudeReviewer),
-    'xhigh',
+    reviewerDefault,
   );
   assert.equal(launchEffort(null, 'codex', codexId(reviewerBuiltIn), sol), null);
 

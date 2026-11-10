@@ -49,10 +49,11 @@ test('family rows come back newest-first, per runtime, and an exact version find
   assert.deepEqual(modelVersionRows('claude', 'nova'), []);
   assert.equal(latestModelVersion('claude', 'nova'), null);
   assert.equal(findModelVersion('claude', first, '999'), null);
-  assert.ok(
-    MODEL_VERSIONS.every((row) => row.runtime === 'claude'),
-    'no Codex rows ship: the catalog decides Codex versions',
-  );
+  // A Codex row only pins a version's default effort, so each names one.
+  for (const row of MODEL_VERSIONS.filter((candidate) => candidate.runtime === 'codex')) {
+    assert.notEqual(row.effort, null, `codex ${row.family} ${row.version}`);
+    assert.equal(findModelVersion('codex', row.family, row.version), row);
+  }
 });
 
 test('describeClaudeModels lists every family newest-first with the id and effort per version', () => {
@@ -77,12 +78,18 @@ test('describeModels maps every catalog family to its versions with the default 
   // that entry's id is the slug a launch passes.
   const described = describeModels(catalogFixture(accountCatalogModels()));
   assert.deepEqual(described.claude, describeClaudeModels());
+  // A version with a Codex row takes the row's effort, any other xhigh.
+  const effortOf = (family: string, version: string) =>
+    findModelVersion('codex', family, version)?.effort ?? 'xhigh';
   assert.deepEqual(described.codex, {
-    astra: { latest: '6', versions: { '6': { id: 'gpt-6-astra', effort: 'xhigh' } } },
+    astra: {
+      latest: '6',
+      versions: { '6': { id: 'gpt-6-astra', effort: effortOf('astra', '6') } },
+    },
     luna: {
       latest: '6',
       versions: {
-        '6': { id: 'gpt-6-luna', effort: 'xhigh' },
+        '6': { id: 'gpt-6-luna', effort: effortOf('luna', '6') },
         '5.6': { id: 'gpt-5.6-luna', effort: 'xhigh' },
       },
     },
@@ -121,7 +128,7 @@ test('describeModels maps every catalog family to its versions with the default 
 test('defaultModelEffort takes a Codex version row over the catalog tier', (t) => {
   const catalog = catalogFixture(accountCatalogModels());
   assert.equal(defaultModelEffort('gpt-5.6-sol', { catalog }), 'xhigh');
-  // Codex rows are an extension point no shipped row uses: add one for this test.
+  // No row ships for Sol 5.6: add one for this test.
   const rows = MODEL_VERSIONS as ModelVersionRow[];
   rows.push({ runtime: 'codex', family: 'sol', version: '5.6', effort: 'high' });
   t.after(() => {
@@ -133,7 +140,7 @@ test('defaultModelEffort takes a Codex version row over the catalog tier', (t) =
   assert.equal(defaultModelEffort('gpt-5.6-sol@azure', { catalog }), 'high');
   // No row for the version, or none for the family: the catalog decides.
   assert.equal(defaultModelEffort('gpt-6-sol', { catalog }), 'xhigh');
-  assert.equal(defaultModelEffort('gpt-6-astra', { catalog }), 'xhigh');
+  assert.equal(defaultModelEffort('gpt-6-nova', { catalog }), 'xhigh');
   // Third-party registry rows take none.
   assert.equal(defaultModelEffort('kimi-k3', { catalog }), null);
 });

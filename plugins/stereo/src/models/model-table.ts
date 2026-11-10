@@ -28,9 +28,12 @@ const WITHOUT_XHIGH: readonly CatalogEffort[] = ['low', 'medium', 'high', 'max']
 // Add a row to teach the plugin a version: a new Claude generation reaches
 // `claude:<family>` the moment its row is the newest one, and a new Claude
 // family is one row too. The Claude rows are the models Claude Code offers.
-// Haiku 4.5 takes no effort at all (the model rejects the parameter). Codex rows
-// are an extension point: none ships, and a `runtime: 'codex'` row would pin
-// that catalog version's default effort.
+// Haiku 4.5 takes no effort at all (the model rejects the parameter). A Codex
+// row pins that catalog version's default effort; a version without one takes
+// FALLBACK_EFFORT. The efforts follow the published per-effort benchmark
+// curves: `high` where a higher tier scores no better (Opus 5.5, Fable 5.2,
+// GPT-6 Astra), `max` for the small models that keep gaining at little cost
+// (Haiku 5.5, GPT-6.1 Terra, GPT-6 Luna), `xhigh` otherwise.
 export const MODEL_VERSIONS: readonly ModelVersionRow[] = [
   { runtime: 'claude', family: 'opus', version: '5.5', effort: 'high' },
   { runtime: 'claude', family: 'opus', version: '5', effort: 'xhigh' },
@@ -45,6 +48,9 @@ export const MODEL_VERSIONS: readonly ModelVersionRow[] = [
   { runtime: 'claude', family: 'sonnet', version: '4.6', effort: 'high', efforts: WITHOUT_XHIGH },
   { runtime: 'claude', family: 'haiku', version: '5.5', effort: 'max' },
   { runtime: 'claude', family: 'haiku', version: '4.5', effort: null },
+  { runtime: 'codex', family: 'astra', version: '6', effort: 'high' },
+  { runtime: 'codex', family: 'terra', version: '6.1', effort: 'max' },
+  { runtime: 'codex', family: 'luna', version: '6', effort: 'max' },
 ];
 
 // `<family>[-<version>]`, the selection grammar of both runtimes; the version

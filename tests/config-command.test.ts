@@ -286,7 +286,7 @@ test('config renders every version each runtime knows, as text only', () => {
   assert.match(
     payload.rendered,
     new RegExp(
-      String.raw`\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- claude:opus → ${claudeModelId('opus', opus.version)} \(effort ${opus.effort}; also [^)]+\)\n[\s\S]*- claude:haiku → ${claudeModelId('haiku', haiku.version)} \(effort ${haiku.effort}; also 4\.5 no effort\)\n- codex:astra → gpt-6-astra \(effort xhigh\)\n- codex:luna → gpt-6-luna \(effort xhigh; also 5\.6 xhigh\)\n- codex:sol → gpt-6-sol \(effort xhigh; also 5\.6 xhigh\)\n- codex:terra → gpt-5\.6-terra \(effort xhigh\)\n`,
+      String.raw`\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- claude:opus → ${claudeModelId('opus', opus.version)} \(effort ${opus.effort}; also [^)]+\)\n[\s\S]*- claude:haiku → ${claudeModelId('haiku', haiku.version)} \(effort ${haiku.effort}; also 4\.5 no effort\)\n- codex:astra → gpt-6-astra \(effort high\)\n- codex:luna → gpt-6-luna \(effort max; also 5\.6 xhigh\)\n- codex:sol → gpt-6-sol \(effort xhigh; also 5\.6 xhigh\)\n- codex:terra → gpt-5\.6-terra \(effort xhigh\)\n`,
     ),
   );
 });

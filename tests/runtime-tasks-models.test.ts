@@ -360,7 +360,7 @@ test('a runtime without model/list keeps the built-in floor and names the failed
   assert.equal(setup.status, 0, setup.stderr);
   const report = JSON.parse(setup.stdout) as { rendered: string; nextSteps: string[] };
   assert.match(report.rendered, /- Codex catalog: built-in snapshot /);
-  assert.match(report.rendered, /\n- codex:astra → gpt-6-astra \(effort xhigh\)\n/);
+  assert.match(report.rendered, /\n- codex:astra → gpt-6-astra \(effort high\)\n/);
   assert.doesNotMatch(report.rendered, /codex:sol/);
   assert.ok(
     report.nextSteps.includes(

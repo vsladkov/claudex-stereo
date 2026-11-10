@@ -288,11 +288,12 @@ test('before any fetch only the snapshot resolves, and a refusal names the faile
 
 test('defaultModelEffort takes the catalog tier for gpt-* ids, provider suffix or not, and none for other ids', () => {
   // How the tier steps down is defaultCatalogEffort's (codex-catalog.test.ts).
+  // Versions the model table has no row for.
   const catalog = catalogFixture([
-    catalogEntry('gpt-6-astra'),
+    catalogEntry('gpt-6-sol'),
     catalogEntry('gpt-5-astra', { efforts: ['low', 'medium', 'high'] }),
   ]);
-  assert.equal(defaultModelEffort('gpt-6-astra', { catalog }), 'xhigh');
+  assert.equal(defaultModelEffort('gpt-6-sol', { catalog }), 'xhigh');
   assert.equal(defaultModelEffort('gpt-5-astra', { catalog }), 'high');
   assert.equal(defaultModelEffort('gpt-5-astra@azure', { catalog }), 'high');
   assert.equal(defaultModelEffort('gpt-8-unknown', { catalog }), 'xhigh');
