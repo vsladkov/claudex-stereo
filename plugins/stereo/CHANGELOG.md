@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.56.0
+
+- Codex default efforts follow published per-effort benchmark results, as the Claude defaults do:
+  GPT-6 Astra defaults to `high`, where a higher tier scores no better, and GPT-6.1 Terra and GPT-6
+  Luna default to `max`, where each tier still adds accuracy at little cost. Every other Codex
+  version keeps `xhigh`
+- `codex:terra` and `codex:luna` therefore run at `max` instead of `xhigh`, and an Astra
+  implementer or tournament contestant runs at `high` instead of `xhigh`; `--effort xhigh`, a role
+  effort flag, or `/stereo:config` restores the previous tier
+- The built-in role defaults name no effort of their own again: each role runs at its model's
+  default, which is `high` for all four, so the model table is the one place a default effort is
+  set
+- The README's Codex family table lists the current catalog, including GPT-6.1 Sol and GPT-6.1
+  Terra
+
 ## 1.55.0
 
 - Add Claude Fable 5.2: `claude:fable` now runs `claude-fable-5-2`, `claude:fable-5.2` pins it, and
