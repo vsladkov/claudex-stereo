@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  CODEX_CLI_VERSION: 0.159.2
+  CODEX_CLI_VERSION: 0.167.0
 
 concurrency:
   group: ci-${{ github.ref }}

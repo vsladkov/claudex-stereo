@@ -1,6 +1,5 @@
 import { errorMessage, WriteEscalationRetryError } from '../shared/errors.ts';
 import type {
-  ReviewDelivery,
   ReviewTarget,
   ThreadStartParams,
   Turn,
@@ -140,7 +139,6 @@ export async function interruptAppServerTurn(
 export interface RunAppServerReviewOptions {
   model?: string | null;
   threadName?: string | null;
-  delivery?: ReviewDelivery | null;
   target?: ReviewTarget;
   onProgress?: ProgressReporter | null;
   /** The workspace whose shared broker runs the review (a worktree cwd otherwise gets its own). */
@@ -187,15 +185,13 @@ export async function runAppServerReview(
     emitProgress(options.onProgress, `Thread ready (${sourceThreadId}).`, 'starting', {
       threadId: sourceThreadId,
     });
-    const delivery = options.delivery ?? 'inline';
-
     const turnState = await captureTurn(
       client,
       sourceThreadId,
       () =>
         client.request('review/start', {
           threadId: sourceThreadId,
-          delivery,
+          delivery: 'inline',
           target: options.target as ReviewTarget,
         }),
       {
@@ -203,9 +199,6 @@ export async function runAppServerReview(
         onResponse(response, state) {
           if (response.reviewThreadId) {
             state.threadIds.add(response.reviewThreadId);
-            if (delivery === 'detached') {
-              state.threadId = response.reviewThreadId;
-            }
           }
         },
       },

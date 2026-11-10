@@ -663,6 +663,7 @@ export function completeTurn(
     // on an inferred completion gets honest empty values, not undefined.
     state.finalTurn = {
       id: state.turnId ?? 'inferred-turn',
+      rootTurnId: null,
       status: 'completed',
       items: [],
       itemsView: 'notLoaded',

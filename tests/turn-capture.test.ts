@@ -595,6 +595,7 @@ test('completeTurn resolves the completion promise exactly once', async () => {
   const inferredState = await inferred.completion;
   assert.deepEqual(inferredState.finalTurn, {
     id: 'inferred-turn',
+    rootTurnId: null,
     status: 'completed',
     items: [],
     itemsView: 'notLoaded',
