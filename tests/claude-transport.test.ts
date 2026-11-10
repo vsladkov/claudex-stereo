@@ -111,8 +111,8 @@ test('the availability and auth probes read the fake CLI through the transport b
   const availability = getClaudeAvailability(makeTempDir(), { env });
   assert.deepEqual(availability, {
     available: true,
-    detail: '2.1.281 (Claude Code)',
-    version: '2.1.281',
+    detail: '2.1.321 (Claude Code)',
+    version: '2.1.321',
     binary,
   });
   const auth = getClaudeAuthStatus(makeTempDir(), { env });
@@ -133,7 +133,7 @@ test('the availability and auth probes read the fake CLI through the transport b
   const old = getClaudeAvailability(makeTempDir(), { env: fakeClaudeBin('old-version').env });
   assert.equal(old.available, false);
   assert.equal(old.version, '2.1.200');
-  assert.match(old.detail, /Claude roles need Claude Code 2\.1\.281 or newer/);
+  assert.match(old.detail, /Claude roles need Claude Code 2\.1\.321 or newer/);
 });
 
 test('the served model is the requested family, not an auxiliary call that spent more', () => {
@@ -175,7 +175,7 @@ function answering(stdout: string): RunCommandFn {
   });
 }
 
-function binaryFor(env: NodeJS.ProcessEnv, answer = '2.1.281 (Claude Code)\n'): string {
+function binaryFor(env: NodeJS.ProcessEnv, answer = '2.1.321 (Claude Code)\n'): string {
   return probeClaudeBinary({ env, run: answering(answer) }).binary;
 }
 
@@ -199,14 +199,14 @@ test('probeClaudeBinary takes CLAUDE_CODE_EXECPATH only when --version names Cla
     assert.equal(binaryFor({ CLAUDE_CODE_EXECPATH: execPath }, 'v24.1.0\n'), 'claude', name);
   }
   // A native install is named by its version, and answers as Claude Code.
-  const native = path.join(makeTempDir(), '2.1.281');
+  const native = path.join(makeTempDir(), '2.1.321');
   assert.equal(binaryFor({ CLAUDE_CODE_EXECPATH: native }), native);
   // The answer that picked the binary is the one the probe returns.
   const probe = probeClaudeBinary({
     env: { CLAUDE_CODE_EXECPATH: native },
-    run: answering('2.1.281 (Claude Code)\n'),
+    run: answering('2.1.321 (Claude Code)\n'),
   });
-  assert.equal(probe.version.stdout, '2.1.281 (Claude Code)\n');
+  assert.equal(probe.version.stdout, '2.1.321 (Claude Code)\n');
 });
 
 // ---------------------------------------------------------------------------

@@ -364,7 +364,7 @@ export const ASTRA_TIERS = 'low, medium, high, xhigh, max, ultra';
 // ---- Claude fixtures (the fake `claude` as the setup, doctor, and render
 // tests describe it, so one identity change lands in one place) ----
 
-export const FAKE_CLAUDE_VERSION = '2.1.281';
+export const FAKE_CLAUDE_VERSION = '2.1.321';
 
 // What the availability and auth probes report for the fake CLI.
 export function claudeProbeFixture(): { availability: ClaudeAvailability; auth: ClaudeAuthStatus } {

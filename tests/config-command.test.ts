@@ -32,6 +32,8 @@ writeCodexCatalogCache(accountCatalogModels(), { fetchedAt: '2026-09-24T00:00:00
 
 const builtIn = (flag: string) =>
   ROLE_DEFINITIONS.find((definition) => definition.flag === flag)?.builtInSelection as string;
+const builtInEffort = (flag: string) =>
+  ROLE_DEFINITIONS.find((definition) => definition.flag === flag)?.builtInEffort ?? null;
 
 function runConfig(workspace: string, args: string[], env?: NodeJS.ProcessEnv) {
   return run(process.execPath, [SCRIPT, 'config', '--cwd', workspace, ...args], {
@@ -89,7 +91,7 @@ test('config sets, reads, renders, and clears role defaults without losing other
   );
   assert.ok(
     rendered.stdout.includes(
-      `\n- plan-reviewer: not set → ${reviewerModel} (effort ${defaultModelEffort(reviewerModel, { catalog })}, built-in ${builtIn('plan-reviewer')})\n`,
+      `\n- plan-reviewer: not set → ${reviewerModel} (effort ${builtInEffort('plan-reviewer') ?? defaultModelEffort(reviewerModel, { catalog })}, built-in ${builtIn('plan-reviewer')})\n`,
     ),
     rendered.stdout,
   );
@@ -284,7 +286,7 @@ test('config renders every version each runtime knows, as text only', () => {
   assert.match(
     payload.rendered,
     new RegExp(
-      String.raw`\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- claude:opus → ${claudeModelId('opus', opus.version)} \(effort ${opus.effort}; also [^)]+\)\n[\s\S]*- claude:haiku → ${claudeModelId('haiku', haiku.version)} \(no effort\)\n- codex:astra → gpt-6-astra \(effort xhigh\)\n- codex:luna → gpt-6-luna \(effort xhigh; also 5\.6 xhigh\)\n- codex:sol → gpt-6-sol \(effort xhigh; also 5\.6 xhigh\)\n- codex:terra → gpt-5\.6-terra \(effort xhigh\)\n`,
+      String.raw`\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- claude:opus → ${claudeModelId('opus', opus.version)} \(effort ${opus.effort}; also [^)]+\)\n[\s\S]*- claude:haiku → ${claudeModelId('haiku', haiku.version)} \(effort ${haiku.effort}; also 4\.5 no effort\)\n- codex:astra → gpt-6-astra \(effort xhigh\)\n- codex:luna → gpt-6-luna \(effort xhigh; also 5\.6 xhigh\)\n- codex:sol → gpt-6-sol \(effort xhigh; also 5\.6 xhigh\)\n- codex:terra → gpt-5\.6-terra \(effort xhigh\)\n`,
     ),
   );
 });
@@ -320,12 +322,12 @@ test('config warns for each role whose built-in default the cached catalog lacks
   assert.equal(covered.status, 0, covered.stderr);
   assert.deepEqual(JSON.parse(covered.stdout).warnings, [missing('implementation reviewer')]);
 });
-test('a haiku effort is refused at config time; a Codex tier the catalog lacks is stored with a warning', () => {
+test('a Haiku 4.5 effort is refused at config time; a Codex tier the catalog lacks is stored with a warning', () => {
   const workspace = makeTempDir();
-  // Haiku takes no effort, so every model-less launch of this pair would fail.
+  // Haiku 4.5 takes no effort, so every model-less launch of this pair would fail.
   const set = runConfig(workspace, [
     '--implementer',
-    'claude:haiku',
+    'claude:haiku-4.5',
     '--implementer-effort',
     'high',
     '--json',
@@ -333,7 +335,7 @@ test('a haiku effort is refused at config time; a Codex tier the catalog lacks i
   assert.equal(set.status, 1);
   assert.match(
     errorOf(set),
-    /^claude:haiku takes no effort \(the model rejects the parameter\); drop --implementer-effort high for claude-haiku-\S+\.$/,
+    /^claude-haiku-4-5 takes no effort \(the model rejects the parameter\); drop --implementer-effort high\.$/,
   );
   assert.equal(fs.existsSync(resolveStateFile(workspace)), false, 'nothing was stored');
   // So is a tier a Claude version lacks: the 4.6 generation has no xhigh.

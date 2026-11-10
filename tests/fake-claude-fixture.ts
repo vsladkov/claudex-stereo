@@ -88,7 +88,7 @@ function parseArgs(argv) {
 
 const argv = process.argv.slice(2);
 if (argv[0] === "--version" || argv[0] === "-v") {
-  process.stdout.write(BEHAVIOR === "old-version" ? "2.1.200 (Claude Code)\\n" : "2.1.281 (Claude Code)\\n");
+  process.stdout.write(BEHAVIOR === "old-version" ? "2.1.200 (Claude Code)\\n" : "2.1.321 (Claude Code)\\n");
   process.exit(0);
 }
 if (argv[0] === "auth" && argv[1] === "status") {

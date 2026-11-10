@@ -84,9 +84,9 @@ Continuation never crosses command runs except through durable state that stores
 
 A delta is never gated by the model that produced it, compared by resolved id — the `model` each
 role's dry run prints, never the selection as written. `/stereo:implement` and `/stereo:quick`
-substitute `claude:fable-5.1` when the built-in default reviewer ("Effort") equals the implementer —
-only a Codex implementer can match it — and call out a same-model reviewer that a flag or a
-workspace default selected as self-review in the recap and the final report. "Implementation
+substitute the fallback reviewer ("Effort") when the built-in default reviewer equals the
+implementer — only a Codex implementer can match it — and call out a same-model reviewer that a flag
+or a workspace default selected as self-review in the recap and the final report. "Implementation
 preflight" applies the rule, between the dry runs and the pins. `/stereo:tournament` is the one
 exception: its one shared reviewer judges every contestant in independent fresh reviews, so the
 comparison table calls out a contestant that shares the reviewer's resolved id as self-review
@@ -95,9 +95,8 @@ instead of substituting a reviewer.
 ## Effort
 
 The built-in role defaults (`ROLE_DEFINITIONS` in the plugin's `src/models/role-defaults.ts`) pin
-a version and name no effort: `claude:fable-5.1` for the planner, `codex:astra-6` (GPT-6 Astra)
-for the plan reviewer and the implementation reviewer, and `claude:opus-5.5` for the implementer,
-each at its version's default effort (`xhigh` for all four today).
+a version and the effort `high`: `claude:fable-5.2` for the planner, `codex:astra-6` (GPT-6 Astra)
+for the plan reviewer and the implementation reviewer, and `claude:opus-5.5` for the implementer.
 
 A companion role run takes the role's effort flag; else the role default's effort, when the run
 uses that default's model (compared by resolved id) and the default carries one; else the
@@ -107,11 +106,15 @@ effort as the flag's value, else as `model default` with the effort its dry run 
 selections"); once a job has run, report the effort it applied, `storedJob.result.effort` (null
 when none).
 
+The fallback reviewer is `claude:fable-5.2`: the "Same-model rule" substitute and
+`/stereo:tournament`'s built-in reviewer. It is no role default, so it runs at its version's default
+effort (`high` today), like any other selection.
+
 The pair commands take no command-wide `--effort`: reject it as an unknown flag and name the role
 effort flags. Claude accepts `low`, `medium`, `high`, `xhigh`, `max`; Codex accepts `none`,
 `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. A role effort flag is valid only when
 its role runs in the selected mode on the companion: reject it for an inactive role, for
-`claude:session`, and for `claude:haiku`, which takes no effort. The companion refuses, before any
+`claude:session`, and for `claude:haiku-4.5`, which takes no effort. The companion refuses, before any
 job record, an effort the resolved model does not take — a launch error ("Launch errors"). Never
 translate an effort into an inline-session control (`ultrathink` applies to the main turn only).
 

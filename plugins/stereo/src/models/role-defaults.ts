@@ -35,9 +35,8 @@ export interface RoleDefinition {
   builtInSelection: string;
   /**
    * The effort the role runs its default model at, when the role should
-   * differ from the model; null (every built-in today) means the version's
-   * own default effort from the model table. An extension point: set it to
-   * give a role its own tier without a version row.
+   * differ from the model (every built-in runs at `high` today); null means
+   * the version's own default effort from the model table.
    */
   builtInEffort: ReasoningEffort | null;
 }
@@ -49,8 +48,8 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     effortFlag: 'planner-effort',
     label: 'planner',
     allowsClaudeSession: true,
-    builtInSelection: 'claude:fable-5.1',
-    builtInEffort: null,
+    builtInSelection: 'claude:fable-5.2',
+    builtInEffort: 'high',
   },
   {
     key: 'planReviewer',
@@ -59,7 +58,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: 'plan reviewer',
     allowsClaudeSession: true,
     builtInSelection: 'codex:astra-6',
-    builtInEffort: null,
+    builtInEffort: 'high',
   },
   {
     key: 'implementer',
@@ -68,7 +67,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: 'implementer',
     allowsClaudeSession: false,
     builtInSelection: 'claude:opus-5.5',
-    builtInEffort: null,
+    builtInEffort: 'high',
   },
   {
     key: 'implementationReviewer',
@@ -77,7 +76,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     label: 'implementation reviewer',
     allowsClaudeSession: true,
     builtInSelection: 'codex:astra-6',
-    builtInEffort: null,
+    builtInEffort: 'high',
   },
 ];
 
@@ -211,7 +210,7 @@ export function resolveRoleDefault(
   // A stored effort belongs to the stored model's ladder; alone, it rides the
   // built-in. Beside an inline selection it is inert, so it only has to be a
   // tier some ladder names (the Codex ladder is the superset). Beside a Claude
-  // version that takes no effort (Haiku) it would refuse every launch.
+  // version that takes no effort (Haiku 4.5) it would refuse every launch.
   if (storedEffort) {
     const effortSource = options.effortSource ?? 'the stored workspace effort';
     const route: ModelRuntime =

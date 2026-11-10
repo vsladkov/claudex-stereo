@@ -37,8 +37,9 @@ Parse all arguments per "Selection and effort parsing" before loading state, the
   `--implementer`, reject it, name the default lineup, and point to an explicit lineup with paired
   efforts or to `/stereo:config --implementer-effort`.
 - `--implementation-reviewer <model>` selects the one shared implementation reviewer, resolved as
-  the flag, else the workspace `implementationReviewer` default, else `claude:fable-5.1` (this
-  command's own built-in). `--implementation-reviewer-effort <effort>` sets its effort.
+  the flag, else the workspace `implementationReviewer` default, else the fallback reviewer
+  ("Effort"; this command's own built-in). `--implementation-reviewer-effort <effort>` sets its
+  effort.
 - `--slot <name>` selects the stored plan slot and defaults to `default`.
 - `--resume` re-enters the recorded incomplete tournament; the record owns the lineup, reviewer,
   every effort, and the plan slot. Reject `--implementer`, `--implementer-effort`,

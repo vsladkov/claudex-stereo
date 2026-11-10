@@ -302,7 +302,7 @@ test('a resume that dies before its init still reports the session it resumed', 
     entry,
     [
       'if (process.argv[2] === "--version") {',
-      '  process.stdout.write("2.1.281 (Claude Code)\\n");',
+      '  process.stdout.write("2.1.321 (Claude Code)\\n");',
       '} else {',
       '  process.exit(3);',
       '}',

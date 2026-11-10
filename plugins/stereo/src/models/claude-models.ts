@@ -158,7 +158,7 @@ export function normalizeServedModelId(servedModel: string): string {
   return servedModel.trim().replace(/-\d{8}(?=$|\[)/, '');
 }
 
-// A version the table gives no effort (Haiku: the model rejects the
+// A version the table gives no effort (Haiku 4.5: the model rejects the
 // parameter), or an effort a version lacks (the 4.6 generation has no xhigh),
 // would fail inside the CLI after the job record exists; refuse it here.
 // `source` names the effort as normalizeClaudeEffort does.
@@ -173,7 +173,7 @@ export function assertClaudeEffortAllowed(
   }
   if (row.effort === null) {
     throw new Error(
-      `claude:${row.family} takes no effort (the model rejects the parameter); drop ${source} ${effort} for ${modelArg}.`,
+      `${modelArg} takes no effort (the model rejects the parameter); drop ${source} ${effort}.`,
     );
   }
   if (row.efforts && !row.efforts.includes(effort as ClaudeEffort)) {

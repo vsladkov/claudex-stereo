@@ -322,7 +322,7 @@ test('adversarial-review passes explicit and named-model default effort only on 
   });
   assert.equal(codexDefault.status, 0, codexDefault.stderr);
   // No model: the implementation reviewer's role default (its built-in) at
-  // its version default, as plan-review runs the plan reviewer's.
+  // its built-in effort, as plan-review runs the plan reviewer's.
   const builtIn = ROLE_DEFINITIONS.find((role) => role.flag === 'implementation-reviewer')!;
   const builtInModel = resolveCodexSelection(
     parseCodexSelection(builtIn.builtInSelection)!,
@@ -330,7 +330,10 @@ test('adversarial-review passes explicit and named-model default effort only on 
   );
   const codexDefaultTurn = (await waitForFakeState(binDir, 'lastTurnStart')).lastTurnStart;
   assert.equal(codexDefaultTurn.model, builtInModel);
-  assert.equal(codexDefaultTurn.effort, defaultModelEffort(builtInModel, { catalog }));
+  assert.equal(
+    codexDefaultTurn.effort,
+    builtIn.builtInEffort ?? defaultModelEffort(builtInModel, { catalog }),
+  );
 });
 
 test('review --native rejects effort before normalization and companion review commands reject --pr', () => {

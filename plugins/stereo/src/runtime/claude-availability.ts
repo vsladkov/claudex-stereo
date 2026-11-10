@@ -6,9 +6,10 @@ import { compareModelVersions } from '../models/model-table.ts';
 import { recordLike } from '../shared/json.ts';
 import { probeClaudeBinary } from '../transport/claude-cli.ts';
 
-// `--agents <file>` with -p (the way each run receives its role definition)
-// arrived in this release.
-export const CLAUDE_MIN_VERSION = '2.1.281';
+// The first release that offers Fable 5.2, the planner's built-in default
+// (`--agents <file>` with -p, the way each run receives its role definition,
+// arrived earlier, in 2.1.281).
+export const CLAUDE_MIN_VERSION = '2.1.321';
 
 export interface ClaudeAvailability extends BinaryAvailability {
   version: string | null;

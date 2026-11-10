@@ -421,7 +421,7 @@ test('setup omits the Codex catalog when Codex is not installed', async () => {
 test('setup reports the Claude CLI, its login, and the Claude version table', async () => {
   const report = await buildSetupReport(makeTempDir(), [], setupDeps(authStatus()));
   const rendered = renderSetupReport(report);
-  assert.match(rendered, /- claude: 2\.1\.281 \(Claude Code\)\n/);
+  assert.match(rendered, /- claude: 2\.1\.321 \(Claude Code\)\n/);
   assert.match(rendered, /- claude auth: Claude login active for fake@example\.com \(team\)\n/);
   assert.equal(
     report.nextSteps.some((step) => step.includes('Claude roles')),
@@ -432,7 +432,7 @@ test('setup reports the Claude CLI, its login, and the Claude version table', as
   old.getClaudeAvailability = () => ({
     available: false,
     detail:
-      '2.1.200 (Claude Code); Claude roles need Claude Code 2.1.281 or newer (run `claude update`)',
+      '2.1.200 (Claude Code); Claude roles need Claude Code 2.1.321 or newer (run `claude update`)',
     version: '2.1.200',
     binary: 'claude',
   });
@@ -440,7 +440,7 @@ test('setup reports the Claude CLI, its login, and the Claude version table', as
   assert.equal(oldReport.claudeAuth, null);
   assert.match(
     oldReport.nextSteps.find((step) => step.startsWith('Claude roles')) ?? '',
-    /Claude roles \(claude:<family>\[-<version>\]\) are unavailable: 2\.1\.200 .* Install or update Claude Code to 2\.1\.281 or newer; Codex roles are unaffected\./,
+    /Claude roles \(claude:<family>\[-<version>\]\) are unavailable: 2\.1\.200 .* Install or update Claude Code to 2\.1\.321 or newer; Codex roles are unaffected\./,
   );
   assert.equal(oldReport.ready, false, 'the built-in planner and implementer are Claude roles');
   assert.match(renderSetupReport(oldReport), /Status: needs attention/);

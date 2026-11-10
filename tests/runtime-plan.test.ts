@@ -67,14 +67,14 @@ registerBrokerReaping();
 const ACCOUNT_CATALOG = catalogFixture(accountCatalogModels());
 const codexEffort = (model: string): string | null =>
   defaultModelEffort(model, { catalog: ACCOUNT_CATALOG });
-// What a model-less plan-review runs: the plan reviewer's built-in at its version default.
+// What a model-less plan-review runs: the plan reviewer's built-in, at its
+// built-in effort where it names one, else at its version default.
+const PLAN_REVIEWER = ROLE_DEFINITIONS.find((role) => role.flag === 'plan-reviewer')!;
 const PLAN_REVIEWER_MODEL = resolveCodexSelection(
-  parseCodexSelection(
-    ROLE_DEFINITIONS.find((role) => role.flag === 'plan-reviewer')!.builtInSelection,
-  )!,
+  parseCodexSelection(PLAN_REVIEWER.builtInSelection)!,
   ACCOUNT_CATALOG,
 );
-const PLAN_REVIEWER_EFFORT = codexEffort(PLAN_REVIEWER_MODEL);
+const PLAN_REVIEWER_EFFORT = PLAN_REVIEWER.builtInEffort ?? codexEffort(PLAN_REVIEWER_MODEL);
 
 function storedPlan(overrides: Partial<StoredPairPlanState> = {}): StoredPairPlanState {
   return {

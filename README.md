@@ -53,9 +53,9 @@ thread reservations, plus an optional stop-time review gate.
   example `/stereo:config --plan-reviewer codex:gpt-5.6-sol --implementation-reviewer codex:gpt-5.6-sol`,
   or pass the role flags per run.
 - **Node.js 24 or later** (the plugin runs its TypeScript sources natively via Node's type stripping)
-- **Claude Code 2.1.281 or later, logged in, for Claude roles.** Named Claude selections
+- **Claude Code 2.1.321 or later, logged in, for Claude roles.** Named Claude selections
   (`claude:<family>[-<version>]`) run as headless `claude -p` sessions of the Claude Code CLI the
-  plugin runs inside. The default planner (`claude:fable-5.1`) and implementer
+  plugin runs inside. The default planner (`claude:fable-5.2`) and implementer
   (`claude:opus-5.5`) are Claude roles and the default review gates (`codex:astra-6`) are Codex
   roles, so both runtimes must be ready for the defaults to work end to end. `/stereo:setup`
   checks the CLI's version and login; if either fails, use the
@@ -180,12 +180,12 @@ Every multi-role command uses role-named model flags—`--planner`, `--plan-revi
 
 Defaults with no role flags, shared by `/stereo:plan`, `/stereo:implement`, and `/stereo:quick`:
 
-| Role                    | Built-in default (model and version) | Runs                           | Effort                    |
-| ----------------------- | ------------------------------------ | ------------------------------ | ------------------------- |
-| Planner                 | `claude:fable-5.1`                   | Fable 5.1 (`claude-fable-5-1`) | `xhigh` (version default) |
-| Plan reviewer           | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `xhigh` (version default) |
-| Implementer             | `claude:opus-5.5`                    | Opus 5.5 (`claude-opus-5-5`)   | `xhigh` (version default) |
-| Implementation reviewer | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `xhigh` (version default) |
+| Role                    | Built-in default (model and version) | Runs                           | Effort                |
+| ----------------------- | ------------------------------------ | ------------------------------ | --------------------- |
+| Planner                 | `claude:fable-5.2`                   | Fable 5.2 (`claude-fable-5-2`) | `high` (role default) |
+| Plan reviewer           | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `high` (role default) |
+| Implementer             | `claude:opus-5.5`                    | Opus 5.5 (`claude-opus-5-5`)   | `high` (role default) |
+| Implementation reviewer | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `high` (role default) |
 
 Each built-in default pins a version, so it moves only through a plugin release. Override a role per
 run with its flags or per workspace with [`/stereo:config`](#stereoconfig). Families, versions, and
@@ -299,13 +299,13 @@ model versions each runtime knows, a family's other versions newest first:
 
 ```text
 - implementer: claude:opus-4.8 (effort high) → claude-opus-4-8 (effort high)
-- plan-reviewer: not set → gpt-6-astra (effort xhigh, built-in codex:astra-6)
-- claude:opus → claude-opus-5-5 (effort xhigh; also 4.8 xhigh)
+- plan-reviewer: not set → gpt-6-astra (effort high, built-in codex:astra-6)
+- claude:opus → claude-opus-5-5 (effort high; also 4.8 xhigh)
 ```
 
 A change that would leave a role's stored entry invalid is refused before anything is stored. A
 hand-edited entry that is invalid (a model the grammar refuses, an effort off its model's ladder or
-on a version that takes none, such as Haiku) is reported, marked `[invalid]`, and ignored whole, so
+on a version that takes none, Haiku 4.5) is reported, marked `[invalid]`, and ignored whole, so
 the built-in runs instead. What only a launch can judge—a Codex selection the cached catalog cannot
 resolve, or a Codex tier the catalog does not list for that model—is stored with a warning, and the
 launch refuses it naming the default.
@@ -499,9 +499,9 @@ non-Node repositories.
 
 Implementation-review rounds are stateless on both runtimes: every fix-loop round is a fresh,
 fully briefed review. When the resolved implementer and implementation reviewer are the same model
-and the reviewer came from the built-in default, the command substitutes `claude:fable-5.1` so a
-delta is never gated by the model that produced it; an explicit or workspace-configured
-self-review is honored but called out.
+and the reviewer came from the built-in default, the command substitutes `claude:fable-5.2` at
+`high` so a delta is never gated by the model that produced it; an explicit or
+workspace-configured self-review is honored but called out.
 
 Examples:
 
@@ -637,7 +637,8 @@ committed or pushed.
 Runs one already-approved stored plan through 2 or 3 independent implementers. With no
 `--implementer` flags, the default lineup uses the workspace `implementer` model for `c1` when it is
 valid and Codex-routed, otherwise `codex:astra-6`; `c2` is `claude:opus-5.5`. Each contestant's
-effort follows the [effort rules](#effort-rules) as an implementer—`xhigh` for both defaults—and
+effort follows the [effort rules](#effort-rules) as an implementer—`xhigh` for `codex:astra-6`
+and `high` for `claude:opus-5.5`, the implementer's built-in default—and
 a paired `--implementer-effort` overrides it. Each contestant starts in its own detached
 temporary worktree at the same `HEAD`, so the main working tree stays untouched while contestants
 run and their evidence is reviewed. Two contestants are the minimum for a comparison; three is the
@@ -649,8 +650,8 @@ Contestants may be Codex selections or named Claude selections (`claude:<family>
 contestant runs as a concurrent background job inside its own worktree, with a job id that
 `/stereo:status` lists and `/stereo:cancel` can stop. `--implementer-effort` pairs positionally
 with the `--implementer` flags. The one implementation reviewer resolves as the explicit flag,
-then the workspace `implementationReviewer` default, then `claude:fable-5.1`, and gives each
-contestant a fresh single-round review with no contestant or reviewer history carried into the
+then the workspace `implementationReviewer` default, then `claude:fable-5.2` at `high`, and gives
+each contestant a fresh single-round review with no contestant or reviewer history carried into the
 next one: a companion reviewer reviews contestants concurrently, an inline `claude:session`
 reviewer one at a time. A review is marked self-review when the reviewer resolves to the
 contestant's model.
@@ -865,7 +866,7 @@ and logged in for Claude roles.
 If Codex is missing and npm is available, it can offer to install Codex for you.
 
 The report opens with `# Stereo Setup` and a `Status:` line that reads `ready` or
-`needs attention`; a missing, too-old (before 2.1.281), or logged-out Claude Code CLI turns it to
+`needs attention`; a missing, too-old (before 2.1.321), or logged-out Claude Code CLI turns it to
 `needs attention`, because the built-in planner and implementer are Claude roles, while Codex roles
 stay usable. The report covers:
 
@@ -876,7 +877,7 @@ stay usable. The report covers:
   readiness
 - a `Models` listing: every Claude version the plugin knows and every Codex family the account's
   catalog lists (refreshed on every setup run), each with the id its alias resolves to and its
-  default effort (`claude:opus → claude-opus-5-5 (effort xhigh; also 4.8 xhigh)`), plus a next step
+  default effort (`claude:opus → claude-opus-5-5 (effort high; also 4.8 xhigh)`), plus a next step
   for any role default the catalog cannot run
 - the session runtime, thread reservations it could neither read nor remove (the check removes
   what a dead run left behind), review-gate state, and configured role defaults
@@ -1002,7 +1003,7 @@ names never resolves the implementer.
 
 | Situation                        | Change from the defaults                                                                 |
 | -------------------------------- | ---------------------------------------------------------------------------------------- |
-| Command-heavy or Codex-side work | `--implementer codex:astra-6`, which moves the implementation gate to `claude:fable-5.1` |
+| Command-heavy or Codex-side work | `--implementer codex:astra-6`, which moves the implementation gate to `claude:fable-5.2` |
 | Cheapest implementation gate     | `--implementation-reviewer claude:session`                                               |
 
 For most work, use the defaults:
@@ -1100,21 +1101,23 @@ plugin always passes Claude Code the exact id, never a bare alias:
 
 | Version    | Selection                                      | Model argument      | Default effort |
 | ---------- | ---------------------------------------------- | ------------------- | -------------- |
-| Opus 5.5   | `claude:opus` (alias) or `claude:opus-5.5`     | `claude-opus-5-5`   | `xhigh`        |
+| Opus 5.5   | `claude:opus` (alias) or `claude:opus-5.5`     | `claude-opus-5-5`   | `high`         |
 | Opus 5     | `claude:opus-5`                                | `claude-opus-5`     | `xhigh`        |
 | Opus 4.8   | `claude:opus-4.8`                              | `claude-opus-4-8`   | `xhigh`        |
 | Opus 4.7   | `claude:opus-4.7`                              | `claude-opus-4-7`   | `xhigh`        |
 | Opus 4.6   | `claude:opus-4.6`                              | `claude-opus-4-6`   | `high`         |
-| Fable 5.1  | `claude:fable` (alias) or `claude:fable-5.1`   | `claude-fable-5-1`  | `xhigh`        |
+| Fable 5.2  | `claude:fable` (alias) or `claude:fable-5.2`   | `claude-fable-5-2`  | `high`         |
+| Fable 5.1  | `claude:fable-5.1`                             | `claude-fable-5-1`  | `xhigh`        |
 | Fable 5    | `claude:fable-5`                               | `claude-fable-5`    | `xhigh`        |
 | Sonnet 5.5 | `claude:sonnet` (alias) or `claude:sonnet-5.5` | `claude-sonnet-5-5` | `xhigh`        |
 | Sonnet 5   | `claude:sonnet-5`                              | `claude-sonnet-5`   | `xhigh`        |
 | Sonnet 4.6 | `claude:sonnet-4.6`                            | `claude-sonnet-4-6` | `high`         |
-| Haiku 4.5  | `claude:haiku` (alias) or `claude:haiku-4.5`   | `claude-haiku-4-5`  | none           |
+| Haiku 5.5  | `claude:haiku` (alias) or `claude:haiku-5.5`   | `claude-haiku-5-5`  | `max`          |
+| Haiku 4.5  | `claude:haiku-4.5`                             | `claude-haiku-4-5`  | none           |
 
 A pin may separate its version's segments with `.` or `-` (`claude:opus-5-5` is `claude:opus-5.5`).
 A version the table does not know, a misspelled family, or any other text after `claude:` is
-rejected before launch, naming the families or versions the plugin knows. Haiku takes no effort,
+rejected before launch, naming the families or versions the plugin knows. Haiku 4.5 takes no effort,
 and Opus 4.6 and Sonnet 4.6 have no `xhigh`: an effort flag a version does not take, or such an
 effort stored beside it, is rejected before any job record. A new Claude generation
 reaches `claude:<family>` with the plugin release that adds it; the built-in planner and
@@ -1130,30 +1133,31 @@ command-wide `--effort` on `/stereo:plan`, `/stereo:implement`, `/stereo:quick`,
 
 1. The role effort flag, when given.
 2. Otherwise the role default's effort, when the run uses that default's model and the default
-   carries an effort. The default is the workspace's stored default when it names a model, else
-   the built-in, which names no effort—an effort stored with `/stereo:config` without a model
-   applies to the built-in model. Models compare by the id they resolve to, so
-   `--implementer claude:opus` matches a `claude:opus-5.5` default while Opus 5.5 is the newest
-   Opus, and `--implementer claude:opus-4.8` does not.
-3. Otherwise the selected version's default effort. A Claude version defaults to `xhigh`, except
-   Opus 4.6 and Sonnet 4.6, which have no `xhigh` and default to `high`, and Haiku 4.5, which
-   takes none. A Codex version defaults to `xhigh`, or the highest tier below it that the catalog
-   lists for that model. Third-party provider models take none.
+   carries an effort. The default is the workspace's stored default when it names a model, else the
+   built-in, which carries `high` for every role—an effort stored with `/stereo:config` without a
+   model replaces the built-in effort on the built-in model. Models compare by the id they resolve
+   to, so `--implementer claude:opus` matches a `claude:opus-5.5` default while Opus 5.5 is the
+   newest Opus, and `--implementer claude:opus-4.8` does not.
+3. Otherwise the selected version's default effort. Opus 5.5 and Fable 5.2 default to `high`, and
+   Haiku 5.5 to `max`. Every other Claude version defaults to `xhigh`, except Opus 4.6 and Sonnet
+   4.6, which have no `xhigh` and default to `high`, and Haiku 4.5, which takes none. A Codex
+   version defaults to `xhigh`, or the highest tier below it that the catalog lists for that model.
+   Third-party provider models take none.
 
 A stored effort therefore follows its stored model: after
 `/stereo:config --implementer claude:opus-4.8 --implementer-effort high`, the implementer runs Opus
-4.8 at `high`, while a run with `--implementer claude:opus-5.5` runs Opus 5.5 at `xhigh`.
-The built-in role defaults all run at `xhigh`; lower it per workspace or per run where you want
-faster, cheaper turns. `/stereo:rescue` and the stop-time review gate run no role, so without
-`--effort` they use
-Codex's own default.
+4.8 at `high`, while a run with `--implementer claude:opus-5` runs Opus 5 at its own default,
+`xhigh`. With nothing stored, all four built-in role defaults run at `high`; change any of them per
+workspace or per run. The fallback reviewer—`claude:fable-5.2`, the same-model substitute and the
+tournament's default reviewer—runs at Fable 5.2's default, `high`. `/stereo:rescue` and the
+stop-time review gate run no role, so without `--effort` they use Codex's own default.
 
 Each runtime validates its own ladder. Codex accepts `none`, `minimal`, `low`, `medium`, `high`,
 `xhigh`, `max`, and `ultra`; `ultra` is the tier above `max` on the models whose catalog entry lists
-it (`/stereo:setup` shows each model's tiers), and no default reaches `max` or `ultra`. Claude
+it (`/stereo:setup` shows each model's tiers), and no Codex default reaches `max` or `ultra`. Claude
 accepts `low`, `medium`, `high`, `xhigh`, and `max`. An explicit or stored effort the resolved
-model does not take—a Haiku effort, `xhigh` on Opus 4.6 or Sonnet 4.6, or a Codex tier its catalog
-entry does not list—is refused before any job record. A role effort flag is rejected for
+model does not take—a Haiku 4.5 effort, `xhigh` on Opus 4.6 or Sonnet 4.6, or a Codex tier its
+catalog entry does not list—is refused before any job record. A role effort flag is rejected for
 `claude:session`, which runs inline and
 takes no effort, and Stereo never translates an effort into an inline-session control
 (`ultrathink` is a main-turn keyword only).
@@ -1366,7 +1370,7 @@ Claude implementer running with `/stereo:config --claude-sandbox on` uses the sa
 sandbox and needs the same setting.
 
 **Claude roles are unavailable: the Claude Code CLI is too old or logged out.** Named Claude
-selections need Claude Code 2.1.281 or newer with an active login (or `ANTHROPIC_API_KEY`,
+selections need Claude Code 2.1.321 or newer with an active login (or `ANTHROPIC_API_KEY`,
 `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, or
 `CLAUDE_CODE_USE_VERTEX` set, which `/stereo:setup` reports as the auth in use; an `apiKeyHelper`
 in your user settings also reaches every role); the default planner and implementer depend on

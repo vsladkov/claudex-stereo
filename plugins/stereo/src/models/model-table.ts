@@ -28,20 +28,22 @@ const WITHOUT_XHIGH: readonly CatalogEffort[] = ['low', 'medium', 'high', 'max']
 // Add a row to teach the plugin a version: a new Claude generation reaches
 // `claude:<family>` the moment its row is the newest one, and a new Claude
 // family is one row too. The Claude rows are the models Claude Code offers.
-// Haiku takes no effort at all (the model rejects the parameter). Codex rows
+// Haiku 4.5 takes no effort at all (the model rejects the parameter). Codex rows
 // are an extension point: none ships, and a `runtime: 'codex'` row would pin
 // that catalog version's default effort.
 export const MODEL_VERSIONS: readonly ModelVersionRow[] = [
-  { runtime: 'claude', family: 'opus', version: '5.5', effort: 'xhigh' },
+  { runtime: 'claude', family: 'opus', version: '5.5', effort: 'high' },
   { runtime: 'claude', family: 'opus', version: '5', effort: 'xhigh' },
   { runtime: 'claude', family: 'opus', version: '4.8', effort: 'xhigh' },
   { runtime: 'claude', family: 'opus', version: '4.7', effort: 'xhigh' },
   { runtime: 'claude', family: 'opus', version: '4.6', effort: 'high', efforts: WITHOUT_XHIGH },
+  { runtime: 'claude', family: 'fable', version: '5.2', effort: 'high' },
   { runtime: 'claude', family: 'fable', version: '5.1', effort: 'xhigh' },
   { runtime: 'claude', family: 'fable', version: '5', effort: 'xhigh' },
   { runtime: 'claude', family: 'sonnet', version: '5.5', effort: 'xhigh' },
   { runtime: 'claude', family: 'sonnet', version: '5', effort: 'xhigh' },
   { runtime: 'claude', family: 'sonnet', version: '4.6', effort: 'high', efforts: WITHOUT_XHIGH },
+  { runtime: 'claude', family: 'haiku', version: '5.5', effort: 'max' },
   { runtime: 'claude', family: 'haiku', version: '4.5', effort: null },
 ];
 

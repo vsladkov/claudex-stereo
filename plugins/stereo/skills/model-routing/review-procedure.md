@@ -35,7 +35,7 @@ verbatim. Reject `claude:inherit`, any other `claude:*` spelling outside the gra
 
 `--effort` is validated on the selected runtime's ladder: Claude accepts `low`, `medium`, `high`,
 `xhigh`, `max`; Codex accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`.
-`claude:haiku` and `claude:session` take none. Without `--effort` the companion applies the role's
+`claude:haiku-4.5` and `claude:session` take none. Without `--effort` the companion applies the role's
 default effort, and it refuses an effort the resolved model does not take.
 
 Write focus text with the Write tool to a payload file in a temporary directory outside the

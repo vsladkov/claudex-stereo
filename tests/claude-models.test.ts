@@ -26,8 +26,8 @@ import type { ModelVersionRow } from '../plugins/stereo/src/models/model-table.t
 
 const opus = latestModelVersion('claude', 'opus') as ModelVersionRow;
 const opusId = claudeModelId('opus', opus.version);
-const haiku = latestModelVersion('claude', 'haiku') as ModelVersionRow;
-const haikuId = claudeModelId('haiku', haiku.version);
+// The one version that takes no effort.
+const haikuId = 'claude-haiku-4-5';
 const families = [
   ...new Set(MODEL_VERSIONS.filter((row) => row.runtime === 'claude').map((row) => row.family)),
 ];
@@ -189,9 +189,7 @@ test('a version the table gives no effort refuses one, naming where it came from
   ] as const) {
     assert.throws(
       () => assertClaudeEffortAllowed(haikuId, 'high', source),
-      new Error(
-        `claude:haiku takes no effort (the model rejects the parameter); ${expected} for ${haikuId}.`,
-      ),
+      new Error(`${haikuId} takes no effort (the model rejects the parameter); ${expected}.`),
     );
   }
   assert.doesNotThrow(() => assertClaudeEffortAllowed(haikuId, null));

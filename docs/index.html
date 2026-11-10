@@ -1395,7 +1395,7 @@
                 <h3>Claude drafts the plan</h3>
                 <p>
                   A contained planner explores the repository read-only.
-                  <code>claude:fable-5.1</code>
+                  <code>claude:fable-5.2</code>
                 </p>
               </div>
             </li>
@@ -1553,7 +1553,7 @@
           <div class="term">
             <div class="term-bar"><i></i><i></i><i></i>&nbsp; claude — ~/dev/api</div>
             <pre><span class="d">&gt;</span> /stereo:plan add rate limiting to the public API
-<span class="c">◆ planner claude:fable-5.1</span> <span class="d">— claude-fable-5-1 · drafting (read-only)…</span>
+<span class="c">◆ planner claude:fable-5.2</span> <span class="d">— claude-fable-5-2 · drafting (read-only)…</span>
 <span class="x">◆ plan-reviewer codex:astra-6</span> <span class="d">— gpt-6-astra · round 1: needs-revision · 3 findings</span>
 <span class="x">◆ plan-reviewer codex:astra-6</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
 <span class="ok">✓</span> plan stored <span class="d">— run /stereo:implement</span>
@@ -1873,15 +1873,15 @@
           <code>claude:opus-4.8</code> pins one; <code>claude:session</code> keeps a planner or
           reviewer inline. Everything else runs on the Codex runtime: a family from your Codex
           catalog (<code>codex:sol</code>, or <code>codex:sol-5.6</code> for one version), a raw
-          model id, or a third-party alias. The defaults run at xhigh, and
+          model id, or a third-party alias. The defaults run at high, and
           <code>/stereo:config</code> changes any role&rsquo;s model or effort per workspace.
         </p>
         <form class="console" id="rc" aria-label="Compose a pair-workflow command">
           <fieldset>
             <legend>Planner</legend>
             <label class="lc">
-              <input type="radio" name="planner" value="claude:fable-5.1" checked />
-              <span>claude:fable-5.1</span>
+              <input type="radio" name="planner" value="claude:fable-5.2" checked />
+              <span>claude:fable-5.2</span>
             </label>
             <label class="lc">
               <input type="radio" name="planner" value="claude:session" />
@@ -2017,27 +2017,27 @@
               <tbody>
                 <tr>
                   <td>Planner</td>
-                  <td><code class="cc">claude:fable-5.1</code></td>
-                  <td>Fable 5.1 (<code class="cc">claude-fable-5-1</code>)</td>
-                  <td>xhigh (version default)</td>
+                  <td><code class="cc">claude:fable-5.2</code></td>
+                  <td>Fable 5.2 (<code class="cc">claude-fable-5-2</code>)</td>
+                  <td>high (role default)</td>
                 </tr>
                 <tr>
                   <td>Plan reviewer</td>
                   <td><code class="cx">codex:astra-6</code></td>
                   <td>GPT-6 Astra (<code class="cx">gpt-6-astra</code>)</td>
-                  <td>xhigh (version default)</td>
+                  <td>high (role default)</td>
                 </tr>
                 <tr>
                   <td>Implementer</td>
                   <td><code class="cc">claude:opus-5.5</code></td>
                   <td>Opus 5.5 (<code class="cc">claude-opus-5-5</code>)</td>
-                  <td>xhigh (version default)</td>
+                  <td>high (role default)</td>
                 </tr>
                 <tr>
                   <td>Implementation reviewer</td>
                   <td><code class="cx">codex:astra-6</code></td>
                   <td>GPT-6 Astra (<code class="cx">gpt-6-astra</code>)</td>
-                  <td>xhigh (version default)</td>
+                  <td>high (role default)</td>
                 </tr>
               </tbody>
             </table>
@@ -2166,7 +2166,7 @@
             >
             or a configured custom provider — <code>/stereo:setup</code> checks runtime readiness,
             authentication, provider configuration, sandbox state, and the review gate. The default
-            pipeline also needs Claude Code 2.1.281 or newer, logged in, because Claude roles run as
+            pipeline also needs Claude Code 2.1.321 or newer, logged in, because Claude roles run as
             headless <code>claude -p</code> sessions. Anything OpenAI-backed counts against your
             Codex usage limits. Details under
             <a
@@ -2271,7 +2271,7 @@
       const rcForm = document.getElementById('rc');
       if (rcForm) {
         const defaults = {
-          planner: 'claude:fable-5.1',
+          planner: 'claude:fable-5.2',
           'plan-reviewer': 'codex:astra-6',
           implementer: 'claude:opus-5.5',
           'implementation-reviewer': 'codex:astra-6',

@@ -3,11 +3,16 @@ import test from 'node:test';
 
 import { describeRoleDefaults } from '../plugins/stereo/src/cli/launch.ts';
 import {
+  assertCodexEffortListed,
   BUILTIN_CATALOG_SNAPSHOT,
   builtinCatalog,
   writeCodexCatalogCache,
 } from '../plugins/stereo/src/models/catalog.ts';
-import { claudeModelId, parseClaudeSelection } from '../plugins/stereo/src/models/claude-models.ts';
+import {
+  assertClaudeEffortAllowed,
+  claudeModelId,
+  parseClaudeSelection,
+} from '../plugins/stereo/src/models/claude-models.ts';
 import { latestModelVersion, MODEL_VERSIONS } from '../plugins/stereo/src/models/model-table.ts';
 import type { ModelVersionRow } from '../plugins/stereo/src/models/model-table.ts';
 import {
@@ -42,10 +47,9 @@ const codexId = (selection: string) =>
   resolveCodexSelection(parseCodexSelection(selection)!, catalog);
 const opus = latestModelVersion('claude', 'opus') as ModelVersionRow;
 const opusId = claudeModelId('opus', opus.version);
-const haikuId = claudeModelId(
-  'haiku',
-  (latestModelVersion('claude', 'haiku') as ModelVersionRow).version,
-);
+// The one version that takes no effort, and the selection that pins it.
+const haikuId = 'claude-haiku-4-5';
+const haikuPin = 'claude:haiku-4.5';
 const implementerBuiltIn = definition('implementer').builtInSelection;
 const reviewerBuiltIn = definition('plan-reviewer').builtInSelection;
 
@@ -173,9 +177,11 @@ test('an invalid stored entry is ignored whole with one warning; a valid one is 
     selection: definition('planner').builtInSelection,
     source: 'built-in',
     model: claudeId(definition('planner').builtInSelection),
-    effort: defaultModelEffort(claudeId(definition('planner').builtInSelection), {
-      runtime: 'claude',
-    }),
+    effort:
+      definition('planner').builtInEffort ??
+      defaultModelEffort(claudeId(definition('planner').builtInSelection), {
+        runtime: 'claude',
+      }),
     error: null,
   });
   assert.deepEqual(unset.warnings, []);
@@ -184,15 +190,15 @@ test('an invalid stored entry is ignored whole with one warning; a valid one is 
   // An effort on a Claude version that takes none (haiku) never fits, so it
   // invalidates the entry.
   const misfit = await describeRoleDefaults({
-    implementer: { model: 'claude:haiku', effort: 'high' },
+    implementer: { model: haikuPin, effort: 'high' },
     planReviewer: { model: 'codex:astra', effort: 'minimal' },
   });
-  const haikuReason = `claude:haiku takes no effort (the model rejects the parameter); drop the stored workspace effort high for ${haikuId}.`;
+  const haikuReason = `${haikuId} takes no effort (the model rejects the parameter); drop the stored workspace effort high.`;
   assert.equal(misfit.entries[1]?.invalidReason, null);
   assert.equal(misfit.entries[2]?.invalidReason, haikuReason);
   assert.equal(misfit.launches[1]?.model, null);
   assert.deepEqual(misfit.warnings, [
-    `implementer stored model "claude:haiku" and effort "high" is invalid: ${haikuReason} The built-in default will be used.`,
+    `implementer stored model "${haikuPin}" and effort "high" is invalid: ${haikuReason} The built-in default will be used.`,
     misfit.launches[1]?.error,
   ]);
   assert.match(misfit.launches[1]?.error ?? '', /workspace default effort minimal is not a tier/);
@@ -222,10 +228,16 @@ test('every built-in role default is a pinned version that resolves against the 
   const offline = builtinCatalog();
   const snapshotIds = BUILTIN_CATALOG_SNAPSHOT.map((model) => model.id);
   for (const role of ROLE_DEFINITIONS) {
-    assert.equal(role.builtInEffort, null, `${role.flag}: the built-ins name no role effort`);
     const selection = role.builtInSelection;
     if (selection.startsWith('claude:')) {
       const modelArg = claudeId(selection);
+      const effort = role.builtInEffort;
+      if (effort) {
+        assert.doesNotThrow(
+          () => assertClaudeEffortAllowed(modelArg, effort),
+          `${role.flag}: ${selection} takes the built-in effort ${effort}`,
+        );
+      }
       assert.ok(
         MODEL_VERSIONS.some(
           (row) => row.runtime === 'claude' && claudeModelId(row.family, row.version) === modelArg,
@@ -240,6 +252,10 @@ test('every built-in role default is a pinned version that resolves against the 
       snapshotIds.includes(resolved),
       `${role.flag}: ${selection} resolved to ${resolved}, which BUILTIN_CATALOG_SNAPSHOT lacks`,
     );
+    assert.doesNotThrow(
+      () => assertCodexEffortListed(resolved, role.builtInEffort, offline),
+      `${role.flag}: ${selection} lists the built-in effort ${role.builtInEffort}`,
+    );
   }
 });
 
@@ -247,7 +263,7 @@ test('resolveRoleDefault judges one role once: selection, source, effort', () =>
   const builtIn = resolveRoleDefault('implementer', undefined);
   assert.deepEqual(
     [builtIn.selection, builtIn.source, builtIn.effort, builtIn.invalidReason],
-    [implementerBuiltIn, 'built-in', null, null],
+    [implementerBuiltIn, 'built-in', definition('implementer').builtInEffort, null],
   );
   assert.equal(builtIn.description, `the implementer's built-in default ${implementerBuiltIn}`);
 
@@ -276,14 +292,17 @@ test('resolveRoleDefault judges one role once: selection, source, effort', () =>
   });
   assert.deepEqual(
     [inline.selection, inline.source, inline.effort, inline.invalidReason],
-    [reviewerBuiltIn, 'built-in', null, null],
+    [reviewerBuiltIn, 'built-in', definition('implementation-reviewer').builtInEffort, null],
   );
 
   // An invalid entry runs the built-in with neither stored value.
   const invalid = resolveRoleDefault('implementer', {
     implementer: { model: 'claude:fabel', effort: 'high' },
   });
-  assert.deepEqual([invalid.selection, invalid.effort], [implementerBuiltIn, null]);
+  assert.deepEqual(
+    [invalid.selection, invalid.effort],
+    [implementerBuiltIn, definition('implementer').builtInEffort],
+  );
   assert.match(
     invalid.invalidWarning ?? '',
     /^implementer stored model "claude:fabel" and effort "high" is invalid: .* The built-in default will be used\.$/,
@@ -293,10 +312,12 @@ test('resolveRoleDefault judges one role once: selection, source, effort', () =>
 test('a role launch takes the effort of the role default it runs, else the version default', () => {
   const opusDefault = defaultModelEffort(opusId, { runtime: 'claude' });
   const builtInImplementer = claudeId(implementerBuiltIn);
-  // The built-in pairs carry no role effort: the version default applies.
+  // A built-in runs at its role effort where it names one, else at the
+  // version default.
   assert.equal(
     launchEffort('implementer', 'claude', builtInImplementer),
-    defaultModelEffort(builtInImplementer, { runtime: 'claude' }),
+    definition('implementer').builtInEffort ??
+      defaultModelEffort(builtInImplementer, { runtime: 'claude' }),
   );
   assert.equal(launchEffort('implementer', 'claude', haikuId), null);
 
@@ -345,9 +366,15 @@ test('a role launch takes the effort of the role default it runs, else the versi
   assert.equal(launchEffort('plan-reviewer', 'codex', codexId('codex:sol'), reviewers), 'xhigh');
   assert.equal(launchEffort('reviewer', 'claude', opusId, stored), opusDefault);
 
-  // An invalid entry lends the launch neither its model nor its effort.
+  // An invalid entry lends the launch neither its model nor its effort: the
+  // built-in applies, with its own effort on its own model.
   const invalid = { implementer: { model: 'claude:opus', effort: 'ultra' } };
-  assert.equal(launchEffort('implementer', 'claude', opusId, invalid), opusDefault);
+  assert.equal(
+    launchEffort('implementer', 'claude', builtInImplementer, invalid),
+    definition('implementer').builtInEffort ??
+      defaultModelEffort(builtInImplementer, { runtime: 'claude' }),
+  );
+  assert.equal(launchEffort('implementer', 'claude', haikuId, invalid), null);
 });
 
 test('with no role effort a role runs at its model default, and a stored role effort beats it', (t) => {
@@ -378,7 +405,7 @@ test('an effort the model does not take is refused at launch, naming where it ca
   // A stored haiku effort invalidates its entry, so a launch takes none from it.
   assert.equal(
     launchEffort('implementer', 'claude', haikuId, {
-      implementer: { model: 'claude:haiku', effort: 'high' },
+      implementer: { model: haikuPin, effort: 'high' },
     }),
     null,
   );
@@ -408,7 +435,7 @@ test('an effort the model does not take is refused at launch, naming where it ca
   );
   assert.throws(
     () => launchEffort('implementer', 'claude', haikuId, undefined, 'low'),
-    /drop --effort low for/,
+    /takes no effort \(the model rejects the parameter\); drop --effort low\.$/,
   );
   // Another model runs at its version default.
   assert.equal(launchEffort('implementer', 'codex', codexId('codex:sol'), stored), 'xhigh');

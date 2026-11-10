@@ -64,25 +64,28 @@ const newest = (family: string): Launched =>
 // The default effort of a pinned version.
 const versionEffort = (family: string, version: string): string | null =>
   (findModelVersion('claude', family, version) as ModelVersionRow).effort;
-const builtInSelection = (flag: RoleDefinition['flag']): string =>
-  (ROLE_DEFINITIONS.find((role) => role.flag === flag) as RoleDefinition).builtInSelection;
+const builtIn = (flag: RoleDefinition['flag']): RoleDefinition =>
+  ROLE_DEFINITIONS.find((role) => role.flag === flag) as RoleDefinition;
+const builtInSelection = (flag: RoleDefinition['flag']): string => builtIn(flag).builtInSelection;
 
-// A role's Claude built-in as a launch runs it.
-function claudeBuiltIn(flag: RoleDefinition['flag']): Launched & { row: ModelVersionRow } {
+// A role's Claude built-in as a launch runs it: its id, at the role's
+// built-in effort where it names one, else at its version's.
+function claudeBuiltIn(flag: RoleDefinition['flag']): Launched {
   const { modelArg } = parseClaudeSelection(builtInSelection(flag));
   const row = MODEL_VERSIONS.find(
     (candidate) =>
       candidate.runtime === 'claude' &&
       claudeModelId(candidate.family, candidate.version) === modelArg,
   ) as ModelVersionRow;
-  return { ...rowLaunch(row), row };
+  return { model: modelArg, effort: builtIn(flag).builtInEffort ?? row.effort };
 }
 
-// A role's Codex built-in as a launch runs it against the fake's catalog.
+// A role's Codex built-in as a launch runs it against the fake's catalog: at
+// the role's built-in effort where it names one, else at its version's.
 function codexBuiltIn(flag: RoleDefinition['flag']): Launched {
   const catalog = catalogFixture(accountCatalogModels());
   const model = resolveCodexSelection(parseCodexSelection(builtInSelection(flag))!, catalog);
-  return { model, effort: defaultModelEffort(model, { catalog }) };
+  return { model, effort: builtIn(flag).builtInEffort ?? defaultModelEffort(model, { catalog }) };
 }
 
 test('a Claude planner task pins the version, the effort, and the role definition on the child', () => {
@@ -536,7 +539,7 @@ test('Claude selections are validated before any launch or job record', async ()
     fakeClaudeBin('old-version').env,
   );
   assert.equal(old.status, 1);
-  assert.match(JSON.parse(old.stdout).error, /Claude Code 2\.1\.281 or newer/);
+  assert.match(JSON.parse(old.stdout).error, /Claude Code 2\.1\.321 or newer/);
 
   const loggedOut = companion(
     ['task', '--json', '--model', 'claude:opus', '--role', 'planner', 'x'],
@@ -627,7 +630,7 @@ test('a dated served id is normalised everywhere the run records it', () => {
   const env = { ...buildClaudeEnv(binDir), FAKE_CLAUDE_SERVED_MODEL: 'claude-haiku-4-5-20251001' };
 
   const reviewed = companion(
-    ['plan-review', '--json', '--model', 'claude:haiku', 'Initial plan draft'],
+    ['plan-review', '--json', '--model', 'claude:haiku-4.5', 'Initial plan draft'],
     repo,
     env,
   );
@@ -753,8 +756,16 @@ async function configure(repo: string, args: string[]): Promise<void> {
 
 test('a launch runs its version default effort, a stored default only where it applies, and an explicit --effort over both', async () => {
   const repo = initializeBasicRepo();
-  // No stored default: every launch runs at its version's default, whatever the role.
-  assert.deepEqual(await launchOf(repo, 'claude:opus', 'implementer'), newest('opus'));
+  // No stored default: a role's built-in model runs at the role's built-in
+  // effort, and any other model at its version's default, whatever the role.
+  assert.deepEqual(
+    await launchOf(repo, builtInSelection('implementer'), 'implementer'),
+    claudeBuiltIn('implementer'),
+  );
+  assert.deepEqual(await launchOf(repo, 'claude:opus-4.8', 'implementer'), {
+    model: 'claude-opus-4-8',
+    effort: versionEffort('opus', '4.8'),
+  });
   assert.deepEqual(await launchOf(repo, 'claude:sonnet-5', 'planner'), {
     model: 'claude-sonnet-5',
     effort: versionEffort('sonnet', '5'),
@@ -797,31 +808,27 @@ test('a launch runs its version default effort, a stored default only where it a
   );
 });
 
-test('an explicit effort on a haiku selection is refused before any job record', async () => {
+test('an explicit effort on a Haiku 4.5 selection is refused before any job record', async () => {
   const { repo, binDir, env } = claudeFixture();
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello again\n');
-  const haiku = newest('haiku').model;
+  const haiku = 'claude-haiku-4-5';
 
   for (const [args, modelArg, effort] of [
     [
-      ['task', '--model', 'claude:haiku', '--role', 'planner', '--effort', 'high', 'x'],
+      ['task', '--model', 'claude:haiku-4.5', '--role', 'planner', '--effort', 'high', 'x'],
       haiku,
       'high',
     ],
-    [['plan-review', '--model', 'claude:haiku', '--effort', 'high', 'plan'], haiku, 'high'],
-    [['review', '--model', 'claude:haiku', '--effort', 'high'], haiku, 'high'],
-    [
-      ['adversarial-review', '--model', 'claude:haiku-4.5', '--effort', 'low'],
-      'claude-haiku-4-5',
-      'low',
-    ],
+    [['plan-review', '--model', 'claude:haiku-4.5', '--effort', 'high', 'plan'], haiku, 'high'],
+    [['review', '--model', 'claude:haiku-4.5', '--effort', 'high'], haiku, 'high'],
+    [['adversarial-review', '--model', 'claude:claude-haiku-4-5', '--effort', 'low'], haiku, 'low'],
   ] as const) {
     const [command, ...rest] = args;
     const result = await runCliInProcess([command, '--cwd', repo, '--json', ...rest], env);
     assert.equal(result.status, 1, args.join(' '));
     assert.equal(
       errorOf(result),
-      `claude:haiku takes no effort (the model rejects the parameter); drop --effort ${effort} for ${modelArg}.`,
+      `${modelArg} takes no effort (the model rejects the parameter); drop --effort ${effort}.`,
       args.join(' '),
     );
   }
@@ -830,7 +837,7 @@ test('an explicit effort on a haiku selection is refused before any job record',
 
   // Without an effort the same selection runs, and the child gets none.
   const ran = companion(
-    ['task', '--json', '--model', 'claude:haiku', '--role', 'planner', 'x'],
+    ['task', '--json', '--model', 'claude:haiku-4.5', '--role', 'planner', 'x'],
     repo,
     env,
   );

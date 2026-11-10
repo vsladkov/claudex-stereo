@@ -64,13 +64,15 @@ registerBrokerReaping();
 // version table, and the fake's catalog, so a new row or a moved built-in
 // changes what these tests expect, not the tests.
 const ACCOUNT_CATALOG = catalogFixture(accountCatalogModels());
-const builtInSelection = (flag: RoleDefinition['flag']): string =>
-  (ROLE_DEFINITIONS.find((role) => role.flag === flag) as RoleDefinition).builtInSelection;
+const builtIn = (flag: RoleDefinition['flag']): RoleDefinition =>
+  ROLE_DEFINITIONS.find((role) => role.flag === flag) as RoleDefinition;
+const builtInSelection = (flag: RoleDefinition['flag']): string => builtIn(flag).builtInSelection;
 
-// A role's Claude built-in as a launch runs it: its id and its version's effort.
+// A role's Claude built-in as a launch runs it: its id, at the role's
+// built-in effort where it names one, else at its version's.
 function claudeBuiltIn(flag: RoleDefinition['flag']): { model: string; effort: string | null } {
   const { modelArg } = parseClaudeSelection(builtInSelection(flag));
-  return { model: modelArg, effort: defaultClaudeEffort(modelArg) };
+  return { model: modelArg, effort: builtIn(flag).builtInEffort ?? defaultClaudeEffort(modelArg) };
 }
 
 interface DryRunLaunch {
@@ -100,13 +102,14 @@ function taskDryRun(launch: DryRunLaunch, allowRules: string[] = []): Record<str
   };
 }
 
-// A role's Codex built-in resolved against a catalog, at its version default.
+// A role's Codex built-in resolved against a catalog, at the role's built-in
+// effort where it names one, else at its version default.
 function codexBuiltIn(
   flag: RoleDefinition['flag'],
   catalog: CodexCatalog = ACCOUNT_CATALOG,
 ): { model: string; effort: string | null } {
   const model = resolveCodexSelection(parseCodexSelection(builtInSelection(flag))!, catalog);
-  return { model, effort: defaultModelEffort(model, { catalog }) };
+  return { model, effort: builtIn(flag).builtInEffort ?? defaultModelEffort(model, { catalog }) };
 }
 
 const codexEffort = (model: string): string | null =>
@@ -512,7 +515,7 @@ test('a model-less plan-review runs the stored plan reviewer default at its stor
     codexEffort('gpt-6-astra'),
   );
 
-  // With the default cleared the built-in runs at its version default.
+  // With the default cleared the built-in runs at its own effort.
   const cleared = run('node', [SCRIPT, 'config', '--clear', 'roles', '--json'], { cwd: repo, env });
   assert.equal(cleared.status, 0, cleared.stderr);
   const builtIn = run('node', [SCRIPT, 'plan-review', '--json', 'Review the plan anew'], {
@@ -564,7 +567,7 @@ test('a model-less review runs the stored implementation reviewer default; --nat
   assert.equal(started.model, null);
 });
 
-test('a model-less review and adversarial-review with no stored default run the built-in at its version default', async () => {
+test('a model-less review and adversarial-review with no stored default run the built-in at its own effort', async () => {
   const repo = initializeBasicRepo();
   fs.writeFileSync(path.join(repo, 'README.md'), 'hello again\n');
   const binDir = makeTempDir();
@@ -716,7 +719,7 @@ test('task --dry-run runs the launch checks and reports the launch without a job
     ],
     [['--model', 'codex:nova'], /^Cannot resolve "codex:nova": the Codex model catalog lists no/],
     [['--model', 'codex:astra', '--effort', 'minimal'], /^Effort minimal is not a tier/],
-    [['--model', 'claude:haiku', '--role', 'planner', '--effort', 'high'], /takes no effort/],
+    [['--model', 'claude:haiku-4.5', '--role', 'planner', '--effort', 'high'], /takes no effort/],
     [['--model', 'claude:opus', '--role', 'planner', '--write'], /^--write applies only/],
     // The role decides whether its run writes, on Codex as on Claude.
     [
@@ -1072,14 +1075,10 @@ test('a model-less launch ignores a stored entry whose effort its model does not
         state.config.roleDefaults = roleDefaults;
       }),
     );
-  // A hand-stored haiku effort (config refuses one) invalidates the entry:
+  // A hand-stored Haiku 4.5 effort (config refuses one) invalidates the entry:
   // config warns, and a model-less launch runs the built-in with that warning.
-  store({ implementer: { model: 'claude:haiku', effort: 'high' } });
-  const haiku = claudeModelId(
-    'haiku',
-    (latestModelVersion('claude', 'haiku') as ModelVersionRow).version,
-  );
-  const warning = `implementer stored model "claude:haiku" and effort "high" is invalid: claude:haiku takes no effort (the model rejects the parameter); drop the stored workspace effort high for ${haiku}. The built-in default will be used.`;
+  store({ implementer: { model: 'claude:haiku-4.5', effort: 'high' } });
+  const warning = `implementer stored model "claude:haiku-4.5" and effort "high" is invalid: claude-haiku-4-5 takes no effort (the model rejects the parameter); drop the stored workspace effort high. The built-in default will be used.`;
   const config = companion(['config', '--json'], repo, env);
   assert.equal(config.status, 0, config.stderr);
   assert.deepEqual(JSON.parse(config.stdout).warnings, [warning]);
@@ -1100,7 +1099,7 @@ test('a model-less launch ignores a stored entry whose effort its model does not
   assert.equal(named.stderr, '');
 
   // An effort off its model's ladder invalidates the whole entry: the
-  // built-in runs at its version default, with the warning config gives.
+  // built-in runs at its own effort, with the warning config gives.
   store({ implementer: { model: 'claude:opus', effort: 'ultra' } });
   const ignored = await dryRun(['--role', 'implementer', '--write', 'build it']);
   assert.equal(ignored.status, 0, ignored.stderr);

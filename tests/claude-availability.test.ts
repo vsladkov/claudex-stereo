@@ -38,7 +38,7 @@ function fakeCli(responses: FakeCliResponses = {}, probes: RecordedProbe[] = [])
       error: null,
     };
     if (args[0] === '--version') {
-      return { ...base, stdout: '2.1.281 (Claude Code)\n', ...responses.version };
+      return { ...base, stdout: '2.1.321 (Claude Code)\n', ...responses.version };
     }
     if (args[0] === 'auth' && args[1] === 'status') {
       return { ...base, stdout: `${JSON.stringify({ loggedIn: true })}\n`, ...responses.auth };
@@ -50,7 +50,7 @@ function fakeCli(responses: FakeCliResponses = {}, probes: RecordedProbe[] = [])
 const CWD = '/work/repo';
 
 test('parseClaudeVersion reads the first dotted triple and nothing else', () => {
-  assert.equal(parseClaudeVersion('2.1.281 (Claude Code)'), '2.1.281');
+  assert.equal(parseClaudeVersion('2.1.321 (Claude Code)'), '2.1.321');
   assert.equal(parseClaudeVersion('Claude Code v10.0.3-beta.2'), '10.0.3');
   assert.equal(parseClaudeVersion('Claude Code CLI'), null);
   assert.equal(parseClaudeVersion(''), null);
