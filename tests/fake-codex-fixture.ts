@@ -727,19 +727,14 @@ rl.on("line", (line) => {
 
 	      case "review/start": {
 	        const thread = ensureThread(state, message.params.threadId);
-	        let reviewThread = thread;
-        if (message.params.delivery === "detached") {
-          reviewThread = nextThread(state, thread.cwd, true);
-	          send({ method: "thread/started", params: { thread: { id: reviewThread.id } } });
-	        }
 	        const turnId = nextTurnId(state);
 	        state.lastReviewStart = {
 	          sourceThreadId: thread.id,
-	          reviewThreadId: reviewThread.id,
+	          reviewThreadId: thread.id,
 	          turnId
 	        };
 	        saveState(state);
-	        const reviewResult = { turn: buildTurn(turnId), reviewThreadId: reviewThread.id };
+	        const reviewResult = { turn: buildTurn(turnId), reviewThreadId: thread.id };
 	        const reviewItems = [
 	          {
 	            started: { type: "enteredReviewMode", id: turnId, review: "current changes" }
@@ -761,14 +756,13 @@ rl.on("line", (line) => {
 	          }
 	        ];
 	        if (BEHAVIOR === "slow-start-response") {
-	          // Detached reviews complete only on reviewThreadId. Emit that
-	          // completion before the delayed response so broker tests exercise
-	          // the response-derived expected-completion id.
-	          emitTurnCompleted(reviewThread.id, turnId, reviewItems);
+	          // Emit the completion before the delayed response so broker tests
+	          // exercise a review that finishes before its start response.
+	          emitTurnCompleted(thread.id, turnId, reviewItems);
 	          setTimeout(() => send({ id: message.id, result: reviewResult }), 800);
 	        } else {
 	          send({ id: message.id, result: reviewResult });
-	          emitTurnCompleted(reviewThread.id, turnId, reviewItems);
+	          emitTurnCompleted(thread.id, turnId, reviewItems);
 	        }
 	        break;
 	      }

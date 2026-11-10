@@ -46,7 +46,6 @@ type RpcCapableError = Error & { rpcCode?: number };
 
 interface InFlightStreamRecord {
   socket: net.Socket;
-  method: string;
   routingThreadIds: Set<string>;
   expectedCompletionIds: Set<string>;
   disconnected: boolean;
@@ -80,36 +79,8 @@ export interface RunBrokerServerDeps {
   connectAppServer: (cwd: string) => Promise<BrokerAppServerClient>;
 }
 
-function buildStreamThreadIds(
-  method: string | undefined,
-  params: BrokerMessageParams,
-  result: unknown,
-): Set<string> {
-  const threadIds = new Set<string>();
-  if (params?.threadId) {
-    threadIds.add(params.threadId);
-  }
-  const reviewResult = result as { reviewThreadId?: string | null } | null | undefined;
-  if (method === 'review/start' && reviewResult?.reviewThreadId) {
-    threadIds.add(reviewResult.reviewThreadId);
-  }
-  return threadIds;
-}
-
 function buildParamsThreadIds(params: BrokerMessageParams): Set<string> {
   return params.threadId ? new Set([params.threadId]) : new Set();
-}
-
-function buildExpectedCompletionIds(
-  method: string | undefined,
-  paramsThreadIds: Set<string>,
-  result: unknown,
-): Set<string> {
-  const reviewResult = result as { reviewThreadId?: string | null } | null | undefined;
-  if (method === 'review/start' && reviewResult?.reviewThreadId) {
-    return new Set([reviewResult.reviewThreadId]);
-  }
-  return new Set(paramsThreadIds);
 }
 
 function send(socket: net.Socket, message: unknown): void {
@@ -596,7 +567,6 @@ export async function runBrokerServer(
         const paramsThreadIds = buildParamsThreadIds(params);
         const record: InFlightStreamRecord = {
           socket,
-          method: message.method as string,
           routingThreadIds: new Set(paramsThreadIds),
           expectedCompletionIds: new Set(paramsThreadIds),
           disconnected: socket.destroyed,
@@ -622,12 +592,6 @@ export async function runBrokerServer(
             return;
           }
 
-          record.routingThreadIds = buildStreamThreadIds(record.method, params, result);
-          record.expectedCompletionIds = buildExpectedCompletionIds(
-            record.method,
-            paramsThreadIds,
-            result,
-          );
           const alreadyCompleted = streamCompletionWasObserved(record);
           const disconnected = record.disconnected || socket.destroyed;
           discardInFlightStream(record);

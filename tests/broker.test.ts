@@ -649,7 +649,7 @@ test('a dead client whose turn completes before the start response does not arm 
   await startTurnWithoutOrphanGate(successor, successorThread.result.thread.id, 'fast successor');
 });
 
-test('a detached review completion before its delayed response uses the review thread id', async (t) => {
+test('a review completion before its delayed response frees the broker for a successor', async (t) => {
   const broker = await startBroker(t, 'slow-start-response');
   const owner = createJsonlClient(broker.endpoint);
   t.after(() => owner.close());
@@ -664,7 +664,7 @@ test('a detached review completion before its delayed response uses the review t
   const abandonedResponse = owner
     .request('review/start', {
       threadId: sourceThreadId,
-      delivery: 'detached',
+      delivery: 'inline',
       target: { type: 'uncommittedChanges' },
     })
     .catch(() => null);
@@ -687,7 +687,7 @@ test('a detached review completion before its delayed response uses the review t
   await startTurnWithoutOrphanGate(
     successor,
     successorThread.result.thread.id,
-    'stream after detached review',
+    'stream after review',
   );
 });
 

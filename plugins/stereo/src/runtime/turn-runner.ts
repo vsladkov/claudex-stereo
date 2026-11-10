@@ -194,14 +194,7 @@ export async function runAppServerReview(
           delivery: 'inline',
           target: options.target as ReviewTarget,
         }),
-      {
-        onProgress: options.onProgress,
-        onResponse(response, state) {
-          if (response.reviewThreadId) {
-            state.threadIds.add(response.reviewThreadId);
-          }
-        },
-      },
+      { onProgress: options.onProgress },
     );
 
     return {
