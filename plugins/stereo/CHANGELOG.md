@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.55.0
+
+- Add Claude Fable 5.2: `claude:fable` now runs `claude-fable-5-2`, `claude:fable-5.2` pins it, and
+  `claude:fable-5.1` pins the earlier Fable 5.1. Fable 5.2 is the built-in planner and the fallback
+  reviewer: the reviewer `/stereo:implement` and `/stereo:quick` substitute when the default
+  reviewer would gate its own work, and `/stereo:tournament`'s default reviewer
+- Add Claude Haiku 5.5, which takes an effort and defaults to `max`: `claude:haiku` now runs
+  `claude-haiku-5-5` instead of Haiku 4.5. `claude:haiku-4.5` pins the earlier version, which still
+  takes no effort
+- The built-in role defaults run at `high` instead of `xhigh`: the planner, the implementer, and
+  both review gates. `/stereo:config` with `--planner-effort xhigh`,
+  `--plan-reviewer-effort xhigh`, `--implementer-effort xhigh`, and
+  `--implementation-reviewer-effort xhigh` restores the previous tier
+- Fable 5.2 and Opus 5.5 default to `high` wherever they run without an effort flag or a stored
+  effort; every other version keeps its default
+- Claude roles need Claude Code 2.1.321 or newer, the first release that offers Fable 5.2;
+  `/stereo:setup` reports an older CLI
+- An effort on a model that takes none is refused naming the model
+  (`claude-haiku-4-5 takes no effort`), since the Haiku family no longer shares one answer
+- Follow Codex CLI 0.167.0, whose protocol adds a turn field and drops detached review delivery,
+  which no command used
+
 ## 1.54.0
 
 - `/stereo:review` and `/stereo:adversarial-review` report every defect that could cause incorrect
