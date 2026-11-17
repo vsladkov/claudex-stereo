@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.57.0
+
+- GPT-6.2 Astra is the built-in plan reviewer and implementation reviewer: both review gates move
+  from the pinned `codex:astra-6` to `codex:astra-6.2` (`gpt-6.2-astra`). On a Codex CLI or account
+  whose model list lacks it, keep the gates on GPT-6 Astra with
+  `/stereo:config --plan-reviewer codex:astra-6 --implementation-reviewer codex:astra-6`
+- GPT-6.2 Astra defaults to `xhigh`: published per-effort benchmark results score it higher at
+  `xhigh` than at `high`, and no higher at `max`. The built-in review gates therefore run at
+  `xhigh` instead of `high`; restore the previous tier with
+  `/stereo:config --plan-reviewer-effort high --implementation-reviewer-effort high`
+- `codex:astra` and `codex:sol` resolve to GPT-6.2 Astra and GPT-6.2 Sol once the Codex model list
+  carries them (Codex CLI 0.169.0 does); `codex:astra-6`, `codex:sol-6.1`, and `codex:sol-6` pin
+  the earlier versions
+- The tournament's default Codex contestant and the Codex implementer `/stereo:implement` offers
+  for command-heavy plans are `codex:astra-6.2`
+- The built-in catalog snapshot that stands in before the first model-list fetch lists GPT-6.2
+  Astra instead of GPT-6 Astra
+
 ## 1.56.0
 
 - Codex default efforts follow published per-effort benchmark results, as the Claude defaults do:
