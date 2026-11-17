@@ -446,18 +446,18 @@ test('an effort the model does not take is refused at launch, naming where it ca
 });
 
 test('a role default the catalog cannot resolve fails naming the default', () => {
-  const noAstra6 = catalogFixture([catalogEntry('gpt-7-astra'), catalogEntry('gpt-6-sol')]);
+  const noAstra62 = catalogFixture([catalogEntry('gpt-7-astra'), catalogEntry('gpt-6-sol')]);
   const builtIn = resolveRoleDefault('plan-reviewer', undefined);
   const selection = parseCodexSelection(builtIn.selection)!;
   const reason = `Cannot resolve "${reviewerBuiltIn}": the Codex model catalog lists astra versions 7 (gpt-7-astra). Use a listed codex:<family>[-<version>], or <id>@<provider> for another provider's model.`;
   assert.throws(
-    () => resolveRoleCodexModel(selection, noAstra6, builtIn),
+    () => resolveRoleCodexModel(selection, noAstra62, builtIn),
     new Error(
       `The plan reviewer's built-in default ${reviewerBuiltIn} cannot run: ${reason} Pass --model, or store another default with /stereo:config.`,
     ),
   );
   // An explicit selection keeps the resolver's own error.
-  assert.throws(() => resolveRoleCodexModel(selection, noAstra6, null), new Error(reason));
+  assert.throws(() => resolveRoleCodexModel(selection, noAstra62, null), new Error(reason));
   // A stored default is named as the workspace's, and the snapshot names the failed fetch.
   const stored = resolveRoleDefault('implementation-reviewer', {
     implementationReviewer: { model: 'codex:sol', effort: null },

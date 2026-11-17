@@ -1419,7 +1419,7 @@
                 <span class="stepnum">02 · CHALLENGE</span>
                 <h3>A second model challenges assumptions</h3>
                 <p>
-                  Adversarial review through bounded revision rounds. <code>codex:astra-6</code>
+                  Adversarial review through bounded revision rounds. <code>codex:astra-6.2</code>
                 </p>
               </div>
             </li>
@@ -1466,7 +1466,7 @@
               <div class="duo-card">
                 <span class="stepnum">04 · GATE</span>
                 <h3>A fresh reviewer gates the diff</h3>
-                <p>The gate runs outside the session. <code>codex:astra-6</code></p>
+                <p>The gate runs outside the session. <code>codex:astra-6.2</code></p>
               </div>
             </li>
           </ol>
@@ -1554,14 +1554,14 @@
             <div class="term-bar"><i></i><i></i><i></i>&nbsp; claude — ~/dev/api</div>
             <pre><span class="d">&gt;</span> /stereo:plan add rate limiting to the public API
 <span class="c">◆ planner claude:fable-5.2</span> <span class="d">— claude-fable-5-2 · drafting (read-only)…</span>
-<span class="x">◆ plan-reviewer codex:astra-6</span> <span class="d">— gpt-6-astra · round 1: needs-revision · 3 findings</span>
-<span class="x">◆ plan-reviewer codex:astra-6</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
+<span class="x">◆ plan-reviewer codex:astra-6.2</span> <span class="d">— gpt-6.2-astra · round 1: needs-revision · 3 findings</span>
+<span class="x">◆ plan-reviewer codex:astra-6.2</span> <span class="d">— round 2:</span> <span class="ok">approve</span>
 <span class="ok">✓</span> plan stored <span class="d">— run /stereo:implement</span>
 
 <span class="d">&gt;</span> /stereo:implement
 <span class="c">◆ implementer claude:opus-5.5</span> <span class="d">— claude-opus-5-5 · 14 files changed</span>
 <span class="d">◆ implementer-run tests</span> <span class="ok">✓</span> <span class="d">· static checks</span> <span class="ok">✓</span>
-<span class="x">◆ implementation-reviewer codex:astra-6</span> <span class="d">— gpt-6-astra · acceptable · 0 fixes</span>
+<span class="x">◆ implementation-reviewer codex:astra-6.2</span> <span class="d">— gpt-6.2-astra · acceptable · 0 fixes</span>
 <span class="ok">✓</span> done <span class="d">— nothing committed; review and commit yourself</span></pre>
           </div>
           <figcaption>
@@ -1873,8 +1873,9 @@
           <code>claude:opus-4.8</code> pins one; <code>claude:session</code> keeps a planner or
           reviewer inline. Everything else runs on the Codex runtime: a family from your Codex
           catalog (<code>codex:sol</code>, or <code>codex:sol-5.6</code> for one version), a raw
-          model id, or a third-party alias. The defaults run at high, and
-          <code>/stereo:config</code> changes any role&rsquo;s model or effort per workspace.
+          model id, or a third-party alias. The Claude defaults run at high and the review gates at
+          xhigh, and <code>/stereo:config</code> changes any role&rsquo;s model or effort per
+          workspace.
         </p>
         <form class="console" id="rc" aria-label="Compose a pair-workflow command">
           <fieldset>
@@ -1899,8 +1900,8 @@
           <fieldset>
             <legend>Plan reviewer</legend>
             <label class="lx">
-              <input type="radio" name="plan-reviewer" value="codex:astra-6" checked />
-              <span>codex:astra-6</span>
+              <input type="radio" name="plan-reviewer" value="codex:astra-6.2" checked />
+              <span>codex:astra-6.2</span>
             </label>
             <label class="lx">
               <input type="radio" name="plan-reviewer" value="codex:sol" />
@@ -1945,8 +1946,8 @@
           <fieldset>
             <legend>Implementation reviewer</legend>
             <label class="lx">
-              <input type="radio" name="implementation-reviewer" value="codex:astra-6" checked />
-              <span>codex:astra-6</span>
+              <input type="radio" name="implementation-reviewer" value="codex:astra-6.2" checked />
+              <span>codex:astra-6.2</span>
             </label>
             <label class="lx">
               <input type="radio" name="implementation-reviewer" value="codex:sol" />
@@ -1987,9 +1988,9 @@
         <p class="console-note">
           Amber chips route to Claude, cyan to the Codex runtime. The <code>codex:</code> prefix is
           optional in commands, and tool output prints the exact ids launches pass (<code
-            >codex:astra-6</code
+            >codex:astra-6.2</code
           >
-          runs <code>gpt-6-astra</code>, <code>claude:opus</code> runs
+          runs <code>gpt-6.2-astra</code>, <code>claude:opus</code> runs
           <code>claude-opus-5-5</code>). Flags matching the defaults are omitted, so the default
           selection is just the two bare commands. The implementer defaults to a contained
           <code>claude:opus-5.5</code> session, which builds and tests its own changes inside the
@@ -2023,9 +2024,9 @@
                 </tr>
                 <tr>
                   <td>Plan reviewer</td>
-                  <td><code class="cx">codex:astra-6</code></td>
-                  <td>GPT-6 Astra (<code class="cx">gpt-6-astra</code>)</td>
-                  <td>high (version default)</td>
+                  <td><code class="cx">codex:astra-6.2</code></td>
+                  <td>GPT-6.2 Astra (<code class="cx">gpt-6.2-astra</code>)</td>
+                  <td>xhigh (version default)</td>
                 </tr>
                 <tr>
                   <td>Implementer</td>
@@ -2035,9 +2036,9 @@
                 </tr>
                 <tr>
                   <td>Implementation reviewer</td>
-                  <td><code class="cx">codex:astra-6</code></td>
-                  <td>GPT-6 Astra (<code class="cx">gpt-6-astra</code>)</td>
-                  <td>high (version default)</td>
+                  <td><code class="cx">codex:astra-6.2</code></td>
+                  <td>GPT-6.2 Astra (<code class="cx">gpt-6.2-astra</code>)</td>
+                  <td>xhigh (version default)</td>
                 </tr>
               </tbody>
             </table>
@@ -2272,9 +2273,9 @@
       if (rcForm) {
         const defaults = {
           planner: 'claude:fable-5.2',
-          'plan-reviewer': 'codex:astra-6',
+          'plan-reviewer': 'codex:astra-6.2',
           implementer: 'claude:opus-5.5',
-          'implementation-reviewer': 'codex:astra-6',
+          'implementation-reviewer': 'codex:astra-6.2',
         };
         const planOut = document.getElementById('rc-plan');
         const implOut = document.getElementById('rc-impl');

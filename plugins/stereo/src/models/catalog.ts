@@ -83,10 +83,10 @@ function catalogModel(id: string, efforts: CatalogEffort[]): CodexCatalogModel {
 }
 
 // The offline floor holds exactly the model the built-in Codex role defaults
-// name, so `codex:astra-6` resolves before the first fetch; every other
+// name, so `codex:astra-6.2` resolves before the first fetch; every other
 // family comes from the live catalog, which the first launch-ready check writes.
 export const BUILTIN_CATALOG_SNAPSHOT: readonly CodexCatalogModel[] = [
-  catalogModel('gpt-6-astra', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
+  catalogModel('gpt-6.2-astra', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
 ];
 
 export function builtinCatalog(): CodexCatalog {

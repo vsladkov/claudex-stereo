@@ -53,7 +53,7 @@ naming `/stereo:implement` as their home; and `--fresh`, which is unnecessary be
 contestant starts fresh.
 
 **Default lineup.** With no `--implementer`, `c1` is the workspace `implementer` model when its
-entry has a null `invalidReason` and a `codex` route, else `codex:astra-6`; `c2` is
+entry has a null `invalidReason` and a `codex` route, else `codex:astra-6.2`; `c2` is
 `claude:opus-5.5`, so the default lineup races one Codex contestant against one Claude contestant.
 A valid Claude workspace implementer is inert here (the lineup already fields `claude:opus-5.5`):
 report it by name and never launch it. Explicit `--implementer` flags always win, and no workspace

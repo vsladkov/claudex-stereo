@@ -95,9 +95,10 @@ instead of substituting a reviewer.
 ## Effort
 
 The built-in role defaults (`ROLE_DEFINITIONS` in the plugin's `src/models/role-defaults.ts`) pin
-a version and name no effort: `claude:fable-5.2` for the planner, `codex:astra-6` (GPT-6 Astra)
+a version and name no effort: `claude:fable-5.2` for the planner, `codex:astra-6.2` (GPT-6.2 Astra)
 for the plan reviewer and the implementation reviewer, and `claude:opus-5.5` for the implementer,
-each at its version's default effort (`high` for all three versions today).
+each at its version's default effort (`high` for Fable 5.2 and Opus 5.5, `xhigh` for GPT-6.2
+Astra today).
 
 A companion role run takes the role's effort flag; else the role default's effort, when the run
 uses that default's model (compared by resolved id) and the default carries one; else the

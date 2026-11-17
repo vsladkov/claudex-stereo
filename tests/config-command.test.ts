@@ -286,12 +286,12 @@ test('config renders every version each runtime knows, as text only', () => {
   assert.match(
     payload.rendered,
     new RegExp(
-      String.raw`\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- claude:opus → ${claudeModelId('opus', opus.version)} \(effort ${opus.effort}; also [^)]+\)\n[\s\S]*- claude:haiku → ${claudeModelId('haiku', haiku.version)} \(effort ${haiku.effort}; also 4\.5 no effort\)\n- codex:astra → gpt-6-astra \(effort high\)\n- codex:luna → gpt-6-luna \(effort max; also 5\.6 xhigh\)\n- codex:sol → gpt-6-sol \(effort xhigh; also 5\.6 xhigh\)\n- codex:terra → gpt-5\.6-terra \(effort xhigh\)\n`,
+      String.raw`\nModels \(efforts are role-launch defaults; a Codex task without a role runs at Codex's own\):\n- claude:opus → ${claudeModelId('opus', opus.version)} \(effort ${opus.effort}; also [^)]+\)\n[\s\S]*- claude:haiku → ${claudeModelId('haiku', haiku.version)} \(effort ${haiku.effort}; also 4\.5 no effort\)\n- codex:astra → gpt-6\.2-astra \(effort xhigh; also 6 high\)\n- codex:luna → gpt-6-luna \(effort max; also 5\.6 xhigh\)\n- codex:sol → gpt-6-sol \(effort xhigh; also 5\.6 xhigh\)\n- codex:terra → gpt-5\.6-terra \(effort xhigh\)\n`,
     ),
   );
 });
 test('config warns for each role whose built-in default the cached catalog lacks', () => {
-  // A CODEX_HOME of its own, whose cached catalog lists astra 7 but not astra 6.
+  // A CODEX_HOME of its own, whose cached catalog lists astra 7 but not astra 6.2.
   const codexHome = makeTempDir();
   writeCodexCatalogCache(
     accountCatalogModels()
@@ -363,7 +363,7 @@ test('a Haiku 4.5 effort is refused at config time; a Codex tier the catalog lac
   assert.equal(tier.status, 0, tier.stderr);
   assert.ok(
     JSON.parse(tier.stdout).warnings.includes(
-      "The plan reviewer's workspace default effort minimal is not a tier codex:astra (gpt-6-astra) lists; the catalog lists low, medium, high, xhigh, max, ultra. Pass --effort, or store another effort with /stereo:config.",
+      "The plan reviewer's workspace default effort minimal is not a tier codex:astra (gpt-6.2-astra) lists; the catalog lists low, medium, high, xhigh, max, ultra. Pass --effort, or store another effort with /stereo:config.",
     ),
   );
 });

@@ -83,8 +83,11 @@ test('describeModels maps every catalog family to its versions with the default 
     findModelVersion('codex', family, version)?.effort ?? 'xhigh';
   assert.deepEqual(described.codex, {
     astra: {
-      latest: '6',
-      versions: { '6': { id: 'gpt-6-astra', effort: effortOf('astra', '6') } },
+      latest: '6.2',
+      versions: {
+        '6.2': { id: 'gpt-6.2-astra', effort: effortOf('astra', '6.2') },
+        '6': { id: 'gpt-6-astra', effort: effortOf('astra', '6') },
+      },
     },
     luna: {
       latest: '6',

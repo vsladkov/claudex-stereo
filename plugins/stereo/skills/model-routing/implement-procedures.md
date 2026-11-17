@@ -58,7 +58,7 @@ before any implementer launch; the command's own text names what it records dura
    sections for command-requiring work outside its build/test/static-check scope: version bumps,
    package installation, code generation the repository's gates do not already run, migrations,
    network access, or interactive/long-running processes. If found, ask exactly once:
-   - Switch to the `codex:astra-6` implementer (GPT-6 Astra), whose sandboxed shell (network per
+   - Switch to the `codex:astra-6.2` implementer (GPT-6.2 Astra), whose sandboxed shell (network per
      Codex configuration) can run those steps (recommended).
    - Continue and leave each out-of-scope command step user-owned.
    - Stop.

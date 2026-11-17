@@ -15,7 +15,7 @@ is the procedure below.
 Both commands are review-only: never fix an issue, apply a patch, or suggest that you are about to
 make changes, and never offer to apply a fix the review names. Neither has a role default of its
 own: without `--model` both run the implementation reviewer's default — the workspace's stored
-`implementationReviewer` model, else the built-in `codex:astra-6` — at the effort that role
+`implementationReviewer` model, else the built-in `codex:astra-6.2` — at the effort that role
 resolves. A stored `claude:session` there is not run inline: the companion skips it and runs the
 built-in. A default that cannot run fails before any job record with an error naming it; relay it
 verbatim.

@@ -46,17 +46,18 @@ thread reservations, plus an optional stop-time review gate.
 
 - **Codex authentication or a configured custom model provider.**
   - OpenAI-backed usage contributes to your Codex usage limits. [Learn more](https://developers.openai.com/codex/pricing).
-- **Codex CLI 0.156.1 or later.** The default review gates run GPT-6 Astra (`codex:astra-6`),
-  which older CLIs cannot configure, and Codex model families resolve through the app-server's
-  model list, so a model reaches the plugin with the CLI release that carries it (GPT-6.1 Sol
-  needs 0.159.1 or later). On an older CLI, pin the gates to a raw model id that CLI runs, for
-  example `/stereo:config --plan-reviewer codex:gpt-5.6-sol --implementation-reviewer codex:gpt-5.6-sol`,
-  or pass the role flags per run.
+- **Codex CLI 0.156.1 or later.** The default review gates run GPT-6.2 Astra
+  (`codex:astra-6.2`), and Codex model families resolve through the app-server's model list, so a
+  model reaches the plugin once the CLI's list carries it (GPT-6.1 Sol needs 0.159.1 or later;
+  GPT-6.2 Astra and GPT-6.2 Sol are listed on 0.169.0). On a CLI or account that does not list
+  GPT-6.2 Astra, pin the gates to a model it does list, for example
+  `/stereo:config --plan-reviewer codex:astra-6 --implementation-reviewer codex:astra-6`, or pass
+  the role flags per run.
 - **Node.js 24 or later** (the plugin runs its TypeScript sources natively via Node's type stripping)
 - **Claude Code 2.1.321 or later, logged in, for Claude roles.** Named Claude selections
   (`claude:<family>[-<version>]`) run as headless `claude -p` sessions of the Claude Code CLI the
   plugin runs inside. The default planner (`claude:fable-5.2`) and implementer
-  (`claude:opus-5.5`) are Claude roles and the default review gates (`codex:astra-6`) are Codex
+  (`claude:opus-5.5`) are Claude roles and the default review gates (`codex:astra-6.2`) are Codex
   roles, so both runtimes must be ready for the defaults to work end to end. `/stereo:setup`
   checks the CLI's version and login; if either fails, use the
   [per-role model escape hatches](#troubleshooting).
@@ -139,7 +140,7 @@ Review gate: disabled
 
 Latest finished:
 - review-ms3bgmam-3bpyi8 | completed | review | Codex Review
-  Model: gpt-6-astra
+  Model: gpt-6.2-astra
   Phase: done
   Duration: 26s
   Tokens: job 463K in (99% cached) / 682 out (298 reasoning) · thread 3.8M in / 23K out (12K reasoning) · context 258K
@@ -180,12 +181,12 @@ Every multi-role command uses role-named model flags—`--planner`, `--plan-revi
 
 Defaults with no role flags, shared by `/stereo:plan`, `/stereo:implement`, and `/stereo:quick`:
 
-| Role                    | Built-in default (model and version) | Runs                           | Effort                   |
-| ----------------------- | ------------------------------------ | ------------------------------ | ------------------------ |
-| Planner                 | `claude:fable-5.2`                   | Fable 5.2 (`claude-fable-5-2`) | `high` (version default) |
-| Plan reviewer           | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `high` (version default) |
-| Implementer             | `claude:opus-5.5`                    | Opus 5.5 (`claude-opus-5-5`)   | `high` (version default) |
-| Implementation reviewer | `codex:astra-6`                      | GPT-6 Astra (`gpt-6-astra`)    | `high` (version default) |
+| Role                    | Built-in default (model and version) | Runs                            | Effort                    |
+| ----------------------- | ------------------------------------ | ------------------------------- | ------------------------- |
+| Planner                 | `claude:fable-5.2`                   | Fable 5.2 (`claude-fable-5-2`)  | `high` (version default)  |
+| Plan reviewer           | `codex:astra-6.2`                    | GPT-6.2 Astra (`gpt-6.2-astra`) | `xhigh` (version default) |
+| Implementer             | `claude:opus-5.5`                    | Opus 5.5 (`claude-opus-5-5`)    | `high` (version default)  |
+| Implementation reviewer | `codex:astra-6.2`                    | GPT-6.2 Astra (`gpt-6.2-astra`) | `xhigh` (version default) |
 
 Each built-in default pins a version, so it moves only through a plugin release. Override a role per
 run with its flags or per workspace with [`/stereo:config`](#stereoconfig). Families, versions, and
@@ -217,7 +218,7 @@ both runtimes, against the same `review-output.schema.json` contract used by
 [`/stereo:adversarial-review`](#stereoadversarial-review). Focus text is fenced as untrusted
 steering and weighed without narrowing the standard review contract. Without `--model`, the review
 runs the implementation reviewer's role default—the workspace's stored model
-([`/stereo:config`](#stereoconfig)), else the built-in `codex:astra-6`—and without `--effort` it
+([`/stereo:config`](#stereoconfig)), else the built-in `codex:astra-6.2`—and without `--effort` it
 follows the [effort rules](#effort-rules). `claude:session` applies the same brief inline, with no
 job and no effort. `--native` has no effort or focus control and reviews only the working tree or
 a base branch; it passes no effort and, without `--model`, no model, so Codex's own `config.toml`
@@ -299,7 +300,7 @@ model versions each runtime knows, a family's other versions newest first:
 
 ```text
 - implementer: claude:opus-4.8 (effort high) → claude-opus-4-8 (effort high)
-- plan-reviewer: not set → gpt-6-astra (effort high, built-in codex:astra-6)
+- plan-reviewer: not set → gpt-6.2-astra (effort xhigh, built-in codex:astra-6.2)
 - claude:opus → claude-opus-5-5 (effort high; also 4.8 xhigh)
 ```
 
@@ -478,7 +479,7 @@ repository's gates do not already run, and a denied write fails the job with the
 [`/stereo:config --claude-sandbox on`](#stereoconfig) adds Claude Code's own Bash sandbox. Before
 edits, the command scans the plan for steps outside that scope—version bumps, package
 installation, out-of-gate code generation, migrations, network access, or interactive
-processes—and asks whether to switch to the `codex:astra-6` implementer, leave those steps for you,
+processes—and asks whether to switch to the `codex:astra-6.2` implementer, leave those steps for you,
 or stop. The orchestrator never executes shell text requested by a model.
 
 **Verification is staged.** A baseline gate snapshot taken before implementation attributes every
@@ -636,8 +637,8 @@ committed or pushed.
 
 Runs one already-approved stored plan through 2 or 3 independent implementers. With no
 `--implementer` flags, the default lineup uses the workspace `implementer` model for `c1` when it is
-valid and Codex-routed, otherwise `codex:astra-6`; `c2` is `claude:opus-5.5`. Each contestant's
-effort follows the [effort rules](#effort-rules) as an implementer—`high` for both defaults—and a
+valid and Codex-routed, otherwise `codex:astra-6.2`; `c2` is `claude:opus-5.5`. Each contestant's
+effort follows the [effort rules](#effort-rules) as an implementer—`xhigh` for GPT-6.2 Astra and `high` for Opus 5.5—and a
 paired `--implementer-effort` overrides it. Each contestant starts in its own detached temporary
 worktree at the same `HEAD`, so the main working tree stays untouched while contestants run and
 their evidence is reviewed. Two contestants are the minimum for a comparison; three is the cap
@@ -816,7 +817,7 @@ totals are local job accounting, not Codex or Claude account usage or billing.
 (`# Codex Review`, `# Claude Plan Review`, and so on). A run that ended with a non-zero status
 renders a `Run failed: …` line, plus `Denied: …` when a Claude write was denied. Every result ends
 with `Model:`—the exact id the job ran, `claude-opus-5-5` for a `claude:opus` request today and
-`gpt-6-astra` for `codex:astra`—its token usage, `Cost:` for a Claude job, and, when available, the
+`gpt-6.2-astra` for `codex:astra`—its token usage, `Cost:` for a Claude job, and, when available, the
 session ID with a resume command: `Resume in Codex: codex resume <session-id>` or
 `Resume in Claude: claude --resume <session-id>`. Add `--report` to print only the report.
 
@@ -1000,10 +1001,10 @@ flag remains free-form, and `/stereo:config` replaces any default for one reposi
 explicit role flag > stored workspace role default > built-in default; the reviewer a stored plan
 names never resolves the implementer.
 
-| Situation                        | Change from the defaults                                                                 |
-| -------------------------------- | ---------------------------------------------------------------------------------------- |
-| Command-heavy or Codex-side work | `--implementer codex:astra-6`, which moves the implementation gate to `claude:fable-5.2` |
-| Cheapest implementation gate     | `--implementation-reviewer claude:session`                                               |
+| Situation                        | Change from the defaults                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------ |
+| Command-heavy or Codex-side work | `--implementer codex:astra-6.2`, which moves the implementation gate to `claude:fable-5.2` |
+| Cheapest implementation gate     | `--implementation-reviewer claude:session`                                                 |
 
 For most work, use the defaults:
 
@@ -1024,7 +1025,7 @@ advisory on approved runs and binding on unapproved ones—so what a contained r
 the argument around them, not the findings. A plan whose steps need commands outside the
 implementer's build/test scope (version bumps, package installation, out-of-gate codegen,
 migrations, network access, interactive processes) prompts a switch to a command-capable Codex
-implementer (`codex:astra-6`), which starts a fresh thread with the plan embedded.
+implementer (`codex:astra-6.2`), which starts a fresh thread with the plan embedded.
 
 Each route prices the workflow differently:
 
@@ -1053,7 +1054,7 @@ headless Claude Code session—and is required, so those selections are distingu
 open Codex passthrough. `codex:` names the Codex app-server and is optional in commands because the
 Codex side cannot be enumerated and includes third-party providers; this documentation writes it
 for symmetry. Stored state, status output, and reports carry the exact id a launch passed—
-`Model: gpt-6.1-sol` is what `codex:sol` resolved to, and `Model: claude-opus-5-5` is what
+`Model: gpt-6.2-sol` is what `codex:sol` resolved to, and `Model: claude-opus-5-5` is what
 `claude:opus` or `claude:opus-5.5` ran—never a third spelling and never a bare alias.
 
 ### Codex model families
@@ -1061,10 +1062,12 @@ for symmetry. Stored state, status output, and reports carry the exact id a laun
 A Codex selection names a model family; the companion resolves it to the newest version the
 account's Codex model catalog lists, and `-<version>` pins one:
 
-| Selection                         | Resolves to (catalog of 2026-11-10) | Default effort |
+| Selection                         | Resolves to (catalog of 2026-11-17) | Default effort |
 | --------------------------------- | ----------------------------------- | -------------- |
-| `codex:astra` / `codex:astra-6`   | `gpt-6-astra`                       | `high`         |
-| `codex:sol` / `codex:sol-6.1`     | `gpt-6.1-sol`                       | `xhigh`        |
+| `codex:astra` / `codex:astra-6.2` | `gpt-6.2-astra`                     | `xhigh`        |
+| `codex:astra-6`                   | `gpt-6-astra`                       | `high`         |
+| `codex:sol` / `codex:sol-6.2`     | `gpt-6.2-sol`                       | `xhigh`        |
+| `codex:sol-6.1`                   | `gpt-6.1-sol`                       | `xhigh`        |
 | `codex:sol-6`                     | `gpt-6-sol`                         | `xhigh`        |
 | `codex:sol-5.6`                   | `gpt-5.6-sol`                       | `xhigh`        |
 | `codex:terra` / `codex:terra-6.1` | `gpt-6.1-terra`                     | `max`          |
@@ -1073,8 +1076,8 @@ account's Codex model catalog lists, and `-<version>` pins one:
 | `codex:luna-5.6`                  | `gpt-5.6-luna`                      | `xhigh`        |
 
 A family alias follows the catalog: a family that gains a new version resolves to it
-automatically (`codex:sol` moved from `gpt-6-sol` to `gpt-6.1-sol` when GPT-6.1 Sol appeared), so
-new OpenAI models need no plugin release. Both review gates default to the pinned `codex:astra-6`,
+automatically (`codex:sol` moved from `gpt-6.1-sol` to `gpt-6.2-sol` when GPT-6.2 Sol appeared), so
+new OpenAI models need no plugin release. Both review gates default to the pinned `codex:astra-6.2`,
 so a new Astra generation reaches the defaults only through a plugin release. A family or version
 the catalog does not list is refused before any job record, naming what the catalog does list; a
 raw model id passes through unchanged, matched case-insensitively (`codex:GPT-6-Astra` runs as
@@ -1085,7 +1088,7 @@ misspelled `codex:atsra` is refused as an unknown family.
 A launch refreshes the catalog when the cached copy is older than ten minutes, and
 `/stereo:setup` always refreshes it; it is cached at
 `$CODEX_HOME/companion-state/codex-models.json`. Before the first fetch, a built-in snapshot that
-lists only GPT-6 Astra stands in, so a launch whose fetch fails with nothing cached resolves only
+lists only GPT-6.2 Astra stands in, so a launch whose fetch fails with nothing cached resolves only
 `codex:astra` and refuses any other family word
 (`Cannot resolve "<selection>": fetching the Codex model catalog failed (…) …`).
 
@@ -1142,15 +1145,15 @@ command-wide `--effort` on `/stereo:plan`, `/stereo:implement`, `/stereo:quick`,
 3. Otherwise the selected version's default effort. Opus 5.5 and Fable 5.2 default to `high`, and
    Haiku 5.5 to `max`. Every other Claude version defaults to `xhigh`, except Opus 4.6 and Sonnet
    4.6, which have no `xhigh` and default to `high`, and Haiku 4.5, which takes none. GPT-6 Astra
-   defaults to `high`, and GPT-6.1 Terra and GPT-6 Luna to `max`. Every other Codex version defaults
-   to `xhigh`, or the highest tier below it that the catalog lists for that model. Third-party
+   defaults to `high`, and GPT-6.1 Terra and GPT-6 Luna to `max`. Every other Codex version,
+   GPT-6.2 Astra included, defaults to `xhigh`, or the highest tier below it that the catalog lists for that model. Third-party
    provider models take none.
 
 A stored effort therefore follows its stored model: after
 `/stereo:config --implementer claude:opus-4.8 --implementer-effort high`, the implementer runs Opus
 4.8 at `high`, while a run with `--implementer claude:opus-5` runs Opus 5 at its own default,
-`xhigh`. With nothing stored, all four built-in role defaults run at `high`; change any of them per
-workspace or per run. The fallback reviewer—`claude:fable-5.2`, the same-model substitute and the
+`xhigh`. With nothing stored, the built-in planner and implementer run at `high` and the built-in review
+gates at `xhigh`; change any of them per workspace or per run. The fallback reviewer—`claude:fable-5.2`, the same-model substitute and the
 tournament's default reviewer—runs at Fable 5.2's default, `high`. `/stereo:rescue` and the
 stop-time review gate run no role, so without `--effort` they use Codex's own default.
 
@@ -1226,7 +1229,7 @@ building and testing its own changes.
 | `--*-effort` role flags and the single-role `--effort`                 | Runtime controls (`none`…`ultra`)                    | Runtime controls (`low`…`max`); none for `claude:session`     | Effort is per role; a role without a flag runs at its default's effort or its version's |
 | `--background` and `/stereo:status`                                    | Durable jobs and status                              | Durable jobs and status; `claude:session` has no job          | One job protocol for both runtimes; only the inline route lives in this conversation    |
 
-Implementation review defaults to `codex:astra-6`, independent of both the orchestrating session
+Implementation review defaults to `codex:astra-6.2`, independent of both the orchestrating session
 and the Claude-routed default implementer that produced the work: under the defaults every
 artifact is judged by the other ecosystem—Codex challenges the Claude plan, and Codex gates the
 Claude-built delta. `--implementation-reviewer claude:fable` keeps that gate contained on the
@@ -1386,7 +1389,7 @@ substitutes a model.
 A Codex family or version pin must be one the account's catalog lists; run `/stereo:setup` to see
 them, or pass a raw model id, which is never checked against the family list. When no catalog has
 been fetched and the fetch fails, only `codex:astra` resolves; fix the fetch (`/stereo:setup` names
-the failure) or pass a raw model id. When the account's catalog lacks GPT-6 Astra, the built-in
+the failure) or pass a raw model id. When the account's catalog lacks GPT-6.2 Astra, the built-in
 review gates cannot run, and a model-less plan review, `/stereo:review`, or
 `/stereo:adversarial-review` fails before any job record naming that default. Store gates the
 catalog lists, for example

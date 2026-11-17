@@ -316,9 +316,10 @@ export function catalogFixture(
 const ULTRA: CodexCatalogModel['efforts'] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const MAX: CodexCatalogModel['efforts'] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-// The account catalog as model/list listed it on 2026-09-24: what the fake
-// Codex serves (unless a test writes its own), and, its visible models, what
-// accountCatalogModels() gives in-process tests.
+// The account catalog as model/list listed it on 2026-09-24, plus GPT-6.2
+// Astra (the built-in reviewer default): what the fake Codex serves (unless a
+// test writes its own), and, its visible models, what accountCatalogModels()
+// gives in-process tests.
 export const ACCOUNT_CATALOG: ReadonlyArray<{
   id: string;
   efforts: CodexCatalogModel['efforts'];
@@ -328,7 +329,8 @@ export const ACCOUNT_CATALOG: ReadonlyArray<{
   upgrade?: string;
   upgradeInfo?: Record<string, unknown>;
 }> = [
-  { id: 'gpt-6-astra', isDefault: true, efforts: ULTRA },
+  { id: 'gpt-6.2-astra', isDefault: true, efforts: ULTRA },
+  { id: 'gpt-6-astra', efforts: ULTRA },
   { id: 'gpt-6-sol', efforts: ULTRA },
   { id: 'gpt-6-luna', efforts: MAX },
   { id: 'gpt-reserve', hidden: true, efforts: MAX },
@@ -357,7 +359,7 @@ export function accountCatalogModels(): CodexCatalogModel[] {
   );
 }
 
-// The effort tiers accountCatalogModels() lists for gpt-6-astra, as the
+// The effort tiers accountCatalogModels() lists for both Astra versions, as the
 // catalog refusals name them.
 export const ASTRA_TIERS = 'low, medium, high, xhigh, max, ultra';
 

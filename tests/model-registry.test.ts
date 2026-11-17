@@ -36,7 +36,7 @@ function resolveRequested(
 }
 
 test('normalizeRequestedModel strips one optional codex: runtime prefix', () => {
-  assert.equal(resolveRequested('codex:astra'), 'gpt-6-astra');
+  assert.equal(resolveRequested('codex:astra'), 'gpt-6.2-astra');
   assert.equal(resolveRequested('codex:sol'), 'gpt-6-sol');
   assert.equal(resolveRequested('  CODEX:Glm  '), 'glm-5.2');
   assert.equal(resolveRequested('codex:gpt-5.6-sol@azure'), 'gpt-5.6-sol@azure');
@@ -199,7 +199,7 @@ test('parseQualifiedModel rejects malformed qualified selections', () => {
 });
 
 test('family selections resolve to the latest version in the catalog, aliases to their ids, and version pins hold', () => {
-  assert.equal(resolveRequested('astra'), 'gpt-6-astra');
+  assert.equal(resolveRequested('astra'), 'gpt-6.2-astra');
   assert.equal(resolveRequested('sol'), 'gpt-6-sol');
   assert.equal(resolveRequested('terra'), 'gpt-5.6-terra');
   assert.equal(resolveRequested('luna'), 'gpt-6-luna');
@@ -279,8 +279,8 @@ test('before any fetch only the snapshot resolves, and a refusal names the faile
     );
   }
   // What the snapshot or the registry resolves, full ids, and provider-qualified ids pass.
-  assert.equal(resolveRequested('astra', { catalog: floor }), 'gpt-6-astra');
-  assert.equal(resolveRequested('codex:astra-6', { catalog: floor }), 'gpt-6-astra');
+  assert.equal(resolveRequested('astra', { catalog: floor }), 'gpt-6.2-astra');
+  assert.equal(resolveRequested('codex:astra-6.2', { catalog: floor }), 'gpt-6.2-astra');
   assert.equal(resolveRequested('kimi', { catalog: floor }), 'kimi-k3');
   assert.equal(resolveRequested('gpt-5.6-sol', { catalog: floor }), 'gpt-5.6-sol');
   assert.equal(resolveRequested('sol@azure', { catalog: floor }), 'sol@azure');

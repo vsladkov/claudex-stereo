@@ -59,7 +59,7 @@ test('an empty CODEX_HOME loads the one-model built-in floor and memoizes per ho
   assert.deepEqual(first.problems, []);
   assert.deepEqual(
     first.models.map((model) => model.id),
-    ['gpt-6-astra'],
+    ['gpt-6.2-astra'],
     'the floor holds exactly the built-in default',
   );
   assert.equal(loadCodexCatalog({ codexHome: home }), first, 'memoized per CODEX_HOME');

@@ -58,7 +58,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     effortFlag: 'plan-reviewer-effort',
     label: 'plan reviewer',
     allowsClaudeSession: true,
-    builtInSelection: 'codex:astra-6',
+    builtInSelection: 'codex:astra-6.2',
     builtInEffort: null,
   },
   {
@@ -76,7 +76,7 @@ export const ROLE_DEFINITIONS: readonly RoleDefinition[] = [
     effortFlag: 'implementation-reviewer-effort',
     label: 'implementation reviewer',
     allowsClaudeSession: true,
-    builtInSelection: 'codex:astra-6',
+    builtInSelection: 'codex:astra-6.2',
     builtInEffort: null,
   },
 ];
@@ -181,7 +181,7 @@ export interface ResolvedRoleDefault {
   /** The selection a model-less launch runs: the valid stored model when it runs through the companion, else the built-in. */
   selection: string;
   source: 'stored' | 'built-in';
-  /** Names the default in messages, e.g. `the plan reviewer's built-in default codex:astra-6`. */
+  /** Names the default in messages, e.g. `the plan reviewer's built-in default codex:astra-6.2`. */
   description: string;
   /** The role effort paired with `selection`: the stored effort that applies to it, else the built-in effort; null means the version default. */
   effort: ReasoningEffort | null;

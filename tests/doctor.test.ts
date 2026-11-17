@@ -184,7 +184,7 @@ test('doctor flags and resets a future SessionStart announcement watermark', asy
 test('doctor prints the embedded setup next steps once and no model listing', async () => {
   const setup = setupReportFixture();
   const warning =
-    'The plan reviewer\'s built-in default codex:astra-6 cannot run: Unknown Codex family "astra" in "codex:astra-6".';
+    'The plan reviewer\'s built-in default codex:astra-6.2 cannot run: Unknown Codex family "astra" in "codex:astra-6.2".';
   setup.nextSteps = [warning];
   const warned = await buildDoctorReport(
     makeTempDir(),

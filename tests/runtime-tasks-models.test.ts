@@ -360,7 +360,7 @@ test('a runtime without model/list keeps the built-in floor and names the failed
   assert.equal(setup.status, 0, setup.stderr);
   const report = JSON.parse(setup.stdout) as { rendered: string; nextSteps: string[] };
   assert.match(report.rendered, /- Codex catalog: built-in snapshot /);
-  assert.match(report.rendered, /\n- codex:astra → gpt-6-astra \(effort high\)\n/);
+  assert.match(report.rendered, /\n- codex:astra → gpt-6\.2-astra \(effort xhigh\)\n/);
   assert.doesNotMatch(report.rendered, /codex:sol/);
   assert.ok(
     report.nextSteps.includes(
@@ -384,7 +384,7 @@ test('a runtime without model/list keeps the built-in floor and names the failed
   assert.equal(astra.status, 0, astra.stderr);
   assert.equal(
     (await waitForFakeState(binDir, 'lastThreadStart')).lastThreadStart.model,
-    'gpt-6-astra',
+    'gpt-6.2-astra',
   );
   const family = run('node', [SCRIPT, 'task', '--model', 'sol-5.6', '--json', 'pass through'], {
     cwd: repo,
@@ -411,7 +411,7 @@ test('selections resolve against the live model/list, not a built-in table', asy
   const repo = initializeBasicRepo();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
-  // An account whose catalog moved sol and astra on to 7 and no longer lists astra 6.
+  // An account whose catalog moved sol and astra on to 7 and no longer lists astra 6.2.
   fs.writeFileSync(
     path.join(binDir, 'fake-codex-state.json'),
     JSON.stringify({
@@ -776,7 +776,7 @@ test('task --dry-run with no cached catalog resolves the snapshot and never fetc
     JSON.parse(astra.stdout),
     taskDryRun({
       runtime: 'codex',
-      model: 'gpt-6-astra',
+      model: 'gpt-6.2-astra',
       effort: null,
       role: null,
       sandbox: false,
@@ -839,7 +839,7 @@ test('task --dry-run --background and --thread create no job and take no reserva
   const launches: Array<[string[], Record<string, unknown>]> = [
     [
       ['--model', 'codex:astra', '--background', 'x'],
-      { runtime: 'codex', model: 'gpt-6-astra', role: null },
+      { runtime: 'codex', model: 'gpt-6.2-astra', role: null },
     ],
     // --thread runs the --model and --role given; without --model, Codex's own.
     [['--thread', 'thr-known', 'x'], { runtime: 'codex', model: null, role: null }],
@@ -1160,7 +1160,7 @@ test('the three Codex launch branches refuse an unlisted stored effort before an
   assert.equal(JSON.parse(config.stdout).warnings.length, 3);
 
   const refusal = (label: string) =>
-    `The ${label}'s workspace default effort minimal is not a tier codex:astra (gpt-6-astra) lists; the catalog lists ${ASTRA_TIERS}. Pass --effort, or store another effort with /stereo:config.`;
+    `The ${label}'s workspace default effort minimal is not a tier codex:astra (gpt-6.2-astra) lists; the catalog lists ${ASTRA_TIERS}. Pass --effort, or store another effort with /stereo:config.`;
   const planReview = companion(['plan-review', '--json', 'Review the plan'], repo, env);
   assert.equal(planReview.status, 1);
   assert.equal(errorOf(planReview), refusal('plan reviewer'));
